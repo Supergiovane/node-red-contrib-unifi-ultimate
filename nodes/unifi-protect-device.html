@@ -693,23 +693,23 @@
 </script>
 
 <script type="text/html" data-help-name="unifi-protect-device">
-    <p>Rappresenta un oggetto UniFi Protect generico. Il nodo usa discovery di tipo, istanze e capability supportate.</p>
+    <p>Represents a generic UniFi Protect object. The node uses discovery for device types, instances, and supported capabilities.</p>
 
-    <h3>Configurazione</h3>
-    <p>Seleziona un tipo di device, poi una specifica istanza e infine la capability da usare. La capability <code>Observe</code> effettua fetch iniziale e resta collegata agli stream Protect. Se la capability espone opzioni configurabili, il nodo le propone automaticamente. La capability <code>Set property</code> scopre le proprieta patchabili dal payload reale del device selezionato. Per le camera doorbell puoi anche usare <code>Set doorbell message</code> con messaggi predefiniti, custom o immagine. Per <code>Sensor + Observe</code>, <code>Camera + Observe</code> e <code>Light + Observe</code> puoi scegliere l'osservabile e il nodo emette <code>true/false</code> in <code>msg.payload</code>, lasciando il dettaglio completo in <code>msg.RAW</code>.</p>
+    <h3>Configuration</h3>
+    <p>Select a device type, then a specific instance, and finally the capability to use. The <code>Observe</code> capability performs an initial fetch and stays connected to the Protect streams. If a capability exposes configurable options, the node will present them automatically. The <code>Set property</code> capability discovers patchable properties from the selected device payload. For doorbell cameras you can also use <code>Set doorbell message</code> with predefined, custom, or image-based messages. For <code>Sensor + Observe</code>, <code>Camera + Observe</code>, and <code>Light + Observe</code> you can choose the observable and the node emits <code>true/false</code> in <code>msg.payload</code>, while keeping the full details in <code>msg.RAW</code>.</p>
 
     <h3>Input</h3>
     <ul>
-        <li><code>msg.deviceType</code>, <code>msg.deviceId</code>, <code>msg.capability</code> per override runtime della chiamata</li>
-        <li><code>msg.capabilityConfig</code> per override runtime delle opzioni selezionate nell'editor</li>
-        <li><code>msg.params</code> per override puntuali dei parametri path, quando necessario</li>
-        <li><code>msg.query</code>, <code>msg.headers</code> e <code>msg.payload</code> per la richiesta HTTP</li>
+        <li><code>msg.deviceType</code>, <code>msg.deviceId</code>, and <code>msg.capability</code> for runtime request overrides</li>
+        <li><code>msg.capabilityConfig</code> for runtime overrides of the options selected in the editor</li>
+        <li><code>msg.params</code> for targeted path parameter overrides when needed</li>
+        <li><code>msg.query</code>, <code>msg.headers</code>, and <code>msg.payload</code> for the HTTP request</li>
     </ul>
 
     <h3>Output</h3>
     <ul>
-        <li>Output 1: stato o risposta principale del device</li>
-        <li>Output 2: eventi Protect correlati al device selezionato</li>
-        <li><code>msg.unifiProtect</code>: metadati standardizzati del device e della capability usata</li>
+        <li>Output 1: device state or primary capability response</li>
+        <li>Output 2: Protect events related to the selected device</li>
+        <li><code>msg.unifiProtect</code>: standardized metadata for the device and the selected capability</li>
     </ul>
 </script>
