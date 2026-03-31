@@ -1,0 +1,715 @@
+<script type="text/javascript">
+    RED.nodes.registerType("unifi-protect-device", {
+        category: "Unifi Ultimate",
+        color: "#7DB7E8",
+        defaults: {
+            name: { value: "" },
+            server: { value: "", type: "unifi-protect-config", required: true },
+            deviceType: { value: "", required: true },
+            deviceId: { value: "", required: true },
+            capability: { value: "observe", required: true },
+            capabilityConfig: { value: "{}" },
+            timeout: { value: 15000, required: true, validate: RED.validators.number() }
+        },
+        inputs: 1,
+        outputs: 2,
+        icon: "unifi-protect-icon.svg",
+        paletteLabel: "DEVICE",
+        outputLabels: ["state", "events"],
+        label: function() {
+            return this.name || this.deviceId || "Unifi Protect Device";
+        },
+        oneditsave: function() {
+            const $capabilityConfig = $("#node-input-capabilityConfig");
+            const capabilityConfig = {};
+            if ($capabilityConfig.length === 0) {
+                this.capabilityConfig = "{}";
+                return;
+            }
+
+            $("#node-input-capabilityConfigContainer").find("[id^='node-input-capability-config-']").each(function() {
+                const $field = $(this);
+                const fieldId = String($field.attr("id") || "").replace("node-input-capability-config-", "");
+                if (!fieldId) {
+                    return;
+                }
+
+                if ($field.is(":checkbox")) {
+                    capabilityConfig[fieldId] = $field.is(":checked");
+                    return;
+                }
+
+                if ($field.is("select[multiple]")) {
+                    capabilityConfig[fieldId] = $field.val() || [];
+                    return;
+                }
+
+                capabilityConfig[fieldId] = $field.val();
+            });
+
+            const existingValue = String($capabilityConfig.val() || "").trim();
+            let parsedExistingValue = {};
+            if (existingValue) {
+                try {
+                    const parsed = JSON.parse(existingValue);
+                    parsedExistingValue = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+                } catch (error) {
+                    parsedExistingValue = {};
+                }
+            }
+
+            this.capabilityConfig = JSON.stringify({
+                ...parsedExistingValue,
+                ...capabilityConfig
+            });
+        },
+        oneditprepare: function() {
+            const node = this;
+            const $name = $("#node-input-name");
+            const $server = $("#node-input-server");
+            const $deviceType = $("#node-input-deviceType");
+            const $deviceId = $("#node-input-deviceId");
+            const $capability = $("#node-input-capability");
+            const $capabilityConfig = $("#node-input-capabilityConfig");
+            const $capabilityConfigRow = $("#node-row-capabilityConfig");
+            const $capabilityConfigContainer = $("#node-input-capabilityConfigContainer");
+            const $refresh = $("#node-input-refreshDevices");
+            let lastAutoName = "";
+            let capabilityConfig = parseCapabilityConfig(node.capabilityConfig);
+            let capabilityOptionsRequestId = 0;
+            let suspendChangeHandling = false;
+            let isInitializingEditor = true;
+
+            function parseCapabilityConfig(rawValue) {
+                if (rawValue && typeof rawValue === "object" && !Array.isArray(rawValue)) {
+                    return rawValue;
+                }
+
+                if (typeof rawValue !== "string" || rawValue.trim() === "") {
+                    return {};
+                }
+
+                try {
+                    const parsed = JSON.parse(rawValue);
+                    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+                } catch (error) {
+                    return {};
+                }
+            }
+
+            function writeCapabilityConfig() {
+                $capabilityConfig.val(JSON.stringify(capabilityConfig || {}));
+            }
+
+            function withSuppressedChanges(callback) {
+                suspendChangeHandling = true;
+                try {
+                    return callback();
+                } finally {
+                    suspendChangeHandling = false;
+                }
+            }
+
+            function getCurrentOrNodeValue($input, nodeValue, fallbackValue) {
+                const currentValue = String($input.val() || "").trim();
+                if (currentValue !== "") {
+                    return currentValue;
+                }
+
+                const persistedValue = String(nodeValue || "").trim();
+                if (persistedValue !== "") {
+                    return persistedValue;
+                }
+
+                return String(fallbackValue || "").trim();
+            }
+
+            function requestJson(url) {
+                return new Promise(function(resolve, reject) {
+                    $.getJSON(url, function(data) {
+                        resolve(data);
+                    }).fail(function(xhr) {
+                        reject(xhr);
+                    });
+                });
+            }
+
+            function syncCapabilityConfigFromInputs() {
+                $capabilityConfigContainer.find("[id^='node-input-capability-config-']").each(function() {
+                    const $field = $(this);
+                    const fieldId = String($field.attr("id") || "").replace("node-input-capability-config-", "");
+                    if (!fieldId) {
+                        return;
+                    }
+
+                    if ($field.is(":checkbox")) {
+                        capabilityConfig[fieldId] = $field.is(":checked");
+                        return;
+                    }
+
+                    if ($field.is("select[multiple]")) {
+                        capabilityConfig[fieldId] = $field.val() || [];
+                        return;
+                    }
+
+                    capabilityConfig[fieldId] = $field.val();
+                });
+
+                writeCapabilityConfig();
+            }
+
+            function getSelectedDeviceName() {
+                const $selected = $deviceId.find("option:selected");
+                return String($selected.data("deviceName") || "").trim();
+            }
+
+            function syncNameFromSelection() {
+                const selectedDeviceName = getSelectedDeviceName();
+                const currentName = String($name.val() || "").trim();
+                const shouldUpdate = currentName === "" || currentName === lastAutoName;
+
+                if (!selectedDeviceName || !shouldUpdate) {
+                    return;
+                }
+
+                $name.val(selectedDeviceName);
+                lastAutoName = selectedDeviceName;
+            }
+
+            function renderDeviceTypes(items) {
+                const currentValue = getCurrentOrNodeValue($deviceType, node.deviceType, "");
+                withSuppressedChanges(function() {
+                    $deviceType.empty();
+                    $deviceType.append($("<option></option>").val("").text("Select a type"));
+
+                    items.forEach(function(item) {
+                        $deviceType.append(
+                            $("<option></option>")
+                                .val(item.type)
+                                .text(item.label)
+                        );
+                    });
+
+                    if (currentValue && $deviceType.find("option[value='" + currentValue + "']").length > 0) {
+                        $deviceType.val(currentValue);
+                    } else {
+                        $deviceType.val("");
+                    }
+                });
+            }
+
+            function renderCapabilities(items) {
+                const currentValue = getCurrentOrNodeValue($capability, node.capability, "observe");
+                withSuppressedChanges(function() {
+                    $capability.empty();
+
+                    items.forEach(function(item) {
+                        $capability.append(
+                            $("<option></option>")
+                                .val(item.id)
+                                .text(item.label)
+                        );
+                    });
+
+                    if (currentValue && $capability.find("option[value='" + currentValue + "']").length > 0) {
+                        $capability.val(currentValue);
+                    } else if ($capability.find("option[value='observe']").length > 0) {
+                        $capability.val("observe");
+                    }
+                });
+            }
+
+            function normalizeFieldValue(field, rawValue) {
+                if (rawValue === undefined || rawValue === null) {
+                    if (field.multiple) {
+                        return [];
+                    }
+                    return field.defaultValue !== undefined ? field.defaultValue : "";
+                }
+                if (field.type === "checkbox") {
+                    return rawValue === true || rawValue === "true";
+                }
+                if (field.multiple) {
+                    return Array.isArray(rawValue) ? rawValue.map(String) : [String(rawValue)];
+                }
+                return String(rawValue).trim();
+            }
+
+            function resolveSelectValue(field, normalizedValue) {
+                const optionValues = Array.isArray(field.options)
+                    ? field.options.map(function(option) {
+                        return String(option.value);
+                    })
+                    : [];
+
+                if (field.multiple) {
+                    const selectedValues = Array.isArray(normalizedValue) ? normalizedValue.map(String) : [];
+                    const matchingValues = selectedValues.filter(function(value) {
+                        return optionValues.indexOf(value) !== -1;
+                    });
+                    if (matchingValues.length > 0) {
+                        return matchingValues;
+                    }
+                    if (Array.isArray(field.defaultValue)) {
+                        return field.defaultValue.map(String).filter(function(value) {
+                            return optionValues.indexOf(value) !== -1;
+                        });
+                    }
+                    return [];
+                }
+
+                if (optionValues.indexOf(String(normalizedValue)) !== -1) {
+                    return String(normalizedValue);
+                }
+
+                if (field.defaultValue !== undefined && field.defaultValue !== null) {
+                    const fallbackValue = String(field.defaultValue).trim();
+                    if (optionValues.indexOf(fallbackValue) !== -1) {
+                        return fallbackValue;
+                    }
+                }
+
+                if (field.allowEmpty) {
+                    return "";
+                }
+
+                return optionValues.length > 0 ? optionValues[0] : "";
+            }
+
+            function applySelectValue($input, field, resolvedValue) {
+                const selectedValues = field.multiple
+                    ? (Array.isArray(resolvedValue) ? resolvedValue.map(String) : [])
+                    : [String(resolvedValue)];
+
+                $input.find("option").each(function() {
+                    const $option = $(this);
+                    const optionValue = String($option.val());
+                    $option.prop("selected", selectedValues.indexOf(optionValue) !== -1);
+                });
+
+                if (field.multiple) {
+                    $input.val(selectedValues);
+                } else {
+                    $input.val(selectedValues.length > 0 ? selectedValues[0] : "");
+                    const selectedIndex = $input.find("option").toArray().findIndex(function(option) {
+                        return String(option.value) === String(selectedValues.length > 0 ? selectedValues[0] : "");
+                    });
+                    if (selectedIndex >= 0 && $input.get(0)) {
+                        $input.get(0).selectedIndex = selectedIndex;
+                    }
+                }
+            }
+
+            function restoreRenderedFieldValues(fields) {
+                const liveCapabilityConfig = parseCapabilityConfig($capabilityConfig.val());
+
+                (fields || []).forEach(function(field) {
+                    if (field.type !== "select") {
+                        return;
+                    }
+
+                    const $input = $("#node-input-capability-config-" + field.id);
+                    if ($input.length === 0) {
+                        return;
+                    }
+
+                    const currentValue = Object.prototype.hasOwnProperty.call(liveCapabilityConfig, field.id)
+                        ? liveCapabilityConfig[field.id]
+                        : undefined;
+                    const normalizedValue = normalizeFieldValue(field, currentValue);
+                    const resolvedValue = resolveSelectValue(field, normalizedValue);
+                    applySelectValue($input, field, resolvedValue);
+                });
+            }
+
+            function renderCapabilityOptions(data, options) {
+                const renderOptions = options || {};
+                const fields = data && Array.isArray(data.fields) ? data.fields : [];
+                syncCapabilityConfigFromInputs();
+                $capabilityConfigContainer.empty();
+
+                if (fields.length === 0) {
+                    $capabilityConfigRow.hide();
+                    if (renderOptions.clearStoredConfig) {
+                        capabilityConfig = {};
+                        writeCapabilityConfig();
+                    }
+                    $capabilityConfigContainer.empty();
+                    return;
+                }
+
+                if (renderOptions.clearStoredConfig) {
+                    capabilityConfig = {};
+                    writeCapabilityConfig();
+                }
+
+                $capabilityConfigRow.show();
+                fields.forEach(function(field) {
+                    const fieldId = "node-input-capability-config-" + field.id;
+                    const $wrapper = $("<div></div>").css("margin-bottom", "8px");
+                    const isHiddenField = field.type === "hidden";
+                    const $label = $("<label></label>")
+                        .attr("for", fieldId)
+                        .css({ width: "140px", marginRight: "12px", display: "inline-block" })
+                        .text(field.label || field.id);
+                    let $input;
+
+                    if (field.type === "select") {
+                        $input = $("<select></select>").attr("id", fieldId).css("width", "calc(100% - 160px)");
+                        if (field.multiple) {
+                            $input.attr("multiple", "multiple").css("min-height", "88px");
+                        }
+                        if (field.placeholder && !field.allowEmpty) {
+                            $input.append($("<option></option>").val("").text(field.placeholder));
+                        }
+                        (field.options || []).forEach(function(option) {
+                            $input.append(
+                                $("<option></option>")
+                                    .val(option.value)
+                                    .text(option.label)
+                            );
+                        });
+                    } else if (field.type === "checkbox") {
+                        $input = $("<input>").attr({ id: fieldId, type: "checkbox" });
+                    } else if (field.type === "hidden") {
+                        $input = $("<input>").attr({ id: fieldId, type: "hidden" });
+                    } else {
+                        $input = $("<input>").attr({
+                            id: fieldId,
+                            type: field.type === "number" ? "number" : "text",
+                            placeholder: field.placeholder || ""
+                        }).css("width", "calc(100% - 160px)");
+                    }
+
+                    const currentValue = Object.prototype.hasOwnProperty.call(capabilityConfig, field.id)
+                        ? capabilityConfig[field.id]
+                        : undefined;
+                    const normalizedValue = normalizeFieldValue(field, currentValue);
+                    const resolvedValue = field.type === "select"
+                        ? resolveSelectValue(field, normalizedValue)
+                        : normalizedValue;
+                    if (!Object.prototype.hasOwnProperty.call(capabilityConfig, field.id) || field.type === "select") {
+                        capabilityConfig[field.id] = resolvedValue;
+                    }
+                    if (field.type === "checkbox") {
+                        $input.prop("checked", resolvedValue === true);
+                    } else if (field.type === "hidden") {
+                        $input.val(resolvedValue);
+                    } else if (field.type === "select") {
+                        applySelectValue($input, field, resolvedValue);
+                    } else {
+                        $input.val(resolvedValue);
+                    }
+
+                    $input.on("change input", function() {
+                        if (field.type === "checkbox") {
+                            capabilityConfig[field.id] = $(this).is(":checked");
+                        } else if (field.multiple) {
+                            capabilityConfig[field.id] = $(this).val() || [];
+                        } else {
+                            capabilityConfig[field.id] = $(this).val();
+                        }
+
+                        if (field.reloadOnChange && field.id === "propertyPath") {
+                            delete capabilityConfig.propertyValue;
+                            delete capabilityConfig.valueType;
+                        }
+
+                        writeCapabilityConfig();
+
+                        if (field.reloadOnChange) {
+                            syncCapabilityConfigFromInputs();
+                            loadCapabilityOptions();
+                        }
+                    });
+
+                    if (isHiddenField) {
+                        $wrapper.append($input);
+                    } else {
+                        $wrapper.append($label).append($input);
+                    }
+
+                    if (field.helpText) {
+                        $wrapper.append(
+                            $("<div></div>")
+                                .addClass("form-tips")
+                                .css({ marginLeft: "152px" })
+                                .text(field.helpText)
+                        );
+                    }
+
+                    $capabilityConfigContainer.append($wrapper);
+                });
+
+                writeCapabilityConfig();
+                restoreRenderedFieldValues(fields);
+                setTimeout(function() {
+                    restoreRenderedFieldValues(fields);
+                }, 0);
+            }
+
+            function renderDevices(items) {
+                const currentValue = getCurrentOrNodeValue($deviceId, node.deviceId, "");
+                withSuppressedChanges(function() {
+                    $deviceId.empty();
+                    $deviceId.append($("<option></option>").val("").text("Select a device"));
+
+                    items.forEach(function(item) {
+                        const labelParts = [item.name || item.id];
+                        if (item.state) {
+                            labelParts.push("[" + item.state + "]");
+                        }
+                        $deviceId.append(
+                            $("<option></option>")
+                                .val(item.id)
+                                .text(labelParts.join(" "))
+                                .attr("data-device-name", item.name || item.id)
+                        );
+                    });
+
+                    if (currentValue && $deviceId.find("option[value='" + currentValue + "']").length > 0) {
+                        $deviceId.val(currentValue);
+                    } else {
+                        $deviceId.val("");
+                    }
+                });
+
+                syncNameFromSelection();
+            }
+
+            function loadCapabilities() {
+                const selectedType = getCurrentOrNodeValue($deviceType, node.deviceType, "");
+                if (!selectedType) {
+                    renderCapabilities([]);
+                    renderCapabilityOptions({ fields: [] }, { clearStoredConfig: false });
+                    return Promise.resolve();
+                }
+
+                return requestJson("unifiProtect/device-capabilities?deviceType=" + encodeURIComponent(selectedType))
+                    .then(function(data) {
+                        renderCapabilities(Array.isArray(data) ? data : []);
+                    })
+                    .catch(function(xhr) {
+                        renderCapabilities([]);
+                        renderCapabilityOptions({ fields: [] }, { clearStoredConfig: false });
+                        const errorText = xhr && xhr.responseJSON && xhr.responseJSON.error ? xhr.responseJSON.error : "Unable to load capabilities";
+                        RED.notify(errorText, "error");
+                    });
+            }
+
+            function loadCapabilityOptions() {
+                const requestId = ++capabilityOptionsRequestId;
+                const serverId = $server.val();
+                const currentDeviceType = getCurrentOrNodeValue($deviceType, node.deviceType, "");
+                const currentDeviceId = getCurrentOrNodeValue($deviceId, node.deviceId, "");
+                const currentCapability = getCurrentOrNodeValue($capability, node.capability, "observe");
+                if (!serverId || serverId === "_ADD_" || !currentDeviceType || !currentCapability) {
+                    renderCapabilityOptions({ fields: [] }, { clearStoredConfig: false });
+                    return Promise.resolve();
+                }
+
+                return requestJson(
+                    "unifiProtect/device-capability-options?serverId=" + encodeURIComponent(serverId) +
+                    "&deviceType=" + encodeURIComponent(currentDeviceType) +
+                    "&deviceId=" + encodeURIComponent(currentDeviceId || "") +
+                    "&capability=" + encodeURIComponent(currentCapability) +
+                    "&capabilityConfig=" + encodeURIComponent(JSON.stringify(capabilityConfig || {}))
+                ).then(function(data) {
+                    if (requestId !== capabilityOptionsRequestId) {
+                        return;
+                    }
+                    renderCapabilityOptions(data || { fields: [] });
+                }).catch(function(xhr) {
+                    if (requestId !== capabilityOptionsRequestId) {
+                        return;
+                    }
+                    renderCapabilityOptions({ fields: [] }, { clearStoredConfig: false });
+                    const errorText = xhr && xhr.responseJSON && xhr.responseJSON.error ? xhr.responseJSON.error : "Unable to load capability options";
+                    RED.notify(errorText, "error");
+                });
+            }
+
+            function loadDevices() {
+                const serverId = $server.val();
+                const selectedType = getCurrentOrNodeValue($deviceType, node.deviceType, "");
+                if (!serverId || serverId === "_ADD_" || !selectedType) {
+                    renderDevices([]);
+                    renderCapabilityOptions({ fields: [] }, { clearStoredConfig: false });
+                    return Promise.resolve();
+                }
+
+                $refresh.addClass("fa-spin");
+                return requestJson(
+                    "unifiProtect/devices?serverId=" + encodeURIComponent(serverId) + "&deviceType=" + encodeURIComponent(selectedType)
+                ).then(function(data) {
+                    renderDevices(Array.isArray(data) ? data : []);
+                }).catch(function(xhr) {
+                    renderDevices([]);
+                    renderCapabilityOptions({ fields: [] }, { clearStoredConfig: false });
+                    const errorText = xhr && xhr.responseJSON && xhr.responseJSON.error ? xhr.responseJSON.error : "Unable to load devices";
+                    RED.notify(errorText, "error");
+                }).finally(function() {
+                    $refresh.removeClass("fa-spin");
+                });
+            }
+
+            function loadDeviceTypes() {
+                return requestJson("unifiProtect/device-types")
+                    .then(function(data) {
+                        renderDeviceTypes(Array.isArray(data) ? data : []);
+                    })
+                    .catch(function(xhr) {
+                        renderDeviceTypes([]);
+                        renderCapabilities([]);
+                        renderDevices([]);
+                        renderCapabilityOptions({ fields: [] }, { clearStoredConfig: false });
+                        const errorText = xhr && xhr.responseJSON && xhr.responseJSON.error ? xhr.responseJSON.error : "Unable to load device types";
+                        RED.notify(errorText, "error");
+                    });
+            }
+
+            function refreshEditor() {
+                return loadDeviceTypes()
+                    .then(function() {
+                        return loadCapabilities();
+                    })
+                    .then(function() {
+                        return loadDevices();
+                    })
+                    .then(function() {
+                        return loadCapabilityOptions();
+                    })
+                    .finally(function() {
+                        isInitializingEditor = false;
+                    });
+            }
+
+            function refreshAfterServerChange() {
+                return loadDevices()
+                    .then(function() {
+                        return loadCapabilityOptions();
+                    });
+            }
+
+            function refreshAfterTypeChange() {
+                return loadCapabilities()
+                    .then(function() {
+                        return loadDevices();
+                    })
+                    .then(function() {
+                        return loadCapabilityOptions();
+                    });
+            }
+
+            function refreshAfterDeviceChange() {
+                return loadCapabilityOptions();
+            }
+
+            function refreshAfterCapabilityChange() {
+                return loadCapabilityOptions();
+            }
+
+            try {
+                RED.sidebar.show("help");
+            } catch (error) {
+            }
+
+            writeCapabilityConfig();
+
+            $server.on("change", function() {
+                if (suspendChangeHandling || isInitializingEditor) {
+                    return;
+                }
+                refreshAfterServerChange();
+            });
+            $deviceType.on("change", function() {
+                if (suspendChangeHandling || isInitializingEditor) {
+                    return;
+                }
+                capabilityConfig = {};
+                writeCapabilityConfig();
+                refreshAfterTypeChange();
+            });
+            $deviceId.on("change", function() {
+                if (suspendChangeHandling || isInitializingEditor) {
+                    return;
+                }
+                syncNameFromSelection();
+                capabilityConfig = {};
+                writeCapabilityConfig();
+                refreshAfterDeviceChange();
+            });
+            $capability.on("change", function() {
+                if (suspendChangeHandling || isInitializingEditor) {
+                    return;
+                }
+                capabilityConfig = {};
+                writeCapabilityConfig();
+                refreshAfterCapabilityChange();
+            });
+            $refresh.on("click", function(event) {
+                event.preventDefault();
+                refreshAfterServerChange();
+            });
+
+            refreshEditor();
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="unifi-protect-device">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Unifi Protect Device">
+    </div>
+    <div class="form-row">
+        <label for="node-input-server"><i class="fa fa-cog"></i> Config</label>
+        <input type="text" id="node-input-server">
+    </div>
+    <div class="form-row">
+        <label for="node-input-deviceType"><i class="fa fa-cubes"></i> Type</label>
+        <select id="node-input-deviceType"></select>
+    </div>
+    <div class="form-row">
+        <label for="node-input-deviceId"><i class="fa fa-dot-circle-o"></i> Device</label>
+        <select id="node-input-deviceId" style="width:70%;"></select>
+        <a href="#" id="node-input-refreshDevices" class="editor-button" style="margin-left:6px;">
+            <i class="fa fa-refresh"></i>
+        </a>
+    </div>
+    <div class="form-row">
+        <label for="node-input-capability"><i class="fa fa-tasks"></i> Capability</label>
+        <select id="node-input-capability"></select>
+    </div>
+    <div class="form-row" id="node-row-capabilityConfig" style="display:none;">
+        <label><i class="fa fa-sliders"></i> Options</label>
+        <div id="node-input-capabilityConfigContainer" style="width:70%; display:inline-block;"></div>
+        <input type="hidden" id="node-input-capabilityConfig">
+    </div>
+    <div class="form-row">
+        <label for="node-input-timeout"><i class="fa fa-clock-o"></i> Timeout</label>
+        <input type="text" id="node-input-timeout" placeholder="15000">
+    </div>
+</script>
+
+<script type="text/html" data-help-name="unifi-protect-device">
+    <p>Rappresenta un oggetto UniFi Protect generico. Il nodo usa discovery di tipo, istanze e capability supportate.</p>
+
+    <h3>Configurazione</h3>
+    <p>Seleziona un tipo di device, poi una specifica istanza e infine la capability da usare. La capability <code>Observe</code> effettua fetch iniziale e resta collegata agli stream Protect. Se la capability espone opzioni configurabili, il nodo le propone automaticamente. La capability <code>Set property</code> scopre le proprieta patchabili dal payload reale del device selezionato. Per le camera doorbell puoi anche usare <code>Set doorbell message</code> con messaggi predefiniti, custom o immagine. Per <code>Sensor + Observe</code>, <code>Camera + Observe</code> e <code>Light + Observe</code> puoi scegliere l'osservabile e il nodo emette <code>true/false</code> in <code>msg.payload</code>, lasciando il dettaglio completo in <code>msg.RAW</code>.</p>
+
+    <h3>Input</h3>
+    <ul>
+        <li><code>msg.deviceType</code>, <code>msg.deviceId</code>, <code>msg.capability</code> per override runtime della chiamata</li>
+        <li><code>msg.capabilityConfig</code> per override runtime delle opzioni selezionate nell'editor</li>
+        <li><code>msg.params</code> per override puntuali dei parametri path, quando necessario</li>
+        <li><code>msg.query</code>, <code>msg.headers</code> e <code>msg.payload</code> per la richiesta HTTP</li>
+    </ul>
+
+    <h3>Output</h3>
+    <ul>
+        <li>Output 1: stato o risposta principale del device</li>
+        <li>Output 2: eventi Protect correlati al device selezionato</li>
+        <li><code>msg.unifiProtect</code>: metadati standardizzati del device e della capability usata</li>
+    </ul>
+</script>

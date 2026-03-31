@@ -1,0 +1,36 @@
+{
+  "name": "unifi-protect-api-expert",
+  "version": "0.1.0",
+  "description": "Codex agent for implementing and troubleshooting Ubiquiti UniFi integrations, with deep UniFi Protect coverage.",
+  "author": {
+    "name": "Local Workspace",
+    "email": "local@example.invalid",
+    "url": "https://developer.ui.com/protect/v6.2.88/gettingstarted"
+  },
+  "homepage": "https://developer.ui.com/protect/v6.2.88/gettingstarted",
+  "license": "MIT",
+  "keywords": [
+    "unifi",
+    "ubiquiti",
+    "protect",
+    "api",
+    "websocket",
+    "node-red"
+  ],
+  "interface": {
+    "displayName": "UniFi API Expert",
+    "shortDescription": "UniFi Protect and connector API specialist for integrations, payloads, events, and troubleshooting",
+    "longDescription": "Local Codex plugin focused on Ubiquiti UniFi APIs with strong grounding in the official UniFi Protect v6.2.88 documentation, including local `/integration` endpoints, cloud connector request forwarding through `api.ui.com`, WebSocket event streams, camera/media workflows, and common integration failure modes.",
+    "developerName": "Local Workspace",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://developer.ui.com/protect/v6.2.88/gettingstarted",
+    "defaultPrompt": "Help me design, debug, or implement a UniFi Protect integration using the documented local or connector API paths",
+    "brandColor": "#0559C9",
+    "screenshots": []
+  }
+}

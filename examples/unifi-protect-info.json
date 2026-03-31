@@ -1,0 +1,87 @@
+[
+  {
+    "id": "inject-unifi-protect-info",
+    "type": "inject",
+    "z": "flow-unifi-protect-example",
+    "name": "Observe Camera",
+    "props": [],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "x": 180,
+    "y": 120,
+    "wires": [
+      [
+        "node-unifi-protect-info"
+      ]
+    ]
+  },
+  {
+    "id": "node-unifi-protect-info",
+    "type": "unifi-protect-device",
+    "z": "flow-unifi-protect-example",
+    "name": "Front Door Camera",
+    "server": "config-unifi-protect",
+    "deviceType": "camera",
+    "deviceId": "camera-id-here",
+    "capability": "observe",
+    "timeout": "15000",
+    "x": 430,
+    "y": 120,
+    "wires": [
+      [
+        "debug-unifi-protect-state"
+      ],
+      [
+        "debug-unifi-protect-events"
+      ]
+    ]
+  },
+  {
+    "id": "debug-unifi-protect-state",
+    "type": "debug",
+    "z": "flow-unifi-protect-example",
+    "name": "Device State",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "x": 710,
+    "y": 100,
+    "wires": []
+  },
+  {
+    "id": "debug-unifi-protect-events",
+    "type": "debug",
+    "z": "flow-unifi-protect-example",
+    "name": "Device Events",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "x": 710,
+    "y": 140,
+    "wires": []
+  },
+  {
+    "id": "config-unifi-protect",
+    "type": "unifi-protect-config",
+    "name": "My Protect",
+    "host": "192.168.1.10",
+    "authHeader": "X-API-Key",
+    "rejectUnauthorized": true
+  },
+  {
+    "id": "flow-unifi-protect-example",
+    "type": "tab",
+    "label": "UniFi Protect Device",
+    "disabled": false,
+    "info": ""
+  }
+]

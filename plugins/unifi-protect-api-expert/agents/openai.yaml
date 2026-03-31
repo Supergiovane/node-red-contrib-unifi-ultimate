@@ -1,0 +1,4 @@
+interface:
+  display_name: "UniFi API Expert"
+  short_description: "Use UniFi API Expert for UniFi Protect endpoint mapping, request design, payload analysis, and connector troubleshooting"
+  default_prompt: "Use UniFi API Expert to map a UniFi Protect requirement to the right documented endpoint, payload, or troubleshooting workflow."

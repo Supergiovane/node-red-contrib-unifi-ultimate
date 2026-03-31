@@ -1,0 +1,52 @@
+<script type="text/javascript">
+    RED.nodes.registerType("unifi-protect-config", {
+        category: "config",
+        defaults: {
+            name: { value: "Unifi Protect Config" },
+            host: { value: "", required: true },
+            authHeader: { value: "X-API-Key", required: true },
+            rejectUnauthorized: { value: false }
+        },
+        credentials: {
+            apiKey: { type: "password", required: true }
+        },
+        label: function () {
+            return this.name || this.host || "Unifi Protect Config";
+        },
+        oneditprepare: function () {
+            try {
+                RED.sidebar.show("help");
+            } catch (error) {
+            }
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="unifi-protect-config">
+    <div class="form-row">
+        <label for="node-config-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-config-input-name" placeholder="Unifi Protect Config">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-host"><i class="fa fa-globe"></i> IP</label>
+        <input type="text" id="node-config-input-host" placeholder="192.168.1.10">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-authHeader"><i class="fa fa-header"></i> Auth Header</label>
+        <input type="text" id="node-config-input-authHeader" placeholder="X-API-Key">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-apiKey"><i class="fa fa-key"></i> API Key</label>
+        <input type="password" id="node-config-input-apiKey">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-rejectUnauthorized"><i class="fa fa-lock"></i> Verify TLS</label>
+        <input type="checkbox" id="node-config-input-rejectUnauthorized" style="display:inline-block; width:auto; vertical-align:top;">
+        <span style="margin-left:8px;">Reject invalid/self-signed certificates</span>
+    </div>
+</script>
+
+<script type="text/html" data-help-name="unifi-protect-config">
+    <p>Configurazione condivisa per i nodi UniFi Protect.</p>
+    <p>Inserisci l'<code>IP</code> o l'host del controller UniFi OS. Il nodo costruisce automaticamente il base URL Protect come <code>https://IP/proxy/protect/integration</code>.</p>
+</script>
