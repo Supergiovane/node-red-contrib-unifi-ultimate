@@ -1,13 +1,13 @@
 "use strict";
 
 const {
-    getDeviceTypeDefinition,
-    getCapabilityDefinition,
     buildCapabilityRequest,
     composeCapabilityExecution,
-    resolveObservableState,
-    resolveObservableEventValue
-} = require("./utils/unifi-protect-device-registry");
+    getCapabilityDefinition,
+    getDeviceTypeDefinition,
+    matchesEvent
+} = require("./utils/unifi-access-device-registry");
+const { extractAccessData } = require("./utils/unifi-access-utils");
 
 function resolveDeviceType(configuredDeviceType, msg) {
     return String(msg.deviceType || configuredDeviceType || "").trim();
@@ -49,23 +49,24 @@ function resolveCapabilityConfig(configuredCapabilityConfig, msg) {
 }
 
 function buildNodeStatus(deviceType, payload) {
-    const label = payload && payload.name ? payload.name : deviceType;
-    const state = payload && payload.state ? payload.state : "ready";
-    return `${label} ${state}`;
+    const normalizedType = String(deviceType || "").trim();
+    const item = payload && typeof payload === "object" ? payload : {};
+
+    if (normalizedType === "door") {
+        const label = item.name || item.full_name || "door";
+        const stateParts = [item.door_lock_relay_status, item.door_position_status].filter(Boolean);
+        return stateParts.length > 0 ? `${label} ${stateParts.join("/")}` : label;
+    }
+
+    return item.alias || item.name || item.type || normalizedType || "ready";
 }
 
 function requiresDeviceSpecificCapabilityValidation(deviceType, capabilityId) {
-    return String(deviceType || "").trim() === "camera" && [
-        "startPtzPatrol",
-        "stopPtzPatrol",
-        "gotoPtzPreset",
-        "setDoorbellMessage",
-        "disableMicPermanently"
-    ].includes(String(capabilityId || "").trim());
+    return String(deviceType || "").trim() === "device" && ["triggerDoorbell", "cancelDoorbell"].includes(String(capabilityId || "").trim());
 }
 
 module.exports = function(RED) {
-    function UnifiProtectDeviceNode(config) {
+    function UnifiAccessDeviceNode(config) {
         RED.nodes.createNode(this, config);
 
         const node = this;
@@ -77,7 +78,6 @@ module.exports = function(RED) {
         node.capabilityConfig = config.capabilityConfig || "{}";
         node.timeout = Number(config.timeout) > 0 ? Number(config.timeout) : 15000;
         node.currentDevice = null;
-        node.currentObservableValue = false;
         node.isObserving = false;
 
         function sendOutputs(send, stateMsg, eventMsg) {
@@ -94,41 +94,17 @@ module.exports = function(RED) {
             };
         }
 
-        function buildObservedStateMessage(deviceType, deviceId, capabilityConfig, payload, source, extra) {
-            const observable = String(capabilityConfig.observable || "").trim();
-            if (observable) {
-                const observableValue = resolveObservableState(deviceType, payload, observable, node.currentObservableValue);
-                node.currentObservableValue = Boolean(observableValue);
-
-                return {
-                    payload: node.currentObservableValue,
-                    RAW: {
-                        device: payload,
-                        observable,
-                        source: source || "observe",
-                        ...(extra || {})
-                    },
-                    device: payload,
-                    unifiProtect: buildBaseMetadata(deviceType, deviceId, "observe", {
-                        source: source || "observe",
-                        observable,
-                        ...(extra || {})
-                    })
-                };
-            }
-
-            return {
-                payload,
-                device: payload,
-                unifiProtect: buildBaseMetadata(deviceType, deviceId, "observe", { source: source || "observe", ...(extra || {}) })
-            };
-        }
-
-        async function fetchDeviceState(deviceType, deviceId, capabilityConfig, send, source) {
+        async function fetchDeviceState(deviceType, deviceId, capabilityId, send, source) {
             const payload = await node.server.fetchDeviceByTypeAndId(deviceType, deviceId);
             node.currentDevice = payload;
 
-            const stateMsg = buildObservedStateMessage(deviceType, deviceId, capabilityConfig, payload, source);
+            const stateMsg = {
+                payload,
+                device: payload,
+                unifiAccess: buildBaseMetadata(deviceType, deviceId, capabilityId, {
+                    source: source || "observe"
+                })
+            };
 
             node.status({ fill: "green", shape: "dot", text: buildNodeStatus(deviceType, payload) });
             sendOutputs(send, stateMsg, null);
@@ -136,7 +112,7 @@ module.exports = function(RED) {
 
         async function invokeCapability(msg, send) {
             if (!node.server) {
-                throw new Error("Unifi Protect configuration is missing.");
+                throw new Error("Unifi Access configuration is missing.");
             }
 
             const deviceType = resolveDeviceType(node.deviceType, msg);
@@ -144,6 +120,7 @@ module.exports = function(RED) {
             const capabilityId = resolveCapabilityId(node.capability, msg);
             const capabilityConfig = resolveCapabilityConfig(node.capabilityConfig, msg);
             let selectedDevice = node.currentDevice;
+
             if (!getDeviceTypeDefinition(deviceType)) {
                 throw new Error(`Unsupported device type: ${deviceType || "(empty)"}`);
             }
@@ -160,13 +137,37 @@ module.exports = function(RED) {
                 throw new Error(`Unsupported capability '${capabilityId}' for device type '${deviceType}'.`);
             }
 
-            if (capability.mode === "observe") {
-                await fetchDeviceState(deviceType, deviceId, capabilityConfig, send, "manual-refresh");
+            if (capabilityId === "cancelDoorbell" && typeof node.server.hasAnyActiveDoorbell === "function" && !node.server.hasAnyActiveDoorbell()) {
+                const skippedMsg = RED.util.cloneMessage(msg);
+                skippedMsg.payload = {
+                    skipped: true,
+                    reason: "No active doorbell ring is currently tracked by the UniFi Access configuration node."
+                };
+                skippedMsg.device = node.currentDevice;
+                skippedMsg.unifiAccess = buildBaseMetadata(deviceType, deviceId, capabilityId, {
+                    source: "request",
+                    skipped: true,
+                    safeCancel: true
+                });
+
+                node.status({ fill: "yellow", shape: "ring", text: "no ring" });
+                sendOutputs(send, skippedMsg, null);
+                return;
+            }
+
+            if (capability.mode === "observe" || capability.mode === "fetch") {
+                await fetchDeviceState(
+                    deviceType,
+                    deviceId,
+                    capabilityId,
+                    send,
+                    capability.mode === "fetch" ? "fetch" : "manual-refresh"
+                );
                 return;
             }
 
             const execution = composeCapabilityExecution(deviceType, capabilityId, capabilityConfig, msg, selectedDevice);
-            const request = buildCapabilityRequest(deviceType, capabilityId, deviceId, execution.params, selectedDevice);
+            const request = buildCapabilityRequest(deviceType, capabilityId, deviceId, selectedDevice);
 
             node.status({ fill: "blue", shape: "dot", text: `${capability.label}` });
 
@@ -181,19 +182,30 @@ module.exports = function(RED) {
 
             if (response.statusCode < 200 || response.statusCode >= 300) {
                 node.status({ fill: "yellow", shape: "ring", text: `${response.statusCode}` });
-                throw new Error(`UniFi Protect request failed with status ${response.statusCode}`);
+                throw new Error(`UniFi Access request failed with status ${response.statusCode}`);
             }
 
-            if (response.payload && typeof response.payload === "object" && !Array.isArray(response.payload)) {
-                node.currentDevice = response.payload;
+            if (capabilityId === "triggerDoorbell" && typeof node.server.markDoorbellTriggered === "function") {
+                node.server.markDoorbellTriggered(deviceId, {
+                    capabilityConfig
+                });
+            }
+
+            if (capabilityId === "cancelDoorbell" && typeof node.server.markDoorbellCanceled === "function") {
+                node.server.markDoorbellCanceled();
+            }
+
+            const responseData = extractAccessData(response.payload);
+            if (responseData && typeof responseData === "object" && !Array.isArray(responseData)) {
+                node.currentDevice = responseData;
             }
 
             const stateMsg = RED.util.cloneMessage(msg);
-            stateMsg.payload = response.payload;
+            stateMsg.payload = responseData;
             stateMsg.statusCode = response.statusCode;
             stateMsg.headers = response.headers;
             stateMsg.device = node.currentDevice;
-            stateMsg.unifiProtect = buildBaseMetadata(deviceType, deviceId, capabilityId, {
+            stateMsg.unifiAccess = buildBaseMetadata(deviceType, deviceId, capabilityId, {
                 source: "request",
                 method: request.method,
                 path: request.path,
@@ -213,11 +225,9 @@ module.exports = function(RED) {
                 return;
             }
 
-            node.server.removeClient(node);
-            node.server.addClient(node);
             node.isObserving = true;
 
-            fetchDeviceState(node.deviceType, node.deviceId, parseCapabilityConfig(node.capabilityConfig), node.send.bind(node), "startup").catch(() => {
+            fetchDeviceState(node.deviceType, node.deviceId, "observe", node.send.bind(node), "startup").catch(() => {
             });
         }
 
@@ -235,78 +245,21 @@ module.exports = function(RED) {
             }
         });
 
-        node.handleProtectDeviceUpdate = (update) => {
+        node.handleAccessEventUpdate = (eventPayload) => {
             try {
-                const item = update && update.item;
-                if (!item || !node.isObserving) {
+                if (!node.isObserving || !matchesEvent(node.deviceType, node.deviceId, node.currentDevice, eventPayload)) {
                     return;
                 }
+                const eventName = String(eventPayload.event || "").trim();
 
-                const deviceDefinition = getDeviceTypeDefinition(node.deviceType);
-                if (!deviceDefinition || item.modelKey !== deviceDefinition.modelKey || item.id !== node.deviceId) {
-                    return;
-                }
-
-                node.currentDevice = item;
-                const capabilityConfig = parseCapabilityConfig(node.capabilityConfig);
-                node.status({ fill: "green", shape: "dot", text: buildNodeStatus(node.deviceType, item) });
-                sendOutputs(node.send.bind(node), buildObservedStateMessage(
-                    node.deviceType,
-                    node.deviceId,
-                    capabilityConfig,
-                    item,
-                    "devices",
-                    { updateType: update.type || "" }
-                ), null);
-            } catch (error) {
-            }
-        };
-
-        node.handleProtectEventUpdate = (update) => {
-            try {
-                const item = update && update.item;
-                if (!item || item.modelKey !== "event" || !node.isObserving || item.device !== node.deviceId) {
-                    return;
-                }
-
-                const capabilityConfig = parseCapabilityConfig(node.capabilityConfig);
-                const observable = String(capabilityConfig.observable || "").trim();
-                if (observable) {
-                    const observation = resolveObservableEventValue(node.deviceType, item, observable);
-                    if (observation.matched) {
-                        node.currentObservableValue = Boolean(observation.value);
-                        node.status({ fill: "blue", shape: "ring", text: `${item.type || "event"}` });
-                        sendOutputs(node.send.bind(node), {
-                            payload: node.currentObservableValue,
-                            RAW: {
-                                device: node.currentDevice,
-                                event: item,
-                                observable,
-                                source: "events"
-                            },
-                            device: node.currentDevice,
-                            unifiProtect: buildBaseMetadata(node.deviceType, node.deviceId, "observe", {
-                                source: "events",
-                                observable,
-                                eventType: item.type || "",
-                                updateType: update.type || ""
-                            })
-                        }, null);
-                        return;
-                    }
-                }
-
-                node.status({ fill: "blue", shape: "ring", text: `${item.type || "event"}` });
+                node.status({ fill: "blue", shape: "ring", text: eventName || "event" });
                 sendOutputs(node.send.bind(node), null, {
-                    payload: {
-                        device: node.currentDevice,
-                        event: item
-                    },
+                    payload: eventPayload,
                     device: node.currentDevice,
-                    unifiProtect: buildBaseMetadata(node.deviceType, node.deviceId, "observe", {
+                    RAW: eventPayload,
+                    unifiAccess: buildBaseMetadata(node.deviceType, node.deviceId, "observe", {
                         source: "events",
-                        eventType: item.type || "",
-                        updateType: update.type || ""
+                        eventType: eventName
                     })
                 });
             } catch (error) {
@@ -318,6 +271,9 @@ module.exports = function(RED) {
         } else if (node.capability === "observe" && (!node.deviceType || !node.deviceId)) {
             node.status({ fill: "yellow", shape: "ring", text: "select device" });
         } else {
+            if (typeof node.server.addClient === "function") {
+                node.server.addClient(node);
+            }
             startObservation();
         }
 
@@ -330,5 +286,5 @@ module.exports = function(RED) {
         });
     }
 
-    RED.nodes.registerType("unifi-protect-device", UnifiProtectDeviceNode);
+    RED.nodes.registerType("unifi-access-device", UnifiAccessDeviceNode);
 };

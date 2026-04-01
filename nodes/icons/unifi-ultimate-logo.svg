@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 280" role="img" aria-labelledby="title desc">
+  <title id="title">Unifi Ultimate</title>
+  <desc id="desc">Logo for the node-red-contrib-unifi-ultimate package for UBIQUITI UniFi.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f3f8fc"/>
+      <stop offset="100%" stop-color="#eef3fb"/>
+    </linearGradient>
+    <linearGradient id="brand" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1173ff"/>
+      <stop offset="100%" stop-color="#0047b8"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#18324f" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <rect x="16" y="16" width="928" height="248" rx="32" fill="url(#bg)"/>
+
+  <g transform="translate(48 44)" filter="url(#shadow)">
+    <rect x="0" y="0" width="192" height="192" rx="40" fill="#ffffff"/>
+    <rect x="18" y="18" width="156" height="156" rx="34" fill="url(#brand)"/>
+    <g transform="translate(33 31)">
+      <path d="M96 0h18v18H96z" fill="#ffffff"/>
+      <path d="M76 54h20v20H76z" fill="#ffffff"/>
+      <path d="M56 71v25c0 22.091 17.909 40 40 40s40-17.909 40-40V54h-20v42c0 11.046-8.954 20-20 20s-20-8.954-20-20V71z" fill="#ffffff"/>
+      <path d="M16 54h20v42c0 33.137 26.863 60 60 60s60-26.863 60-60V54h20v42c0 20.628-4.676 35.684-12.42 48.133-3.572 5.742-7.84 11.006-12.664 15.766-14.896 14.688-34.824 24.101-54.916 26.114-3.021.303-9.044.606-12 .606-2.956 0-8.979-.303-12-.606-20.092-2.013-40.02-11.426-54.916-26.114-4.824-4.76-9.092-10.024-12.664-15.766C20.676 131.684 16 116.628 16 96z" fill="#ffffff" opacity=".22"/>
+    </g>
+  </g>
+
+  <g transform="translate(284 72)">
+    <text x="0" y="56" fill="#0f2238" font-family="Helvetica, Arial, sans-serif" font-size="58" font-weight="700" letter-spacing="0.5">
+      Unifi Ultimate
+    </text>
+    <text x="0" y="100" fill="#47627d" font-family="Helvetica, Arial, sans-serif" font-size="24" font-weight="500">
+      for UBIQUITI UniFi
+    </text>
+
+    <g transform="translate(0 132)">
+      <rect x="0" y="0" width="156" height="40" rx="20" fill="#ffffff"/>
+      <text x="25" y="26" fill="#42556b" font-family="Helvetica, Arial, sans-serif" font-size="20" font-weight="600">
+        Beta Package
+      </text>
+    </g>
+  </g>
+</svg>

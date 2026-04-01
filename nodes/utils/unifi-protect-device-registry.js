@@ -1,5 +1,13 @@
 "use strict";
 
+const {
+    buildObservableHelpText,
+    buildFieldHelpText,
+    formatFieldLabel,
+    formatObservableLabel,
+    formatValueWithMetadata
+} = require("./unifi-protect-field-metadata");
+
 const DEVICE_TYPE_DEFINITIONS = {
     camera: {
         type: "camera",
@@ -55,7 +63,7 @@ const DEVICE_TYPE_DEFINITIONS = {
 const COMMON_CAPABILITIES = [
     {
         id: "observe",
-        label: "Observe",
+        label: "Receive Events",
         description: "Fetch current state and keep listening to Protect streams.",
         method: "GET",
         pathKind: "detail",
@@ -63,7 +71,7 @@ const COMMON_CAPABILITIES = [
     },
     {
         id: "getDetails",
-        label: "Get details",
+        label: "Read Device State",
         description: "Fetch the full object payload once.",
         method: "GET",
         pathKind: "detail",
@@ -71,7 +79,7 @@ const COMMON_CAPABILITIES = [
     },
     {
         id: "patchSettings",
-        label: "Patch settings",
+        label: "Send Raw Update",
         description: "PATCH the selected device using msg.payload.",
         method: "PATCH",
         pathKind: "detail",
@@ -171,7 +179,7 @@ const LIGHT_OBSERVABLE_DEFINITIONS = [
 function createSetPropertyCapability() {
     return {
         id: "setProperty",
-        label: "Set property",
+        label: "Update One Property",
         description: "Patch a single property discovered from the selected device.",
         method: "PATCH",
         pathKind: "detail",
@@ -212,7 +220,7 @@ const TYPE_CAPABILITIES = {
     camera: [
         {
             id: "getSnapshot",
-            label: "Get snapshot",
+            label: "Take Snapshot",
             description: "Fetch a JPEG snapshot for the selected camera.",
             method: "GET",
             path: "/v1/cameras/:id/snapshot",
@@ -241,7 +249,7 @@ const TYPE_CAPABILITIES = {
         },
         {
             id: "getRtspsStreams",
-            label: "Get RTSPS streams",
+            label: "List RTSPS Streams",
             description: "Fetch current RTSPS streams for the selected camera.",
             method: "GET",
             path: "/v1/cameras/:id/rtsps-stream",
@@ -249,7 +257,7 @@ const TYPE_CAPABILITIES = {
         },
         {
             id: "createRtspsStreams",
-            label: "Create RTSPS streams",
+            label: "Create RTSPS Stream",
             description: "Create RTSPS streams using msg.payload.",
             method: "POST",
             path: "/v1/cameras/:id/rtsps-stream",
@@ -257,7 +265,7 @@ const TYPE_CAPABILITIES = {
         },
         {
             id: "deleteRtspsStreams",
-            label: "Delete RTSPS streams",
+            label: "Delete RTSPS Stream",
             description: "Delete RTSPS streams using msg.payload or msg.query.",
             method: "DELETE",
             path: "/v1/cameras/:id/rtsps-stream",
@@ -265,7 +273,7 @@ const TYPE_CAPABILITIES = {
         },
         {
             id: "createTalkbackSession",
-            label: "Create talkback session",
+            label: "Start Talkback Session",
             description: "Create a talkback session using msg.payload.",
             method: "POST",
             path: "/v1/cameras/:id/talkback-session",
@@ -273,7 +281,7 @@ const TYPE_CAPABILITIES = {
         },
         {
             id: "disableMicPermanently",
-            label: "Disable microphone permanently",
+            label: "Disable Microphone Permanently",
             description: "Permanently disable the selected camera microphone.",
             method: "POST",
             path: "/v1/cameras/:id/disable-mic-permanently",
@@ -282,7 +290,7 @@ const TYPE_CAPABILITIES = {
         },
         {
             id: "startPtzPatrol",
-            label: "Start PTZ patrol",
+            label: "Start PTZ Patrol",
             description: "Start a PTZ patrol.",
             method: "POST",
             path: "/v1/cameras/:id/ptz/patrol/start/:slot",
@@ -313,7 +321,7 @@ const TYPE_CAPABILITIES = {
         },
         {
             id: "stopPtzPatrol",
-            label: "Stop PTZ patrol",
+            label: "Stop PTZ Patrol",
             description: "Stop the active PTZ patrol.",
             method: "POST",
             path: "/v1/cameras/:id/ptz/patrol/stop",
@@ -321,7 +329,7 @@ const TYPE_CAPABILITIES = {
         },
         {
             id: "gotoPtzPreset",
-            label: "Go to PTZ preset",
+            label: "Recall PTZ Preset",
             description: "Move the PTZ camera to a preset.",
             method: "POST",
             path: "/v1/cameras/:id/ptz/goto/:slot",
@@ -346,7 +354,7 @@ const TYPE_CAPABILITIES = {
         },
         {
             id: "setDoorbellMessage",
-            label: "Set doorbell message",
+            label: "Show Doorbell Message",
             description: "Set a predefined, custom, or image message on the camera doorbell.",
             method: "PATCH",
             pathKind: "detail",
@@ -410,7 +418,7 @@ const TYPE_CAPABILITIES = {
     viewer: [
         {
             id: "setLiveview",
-            label: "Set live view",
+            label: "Switch Live View",
             description: "Assign the selected live view to the viewer.",
             method: "PATCH",
             pathKind: "detail",
@@ -447,20 +455,23 @@ function getDeviceTypeDefinition(deviceType) {
     return DEVICE_TYPE_DEFINITIONS[String(deviceType || "").trim()] || null;
 }
 
-function getCapabilitiesForType(deviceType) {
+function getCapabilitiesForType(deviceType, device) {
     const definition = getDeviceTypeDefinition(deviceType);
     if (!definition) {
         return [];
     }
 
-    return COMMON_CAPABILITIES.concat(TYPE_CAPABILITIES[definition.type] || []).map((capability) => ({
+    return COMMON_CAPABILITIES
+        .concat(TYPE_CAPABILITIES[definition.type] || [])
+        .filter((capability) => isCapabilitySupportedForDevice(definition.type, capability, device))
+        .map((capability) => ({
         ...capability,
         hasConfiguration: Boolean(capability.editor && Array.isArray(capability.editor.fields) && capability.editor.fields.length > 0)
     }));
 }
 
-function getCapabilityDefinition(deviceType, capabilityId) {
-    return getCapabilitiesForType(deviceType).find((capability) => capability.id === capabilityId) || null;
+function getCapabilityDefinition(deviceType, capabilityId, device) {
+    return getCapabilitiesForType(deviceType, device).find((capability) => capability.id === capabilityId) || null;
 }
 
 function buildDevicePath(deviceType, kind, deviceId, params) {
@@ -497,8 +508,8 @@ function buildDevicePath(deviceType, kind, deviceId, params) {
     return path;
 }
 
-function buildCapabilityRequest(deviceType, capabilityId, deviceId, params) {
-    const capability = getCapabilityDefinition(deviceType, capabilityId);
+function buildCapabilityRequest(deviceType, capabilityId, deviceId, params, device) {
+    const capability = getCapabilityDefinition(deviceType, capabilityId, device);
     if (!capability) {
         throw new Error(`Unsupported capability '${capabilityId}' for device type '${deviceType}'.`);
     }
@@ -514,8 +525,8 @@ function buildCapabilityRequest(deviceType, capabilityId, deviceId, params) {
     };
 }
 
-function composeCapabilityExecution(deviceType, capabilityId, capabilityConfig, msg) {
-    const capability = getCapabilityDefinition(deviceType, capabilityId);
+function composeCapabilityExecution(deviceType, capabilityId, capabilityConfig, msg, device) {
+    const capability = getCapabilityDefinition(deviceType, capabilityId, device);
     if (!capability) {
         throw new Error(`Unsupported capability '${capabilityId}' for device type '${deviceType}'.`);
     }
@@ -578,7 +589,7 @@ async function getCapabilityOptions(deviceType, capabilityId, context) {
         }
     }
 
-    const capability = getCapabilityDefinition(deviceType, capabilityId);
+    const capability = getCapabilityDefinition(deviceType, capabilityId, context && context.device);
     if (!capability || !capability.editor || !Array.isArray(capability.editor.fields) || capability.editor.fields.length === 0) {
         return {
             capabilityId,
@@ -732,6 +743,102 @@ function buildLiveviewOptions(liveviews, allowEmpty, emptyLabel) {
     return options;
 }
 
+function isCapabilitySupportedForDevice(deviceType, capability, device) {
+    if (!capability || !device || typeof device !== "object" || Array.isArray(device)) {
+        return true;
+    }
+
+    if (String(deviceType || "").trim() !== "camera") {
+        return true;
+    }
+
+    if (["startPtzPatrol", "stopPtzPatrol", "gotoPtzPreset"].includes(capability.id)) {
+        return isPtzCapableCamera(device);
+    }
+
+    if (capability.id === "setDoorbellMessage") {
+        return isDoorbellCamera(device);
+    }
+
+    if (capability.id === "disableMicPermanently") {
+        return hasCameraMicrophone(device);
+    }
+
+    return true;
+}
+
+function isPtzCapableCamera(device) {
+    const directValue = firstDefinedValue(device, [
+        "isPtz",
+        "hasPtz",
+        "featureFlags.hasPtz",
+        "featureFlags.isPtz",
+        "ptz.isEnabled",
+        "ptz.enabled",
+        "ptz.canMove"
+    ]);
+    if (directValue !== undefined) {
+        return normalizeBooleanState(directValue, false);
+    }
+
+    if (extractPtzPresetOptions(device).length > 0) {
+        return true;
+    }
+
+    const signature = [
+        device.type,
+        device.model,
+        device.modelKey,
+        device.marketName,
+        device.name,
+        device.displayName
+    ].map((value) => String(value || "").trim().toUpperCase()).join(" ");
+
+    if (signature.includes("PTZ")) {
+        return true;
+    }
+
+    return hasNestedKeyMatching(device, /ptz/i, 3);
+}
+
+function isDoorbellCamera(device) {
+    if (getValueAtPath(device, "lcdMessage") !== undefined || getValueAtPath(device, "featureFlags.isDoorbell") !== undefined) {
+        return true;
+    }
+
+    const directValue = firstDefinedValue(device, [
+        "isDoorbell",
+        "featureFlags.isDoorbell",
+        "featureFlags.hasLcdScreen",
+        "hasChime"
+    ]);
+    if (directValue !== undefined) {
+        return normalizeBooleanState(directValue, false);
+    }
+
+    const signature = [
+        device.type,
+        device.model,
+        device.modelKey,
+        device.marketName,
+        device.name,
+        device.displayName
+    ].map((value) => String(value || "").trim().toUpperCase()).join(" ");
+
+    return signature.includes("DOORBELL");
+}
+
+function hasCameraMicrophone(device) {
+    const directValue = firstDefinedValue(device, [
+        "isMicEnabled",
+        "micVolume",
+        "speakerSettings.volume",
+        "recordingSettings.isMicEnabled",
+        "audioSettings.isMicEnabled"
+    ]);
+    return directValue !== undefined;
+}
+
 async function buildDoorbellMessageFields(context, capability) {
     const capabilityConfig = normalizeObject(context && context.capabilityConfig);
     const messageType = String(capabilityConfig.messageType || "DO_NOT_DISTURB").trim() || "DO_NOT_DISTURB";
@@ -783,6 +890,7 @@ function buildAssetFileOptions(files) {
 function buildObservableFields(deviceType, context) {
     const capabilityConfig = normalizeObject(context && context.capabilityConfig);
     const observableOptions = getObservableOptions(deviceType);
+    const selectedObservable = resolveSelectedObservable(observableOptions, capabilityConfig.observable);
 
     return {
         capabilityId: "observe",
@@ -792,7 +900,10 @@ function buildObservableFields(deviceType, context) {
                 label: "Observable",
                 type: "select",
                 options: observableOptions,
-                defaultValue: resolveSelectedObservable(observableOptions, capabilityConfig.observable)
+                defaultValue: selectedObservable,
+                helpText: selectedObservable
+                    ? buildObservableHelpText(deviceType, selectedObservable)
+                    : "Select which boolean state should be exposed on msg.payload."
             }
         ]
     };
@@ -827,7 +938,12 @@ async function buildSetPropertyFields(deviceType, context, capability) {
             type: "select",
             placeholder: "Select a property",
             reloadOnChange: true,
-            options: propertyOptions
+            options: propertyOptions,
+            helpText: selectedPath
+                ? buildFieldHelpText(deviceType, selectedPath, {
+                    currentValueText: formatValueWithMetadata(deviceType, selectedPath, getValueAtPath(device, selectedPath))
+                })
+                : "Select a property to see a human-friendly label and contextual help."
         }
     ];
 
@@ -861,6 +977,7 @@ function resolveSelectedPropertyPath(propertyOptions, configuredPath) {
 function buildPropertyValueFields(deviceType, device, propertyPath, capabilityConfig, extra) {
     const currentValue = getValueAtPath(device, propertyPath);
     const descriptor = inferPropertyDescriptor(deviceType, propertyPath, currentValue, extra);
+    const currentValueText = formatValueWithMetadata(deviceType, propertyPath, currentValue);
 
     return [
         {
@@ -870,9 +987,12 @@ function buildPropertyValueFields(deviceType, device, propertyPath, capabilityCo
         },
         {
             id: "propertyValue",
-            label: "Value",
+            label: formatFieldLabel(deviceType, propertyPath),
             ...descriptor.field,
-            defaultValue: normalizeDefaultPropertyValue(capabilityConfig.propertyValue, descriptor, currentValue)
+            defaultValue: normalizeDefaultPropertyValue(capabilityConfig.propertyValue, descriptor, currentValue),
+            helpText: buildFieldHelpText(deviceType, propertyPath, {
+                currentValueText
+            })
         }
     ];
 }
@@ -984,7 +1104,7 @@ function collectConfigurablePropertyOptions(deviceType, device) {
             const path = pathSegments.join(".");
             collected.push({
                 value: path,
-                label: `${formatPropertyLabel(pathSegments)} (${formatCurrentValue(value)})`
+                label: `${formatFieldLabel(deviceType, path)} (${formatValueWithMetadata(deviceType, path, value)})`
             });
         }
 
@@ -1048,21 +1168,6 @@ function isConfigurablePath(pathSegments) {
     }
 
     return true;
-}
-
-function formatPropertyLabel(pathSegments) {
-    return pathSegments.map((segment) => String(segment).replace(/([a-z0-9])([A-Z])/g, "$1 $2")).join(" > ");
-}
-
-function formatCurrentValue(value) {
-    if (value === null) {
-        return "null";
-    }
-    if (typeof value === "boolean") {
-        return value ? "true" : "false";
-    }
-    const text = String(value);
-    return text.length > 24 ? `${text.slice(0, 21)}...` : text;
 }
 
 function deduplicateOptions(options) {
@@ -1167,7 +1272,7 @@ function getObservableDefinitions(deviceType) {
 function getObservableOptions(deviceType) {
     return getObservableDefinitions(deviceType).map((definition) => ({
         value: definition.id,
-        label: definition.label
+        label: formatObservableLabel(deviceType, definition.id, definition.label)
     }));
 }
 
@@ -1516,6 +1621,27 @@ function getPresetLabel(entry, fallbackValue) {
     }
 
     return `Preset ${fallbackValue}`;
+}
+
+function hasNestedKeyMatching(value, pattern, maxDepth) {
+    const visited = new Set();
+
+    function walk(current, depth) {
+        if (!current || typeof current !== "object" || visited.has(current) || depth > maxDepth) {
+            return false;
+        }
+        visited.add(current);
+
+        return Object.entries(current).some(([key, nestedValue]) => {
+            if (pattern.test(String(key || ""))) {
+                return true;
+            }
+
+            return walk(nestedValue, depth + 1);
+        });
+    }
+
+    return walk(value, 0);
 }
 
 function normalizeObject(value) {

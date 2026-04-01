@@ -5,35 +5,36 @@ const {
     buildQueryString,
     doRequest,
     buildRequestHeaders,
-    buildRequestBody
-} = require("./utils/unifi-protect-utils");
+    buildRequestBody,
+    extractAccessData,
+    normalizeAccessCollection
+} = require("./utils/unifi-access-utils");
 const {
-    getDeviceTypes,
-    getDeviceTypeDefinition,
     getCapabilitiesForType,
     getCapabilityOptions,
-    buildDevicePath,
-    normalizeDeviceCollection,
+    getDeviceTypeDefinition,
+    getDeviceTypes,
     summarizeDevice
-} = require("./utils/unifi-protect-device-registry");
+} = require("./utils/unifi-access-device-registry");
 
 module.exports = function(RED) {
-    function UnifiProtectConfigNode(config) {
+    const ACTIVE_DOORBELL_TTL_MS = 60000;
+
+    function UnifiAccessConfigNode(config) {
         RED.nodes.createNode(this, config);
 
         const node = this;
         node.name = config.name;
         node.host = String(config.host || "").trim();
         node.baseUrl = buildBaseUrlFromHost(node.host);
-        node.authHeader = (config.authHeader || "X-API-Key").trim() || "X-API-Key";
         node.rejectUnauthorized = config.rejectUnauthorized !== false && config.rejectUnauthorized !== "false";
         node.nodeClients = [];
-        node.wsDevices = null;
-        node.wsEvents = null;
+        node.wsNotifications = null;
         node.reconnectTimer = null;
         node.isClosing = false;
+        node.activeDoorbells = new Map();
 
-        node.getApiKey = () => node.credentials && node.credentials.apiKey;
+        node.getApiToken = () => node.credentials && node.credentials.apiToken;
 
         node.apiRequest = async ({
             path,
@@ -44,19 +45,19 @@ module.exports = function(RED) {
             timeout = 15000
         }) => {
             if (!node.baseUrl) {
-                throw new Error("The configured IP is empty or invalid.");
+                throw new Error("The configured host is empty or invalid.");
             }
 
-            const apiKey = node.getApiKey();
-            if (!apiKey) {
-                throw new Error("The UniFi Protect API key is missing.");
+            const apiToken = String(node.getApiToken() || "").trim();
+            if (!apiToken) {
+                throw new Error("The UniFi Access API token is missing.");
             }
 
             const queryString = buildQueryString(query);
             const normalizedPath = String(path || "").startsWith("/") ? String(path || "") : `/${String(path || "")}`;
             const requestUrl = new URL(`${node.baseUrl}${normalizedPath}${queryString}`);
             const requestMethod = String(method || "GET").toUpperCase();
-            const requestHeaders = buildRequestHeaders(node.authHeader, apiKey, headers);
+            const requestHeaders = buildRequestHeaders(apiToken, headers);
             const requestBody = buildRequestBody(requestHeaders, requestMethod, payload);
 
             return doRequest(
@@ -77,42 +78,40 @@ module.exports = function(RED) {
                 throw new Error(`Unsupported device type: ${deviceType}`);
             }
 
-            const response = await node.apiRequest({ path: definition.listPath, method: "GET" });
+            const response = await node.apiRequest({
+                path: definition.listPath,
+                method: "GET",
+                query: deviceType === "device" ? { refresh: "true" } : undefined
+            });
+
             if (response.statusCode < 200 || response.statusCode >= 300) {
-                throw new Error(`Failed to load ${deviceType} devices (${response.statusCode})`);
+                throw new Error(`Failed to load ${deviceType} entries (${response.statusCode})`);
             }
-            return normalizeDeviceCollection(deviceType, response.payload);
+
+            return normalizeAccessCollection(response.payload);
         };
 
         node.fetchDeviceByTypeAndId = async (deviceType, deviceId) => {
-            const path = buildDevicePath(deviceType, "detail", deviceId);
-            const response = await node.apiRequest({
-                path,
-                method: "GET"
-            });
-            if (response.statusCode < 200 || response.statusCode >= 300) {
-                throw new Error(`Failed to load ${deviceType} ${deviceId || ""} (${response.statusCode})`);
-            }
-            return response.payload;
-        };
-
-        node.fetchAssetFiles = async (fileType) => {
-            const normalizedType = String(fileType || "").trim();
-            if (!normalizedType) {
-                throw new Error("Missing file type.");
+            const definition = getDeviceTypeDefinition(deviceType);
+            if (!definition) {
+                throw new Error(`Unsupported device type: ${deviceType}`);
             }
 
-            const response = await node.apiRequest({
-                path: `/v1/files/${encodeURIComponent(normalizedType)}`,
-                method: "GET"
-            });
-            if (response.statusCode < 200 || response.statusCode >= 300) {
-                throw new Error(`Failed to load files for ${normalizedType} (${response.statusCode})`);
+            if (definition.detailPath) {
+                const response = await node.apiRequest({
+                    path: definition.detailPath.replace(":id", encodeURIComponent(String(deviceId || "").trim())),
+                    method: "GET"
+                });
+
+                if (response.statusCode < 200 || response.statusCode >= 300) {
+                    throw new Error(`Failed to load ${deviceType} ${deviceId || ""} (${response.statusCode})`);
+                }
+
+                return extractAccessData(response.payload);
             }
 
-            return Array.isArray(response.payload)
-                ? response.payload
-                : [];
+            const items = await node.fetchDevices(deviceType);
+            return items.find((entry) => String(entry.id || "").trim() === String(deviceId || "").trim()) || null;
         };
 
         node.fetchCapabilityOptions = async (deviceType, deviceId, capabilityId, capabilityConfig) => {
@@ -124,9 +123,7 @@ module.exports = function(RED) {
                 deviceId,
                 device: selectedDevice,
                 capabilityConfig,
-                fetchDevice: node.fetchDeviceByTypeAndId,
-                fetchDevices: node.fetchDevices,
-                fetchAssetFiles: node.fetchAssetFiles
+                fetchDevices: node.fetchDevices
             });
         };
 
@@ -144,26 +141,95 @@ module.exports = function(RED) {
             return url.toString();
         };
 
-        node.broadcastDeviceUpdate = (update) => {
+        node.broadcastNotification = (payload) => {
             node.nodeClients.forEach((client) => {
                 try {
-                    if (client && typeof client.handleProtectDeviceUpdate === "function") {
-                        client.handleProtectDeviceUpdate(update);
+                    if (client && typeof client.handleAccessEventUpdate === "function") {
+                        client.handleAccessEventUpdate(payload);
                     }
                 } catch (error) {
                 }
             });
         };
 
-        node.broadcastEventUpdate = (update) => {
-            node.nodeClients.forEach((client) => {
-                try {
-                    if (client && typeof client.handleProtectEventUpdate === "function") {
-                        client.handleProtectEventUpdate(update);
-                    }
-                } catch (error) {
+        node.updateDoorbellState = (payload) => {
+            const eventName = String(payload && payload.event || "").trim();
+            const data = payload && payload.data && typeof payload.data === "object" ? payload.data : {};
+            const device = data.device && typeof data.device === "object" ? data.device : {};
+            const deviceId = String(device.id || "").trim();
+            const objectData = payload && payload.object && typeof payload.object === "object" ? payload.object : {};
+            const nestedObjectData = data.object && typeof data.object === "object" ? data.object : {};
+            const requestId = String(objectData.request_id || nestedObjectData.request_id || "").trim();
+
+            if (!deviceId) {
+                return;
+            }
+
+            if (eventName.startsWith("access.doorbell.incoming")) {
+                node.activeDoorbells.set(deviceId, {
+                    requestId,
+                    updatedAt: Date.now(),
+                    expiresAt: Date.now() + ACTIVE_DOORBELL_TTL_MS,
+                    source: "event",
+                    payload
+                });
+                return;
+            }
+
+            if (eventName.startsWith("access.doorbell.completed")) {
+                const current = node.activeDoorbells.get(deviceId);
+                if (!current) {
+                    return;
+                }
+
+                if (!requestId || !current.requestId || current.requestId === requestId) {
+                    node.activeDoorbells.delete(deviceId);
+                }
+            }
+        };
+
+        node.purgeExpiredDoorbells = () => {
+            const now = Date.now();
+            Array.from(node.activeDoorbells.entries()).forEach(([deviceId, entry]) => {
+                const expiresAt = Number(entry && entry.expiresAt);
+                if (Number.isFinite(expiresAt) && expiresAt > 0 && expiresAt <= now) {
+                    node.activeDoorbells.delete(deviceId);
                 }
             });
+        };
+
+        node.getActiveDoorbell = (deviceId) => {
+            node.purgeExpiredDoorbells();
+            const normalizedId = String(deviceId || "").trim();
+            if (!normalizedId) {
+                return null;
+            }
+
+            return node.activeDoorbells.get(normalizedId) || null;
+        };
+
+        node.hasAnyActiveDoorbell = () => {
+            node.purgeExpiredDoorbells();
+            return node.activeDoorbells.size > 0;
+        };
+
+        node.markDoorbellTriggered = (deviceId, metadata) => {
+            const normalizedId = String(deviceId || "").trim();
+            if (!normalizedId) {
+                return;
+            }
+
+            node.activeDoorbells.set(normalizedId, {
+                requestId: "",
+                updatedAt: Date.now(),
+                expiresAt: Date.now() + ACTIVE_DOORBELL_TTL_MS,
+                source: "request",
+                ...(metadata && typeof metadata === "object" ? metadata : {})
+            });
+        };
+
+        node.markDoorbellCanceled = () => {
+            node.activeDoorbells.clear();
         };
 
         node.scheduleReconnect = () => {
@@ -173,27 +239,31 @@ module.exports = function(RED) {
 
             node.reconnectTimer = setTimeout(() => {
                 node.reconnectTimer = null;
-                node.ensureWebSockets();
+                node.ensureWebSocket();
             }, 5000);
         };
 
-        node.attachSocket = (kind, path, handler) => {
+        node.ensureWebSocket = () => {
+            if (node.isClosing || node.nodeClients.length === 0 || node.wsNotifications) {
+                return;
+            }
+
             let WebSocket;
-            const apiKey = node.getApiKey();
-            if (!apiKey || !node.baseUrl) {
+            const apiToken = String(node.getApiToken() || "").trim();
+            if (!apiToken || !node.baseUrl) {
                 return;
             }
 
             try {
                 ({ WebSocket } = require("ws"));
             } catch (error) {
-                node.warn("The 'ws' dependency is not installed. UniFi Protect event streams are disabled until dependencies are installed.");
+                node.warn("The 'ws' dependency is not installed. UniFi Access event streams are disabled until dependencies are installed.");
                 return;
             }
 
-            const ws = new WebSocket(node.buildWebSocketUrl(path), {
+            const ws = new WebSocket(node.buildWebSocketUrl("/api/v1/developer/devices/notifications"), {
                 headers: {
-                    [node.authHeader]: apiKey,
+                    Authorization: `Bearer ${apiToken}`,
                     Accept: "application/json"
                 },
                 rejectUnauthorized: node.rejectUnauthorized
@@ -203,17 +273,15 @@ module.exports = function(RED) {
                 try {
                     const text = Buffer.isBuffer(rawData) ? rawData.toString("utf8") : String(rawData);
                     const parsed = JSON.parse(text);
-                    handler(parsed);
+                    node.updateDoorbellState(parsed);
+                    node.broadcastNotification(parsed);
                 } catch (error) {
                 }
             });
 
             ws.on("close", () => {
-                if (kind === "devices" && node.wsDevices === ws) {
-                    node.wsDevices = null;
-                }
-                if (kind === "events" && node.wsEvents === ws) {
-                    node.wsEvents = null;
+                if (node.wsNotifications === ws) {
+                    node.wsNotifications = null;
                 }
                 node.scheduleReconnect();
             });
@@ -225,47 +293,21 @@ module.exports = function(RED) {
                 }
             });
 
-            if (kind === "devices") {
-                node.wsDevices = ws;
-            } else {
-                node.wsEvents = ws;
-            }
+            node.wsNotifications = ws;
         };
 
-        node.ensureWebSockets = () => {
-            if (node.isClosing || node.nodeClients.length === 0) {
-                return;
-            }
-
-            if (!node.wsDevices) {
-                node.attachSocket("devices", "/v1/subscribe/devices", node.broadcastDeviceUpdate);
-            }
-
-            if (!node.wsEvents) {
-                node.attachSocket("events", "/v1/subscribe/events", node.broadcastEventUpdate);
-            }
-        };
-
-        node.closeWebSockets = () => {
+        node.closeWebSocket = () => {
             if (node.reconnectTimer) {
                 clearTimeout(node.reconnectTimer);
                 node.reconnectTimer = null;
             }
 
-            if (node.wsDevices) {
+            if (node.wsNotifications) {
                 try {
-                    node.wsDevices.close();
+                    node.wsNotifications.close();
                 } catch (error) {
                 }
-                node.wsDevices = null;
-            }
-
-            if (node.wsEvents) {
-                try {
-                    node.wsEvents.close();
-                } catch (error) {
-                }
-                node.wsEvents = null;
+                node.wsNotifications = null;
             }
         };
 
@@ -273,44 +315,45 @@ module.exports = function(RED) {
             if (!client) {
                 return;
             }
+
             node.nodeClients = node.nodeClients.filter((entry) => entry && entry.id !== client.id);
             node.nodeClients.push(client);
-            node.ensureWebSockets();
+            node.ensureWebSocket();
         };
 
         node.removeClient = (client) => {
             node.nodeClients = node.nodeClients.filter((entry) => entry && client && entry.id !== client.id);
             if (node.nodeClients.length === 0) {
-                node.closeWebSockets();
+                node.closeWebSocket();
             }
         };
 
         node.on("close", function(done) {
             node.isClosing = true;
-            node.closeWebSockets();
+            node.activeDoorbells.clear();
+            node.closeWebSocket();
             done();
         });
     }
 
-    RED.nodes.registerType("unifi-protect-config", UnifiProtectConfigNode, {
+    RED.nodes.registerType("unifi-access-config", UnifiAccessConfigNode, {
         credentials: {
-            apiKey: { type: "password" }
+            apiToken: { type: "password" }
         }
     });
 
-    RED.httpAdmin.get("/unifiProtect/device-types", RED.auth.needsPermission("unifi-protect-config.read"), async (req, res) => {
+    RED.httpAdmin.get("/unifiAccess/device-types", RED.auth.needsPermission("unifi-access-config.read"), async (req, res) => {
         try {
             res.json(getDeviceTypes().map((definition) => ({
                 type: definition.type,
-                label: definition.label,
-                modelKey: definition.modelKey
+                label: definition.label
             })));
         } catch (error) {
             res.status(500).json({ error: error.message });
         }
     });
 
-    RED.httpAdmin.get("/unifiProtect/device-capabilities", RED.auth.needsPermission("unifi-protect-config.read"), async (req, res) => {
+    RED.httpAdmin.get("/unifiAccess/device-capabilities", RED.auth.needsPermission("unifi-access-config.read"), async (req, res) => {
         try {
             const serverId = String(req.query.serverId || "").trim();
             const deviceType = String(req.query.deviceType || "").trim();
@@ -337,7 +380,7 @@ module.exports = function(RED) {
         }
     });
 
-    RED.httpAdmin.get("/unifiProtect/device-capability-options", RED.auth.needsPermission("unifi-protect-config.read"), async (req, res) => {
+    RED.httpAdmin.get("/unifiAccess/device-capability-options", RED.auth.needsPermission("unifi-access-config.read"), async (req, res) => {
         try {
             const serverId = req.query.serverId;
             const deviceType = String(req.query.deviceType || "").trim();
@@ -380,7 +423,7 @@ module.exports = function(RED) {
         }
     });
 
-    RED.httpAdmin.get("/unifiProtect/devices", RED.auth.needsPermission("unifi-protect-config.read"), async (req, res) => {
+    RED.httpAdmin.get("/unifiAccess/devices", RED.auth.needsPermission("unifi-access-config.read"), async (req, res) => {
         try {
             const serverId = req.query.serverId;
             const deviceType = String(req.query.deviceType || "").trim();

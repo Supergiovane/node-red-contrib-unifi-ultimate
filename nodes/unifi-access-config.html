@@ -1,0 +1,50 @@
+<script type="text/javascript">
+    RED.nodes.registerType("unifi-access-config", {
+        category: "config",
+        defaults: {
+            name: { value: "Unifi Access Config" },
+            host: { value: "", required: true },
+            rejectUnauthorized: { value: false }
+        },
+        credentials: {
+            apiToken: { type: "password", required: true }
+        },
+        label: function () {
+            return this.name || this.host || "Unifi Access Config";
+        },
+        oneditprepare: function () {
+            try {
+                RED.sidebar.show("help");
+            } catch (error) {
+            }
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="unifi-access-config">
+    <div class="form-row">
+        <label for="node-config-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-config-input-name" placeholder="Unifi Access Config">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-host"><i class="fa fa-globe"></i> Host</label>
+        <input type="text" id="node-config-input-host" placeholder="192.168.1.10 or access.local:12445">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-apiToken"><i class="fa fa-key"></i> API Token</label>
+        <input type="password" id="node-config-input-apiToken">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-rejectUnauthorized"><i class="fa fa-lock"></i> Verify TLS</label>
+        <input type="checkbox" id="node-config-input-rejectUnauthorized" style="display:inline-block; width:auto; vertical-align:top;">
+        <span style="margin-left:8px;">Reject invalid/self-signed certificates</span>
+    </div>
+</script>
+
+<script type="text/html" data-help-name="unifi-access-config">
+    <p>Shared configuration for UniFi Access nodes.</p>
+    <p>Enter the UniFi Access host or <code>host:port</code>. If the port is omitted, the node uses the documented default <code>12445</code> and builds requests as <code>https://host:12445</code>.</p>
+    <p>Authentication uses the official bearer token model: the node sends <code>Authorization: Bearer &lt;token&gt;</code>.</p>
+    <p>This config node also keeps the shared WebSocket connection and the controller-level doorbell ring tracking used by <code>Cancel Doorbell</code>.</p>
+    <p><small>Note: the official UniFi Access API documentation states that the API is not available after upgrading to Identity Enterprise.</small></p>
+</script>

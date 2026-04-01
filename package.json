@@ -1,7 +1,7 @@
 {
   "name": "node-red-contrib-unifi-ultimate",
-  "version": "0.1.0-beta.1",
-  "description": "Node-RED nodes for Ubiquiti UniFi integrations, starting with UniFi Protect.",
+  "version": "0.1.0-beta.2",
+  "description": "Node-RED nodes for Ubiquiti UniFi integrations, including UniFi Protect and UniFi Access.",
   "files": [
     "nodes/",
     "examples/",
@@ -13,6 +13,7 @@
     "unifi",
     "ubiquiti",
     "protect",
+    "access",
     "node-red-contrib"
   ],
   "dependencies": {
@@ -31,11 +32,13 @@
   "node-red": {
     "version": ">=3.1.1",
     "nodes": {
+      "unifi-access-config": "nodes/unifi-access-config.js",
+      "unifi-access-device": "nodes/unifi-access-device.js",
       "unifi-protect-config": "nodes/unifi-protect-config.js",
       "unifi-protect-device": "nodes/unifi-protect-device.js"
     }
   },
   "scripts": {
-    "test": "node --check nodes/unifi-protect-config.js && node --check nodes/unifi-protect-device.js && node --check nodes/utils/unifi-protect-utils.js && node --check nodes/utils/unifi-protect-device-registry.js"
+    "test": "node --check nodes/unifi-access-config.js && node --check nodes/unifi-access-device.js && node --check nodes/unifi-protect-config.js && node --check nodes/unifi-protect-device.js && node --check nodes/utils/unifi-access-utils.js && node --check nodes/utils/unifi-access-device-registry.js && node --check nodes/utils/unifi-protect-utils.js && node --check nodes/utils/unifi-protect-field-metadata.js && node --check nodes/utils/unifi-protect-device-registry.js"
   }
 }

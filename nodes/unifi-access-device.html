@@ -1,10 +1,10 @@
 <script type="text/javascript">
-    RED.nodes.registerType("unifi-protect-device", {
+    RED.nodes.registerType("unifi-access-device", {
         category: "Unifi Ultimate",
-        color: "#7DB7E8",
+        color: "#B6D77A",
         defaults: {
             name: { value: "" },
-            server: { value: "", type: "unifi-protect-config", required: true },
+            server: { value: "", type: "unifi-access-config", required: true },
             deviceType: { value: "", required: true },
             deviceId: { value: "", required: true },
             capability: { value: "observe", required: true },
@@ -14,10 +14,10 @@
         inputs: 1,
         outputs: 2,
         icon: "unifi-protect-icon.svg",
-        paletteLabel: "PROTECT",
+        paletteLabel: "ACCESS",
         outputLabels: ["state", "events"],
         label: function () {
-            return this.name || this.deviceId || "Unifi Protect";
+            return this.name || this.deviceId || "Unifi Access";
         },
         oneditsave: function () {
             const $capabilityConfig = $("#node-input-capabilityConfig");
@@ -244,18 +244,9 @@
 
                 if (field.multiple) {
                     const selectedValues = Array.isArray(normalizedValue) ? normalizedValue.map(String) : [];
-                    const matchingValues = selectedValues.filter(function (value) {
+                    return selectedValues.filter(function (value) {
                         return optionValues.indexOf(value) !== -1;
                     });
-                    if (matchingValues.length > 0) {
-                        return matchingValues;
-                    }
-                    if (Array.isArray(field.defaultValue)) {
-                        return field.defaultValue.map(String).filter(function (value) {
-                            return optionValues.indexOf(value) !== -1;
-                        });
-                    }
-                    return [];
                 }
 
                 if (optionValues.indexOf(String(normalizedValue)) !== -1) {
@@ -291,12 +282,6 @@
                     $input.val(selectedValues);
                 } else {
                     $input.val(selectedValues.length > 0 ? selectedValues[0] : "");
-                    const selectedIndex = $input.find("option").toArray().findIndex(function (option) {
-                        return String(option.value) === String(selectedValues.length > 0 ? selectedValues[0] : "");
-                    });
-                    if (selectedIndex >= 0 && $input.get(0)) {
-                        $input.get(0).selectedIndex = selectedIndex;
-                    }
                 }
             }
 
@@ -359,7 +344,9 @@
                         if (field.multiple) {
                             $input.attr("multiple", "multiple").css("min-height", "88px");
                         }
-                        if (field.placeholder && !field.allowEmpty) {
+                        if (field.allowEmpty && field.emptyLabel) {
+                            $input.append($("<option></option>").val("").text(field.emptyLabel));
+                        } else if (field.placeholder && !field.allowEmpty) {
                             $input.append($("<option></option>").val("").text(field.placeholder));
                         }
                         (field.options || []).forEach(function (option) {
@@ -410,17 +397,7 @@
                             capabilityConfig[field.id] = $(this).val();
                         }
 
-                        if (field.reloadOnChange && field.id === "propertyPath") {
-                            delete capabilityConfig.propertyValue;
-                            delete capabilityConfig.valueType;
-                        }
-
                         writeCapabilityConfig();
-
-                        if (field.reloadOnChange) {
-                            syncCapabilityConfigFromInputs();
-                            loadCapabilityOptions();
-                        }
                     });
 
                     if (isHiddenField) {
@@ -487,7 +464,7 @@
                     return Promise.resolve();
                 }
 
-                let requestUrl = "unifiProtect/device-capabilities?deviceType=" + encodeURIComponent(selectedType);
+                let requestUrl = "unifiAccess/device-capabilities?deviceType=" + encodeURIComponent(selectedType);
                 if (serverId && serverId !== "_ADD_" && selectedDeviceId) {
                     requestUrl += "&serverId=" + encodeURIComponent(serverId) + "&deviceId=" + encodeURIComponent(selectedDeviceId);
                 }
@@ -516,7 +493,7 @@
                 }
 
                 return requestJson(
-                    "unifiProtect/device-capability-options?serverId=" + encodeURIComponent(serverId) +
+                    "unifiAccess/device-capability-options?serverId=" + encodeURIComponent(serverId) +
                     "&deviceType=" + encodeURIComponent(currentDeviceType) +
                     "&deviceId=" + encodeURIComponent(currentDeviceId || "") +
                     "&capability=" + encodeURIComponent(currentCapability) +
@@ -547,7 +524,7 @@
 
                 $refresh.addClass("fa-spin");
                 return requestJson(
-                    "unifiProtect/devices?serverId=" + encodeURIComponent(serverId) + "&deviceType=" + encodeURIComponent(selectedType)
+                    "unifiAccess/devices?serverId=" + encodeURIComponent(serverId) + "&deviceType=" + encodeURIComponent(selectedType)
                 ).then(function (data) {
                     renderDevices(Array.isArray(data) ? data : []);
                 }).catch(function (xhr) {
@@ -561,7 +538,7 @@
             }
 
             function loadDeviceTypes() {
-                return requestJson("unifiProtect/device-types")
+                return requestJson("unifiAccess/device-types")
                     .then(function (data) {
                         renderDeviceTypes(Array.isArray(data) ? data : []);
                     })
@@ -670,10 +647,10 @@
     });
 </script>
 
-<script type="text/html" data-template-name="unifi-protect-device">
+<script type="text/html" data-template-name="unifi-access-device">
     <div class="form-row">
         <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
-        <input type="text" id="node-input-name" placeholder="Unifi Protect Device">
+        <input type="text" id="node-input-name" placeholder="Unifi Access Device">
     </div>
     <div class="form-row">
         <label for="node-input-server"><i class="fa fa-cog"></i> Config</label>
@@ -705,29 +682,29 @@
     </div>
 </script>
 
-<script type="text/html" data-help-name="unifi-protect-device">
-    <p>Represents a generic UniFi Protect object. The node uses discovery for device types, instances, and supported capabilities.</p>
+<script type="text/html" data-help-name="unifi-access-device">
+    <p>Represents a generic UniFi Access object. This first version focuses on doors and Access devices.</p>
 
     <h3>Configuration</h3>
-    <p>Select a device type, then a specific instance, and finally the capability to use. The node filters the capability list using the selected Protect device, so PTZ actions, doorbell actions, and similar features appear only when the selected object looks compatible.</p>
-    <p><code>Receive Events</code> performs an initial fetch and stays connected to the Protect streams. If a capability exposes configurable options, the node presents them automatically. <code>Update One Property</code> discovers patchable properties from the selected device payload and adapts the editor to the selected value type.</p>
-    <p>For <code>Sensor + Receive Events</code>, <code>Camera + Receive Events</code>, and <code>Light + Receive Events</code> you can choose an observable and the node emits <code>true</code> or <code>false</code> in <code>msg.payload</code>, while keeping the original details in <code>msg.RAW</code>.</p>
+    <p>Select a type, then a specific door or device, and finally the capability to use. The node filters the capability list using the selected UniFi Access device, so doorbell actions appear only where they make sense, for example on Intercom or Reader Pro devices and not on Viewers.</p>
+    <p><code>Receive Events</code> fetches the current state once and then listens to the official UniFi Access notifications WebSocket. Door capabilities cover unlocks, temporary lock rules, and emergency mode. Device capabilities cover access method settings and doorbell actions.</p>
+    <p><code>Trigger Doorbell</code> and <code>Cancel Doorbell</code> use a manual <code>Room Name</code> field when needed. The node does not currently discover Intercom directory names automatically.</p>
+    <p><code>Cancel Doorbell</code> uses a shared safe-cancel guard in the UniFi Access config node. A cancel request is sent only if that controller-level config is currently tracking an active ring, using a 60 second timeout window.</p>
 
     <h3>Input</h3>
     <ul>
-        <li><code>msg.deviceType</code>, <code>msg.deviceId</code>, and <code>msg.capability</code> for runtime request overrides</li>
+        <li><code>msg.deviceType</code>, <code>msg.deviceId</code>, and <code>msg.capability</code> for runtime overrides</li>
         <li><code>msg.capabilityConfig</code> for runtime overrides of the options selected in the editor</li>
-        <li><code>msg.params</code> for targeted path parameter overrides when needed</li>
         <li><code>msg.query</code>, <code>msg.headers</code>, and <code>msg.payload</code> for the HTTP request</li>
     </ul>
 
     <h3>Output</h3>
     <ul>
-        <li>Output 1: device state or primary capability response</li>
-        <li>Output 2: Protect events related to the selected device</li>
-        <li><code>msg.unifiProtect</code>: standardized metadata for the device and the selected capability</li>
-        <li><code>msg.RAW</code>: full raw context when an observable is used</li>
+        <li>Output 1: current state or primary capability response</li>
+        <li>Output 2: Access notification events related to the selected item</li>
+        <li><code>msg.unifiAccess</code>: standardized metadata for the device and selected capability</li>
+        <li>Safe-cancel skip: <code>msg.payload.skipped = true</code> when <code>Cancel Doorbell</code> is blocked because no active ring is currently tracked</li>
     </ul>
 
-    <p><small>Note: some field labels and option descriptions are simplified by this node to make the editor easier to use. They are intended as user-friendly guidance.</small></p>
+    <p><small>Note: this first Access node intentionally focuses on the most practical APIs from the official PDF, starting with doors, door locking, emergency mode, access method settings, doorbells, and notification events.</small></p>
 </script>
