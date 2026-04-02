@@ -1,0 +1,205 @@
+[
+  {
+    "id": "tab-access-intercom-doorbell",
+    "type": "tab",
+    "label": "UniFi Access Intercom Doorbell",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "comment-access-intercom-doorbell",
+    "type": "comment",
+    "z": "tab-access-intercom-doorbell",
+    "name": "Setup",
+    "info": "Replace the Access host, API token, and intercom id before deploying.\nRoom Name is manual. Cancel Doorbell uses the shared safe-cancel tracking from the Access config node.",
+    "x": 300,
+    "y": 60,
+    "wires": []
+  },
+  {
+    "id": "inject-access-intercom-observe",
+    "type": "inject",
+    "z": "tab-access-intercom-doorbell",
+    "name": "Start Observe",
+    "props": [],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "x": 150,
+    "y": 140,
+    "wires": [
+      [
+        "node-access-intercom-observe"
+      ]
+    ]
+  },
+  {
+    "id": "node-access-intercom-observe",
+    "type": "unifi-access-device",
+    "z": "tab-access-intercom-doorbell",
+    "name": "Observe Intercom",
+    "server": "config-access-intercom-doorbell",
+    "deviceType": "device",
+    "deviceId": "replace-with-intercom-id",
+    "capability": "observe",
+    "capabilityConfig": "{}",
+    "timeout": "15000",
+    "x": 430,
+    "y": 140,
+    "wires": [
+      [
+        "debug-access-intercom-state"
+      ],
+      [
+        "debug-access-intercom-events"
+      ]
+    ]
+  },
+  {
+    "id": "debug-access-intercom-state",
+    "type": "debug",
+    "z": "tab-access-intercom-doorbell",
+    "name": "Intercom State",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "x": 720,
+    "y": 120,
+    "wires": []
+  },
+  {
+    "id": "debug-access-intercom-events",
+    "type": "debug",
+    "z": "tab-access-intercom-doorbell",
+    "name": "Intercom Events",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "x": 720,
+    "y": 160,
+    "wires": []
+  },
+  {
+    "id": "inject-access-trigger-doorbell",
+    "type": "inject",
+    "z": "tab-access-intercom-doorbell",
+    "name": "Trigger Doorbell",
+    "props": [],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "x": 150,
+    "y": 240,
+    "wires": [
+      [
+        "node-access-trigger-doorbell"
+      ]
+    ]
+  },
+  {
+    "id": "node-access-trigger-doorbell",
+    "type": "unifi-access-device",
+    "z": "tab-access-intercom-doorbell",
+    "name": "Trigger Doorbell",
+    "server": "config-access-intercom-doorbell",
+    "deviceType": "device",
+    "deviceId": "replace-with-intercom-id",
+    "capability": "triggerDoorbell",
+    "capabilityConfig": "{\"room_name\":\"\"}",
+    "timeout": "15000",
+    "x": 430,
+    "y": 240,
+    "wires": [
+      [
+        "debug-access-trigger-doorbell"
+      ],
+      []
+    ]
+  },
+  {
+    "id": "debug-access-trigger-doorbell",
+    "type": "debug",
+    "z": "tab-access-intercom-doorbell",
+    "name": "Trigger Response",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "x": 720,
+    "y": 240,
+    "wires": []
+  },
+  {
+    "id": "inject-access-cancel-doorbell",
+    "type": "inject",
+    "z": "tab-access-intercom-doorbell",
+    "name": "Cancel Doorbell",
+    "props": [],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "x": 150,
+    "y": 320,
+    "wires": [
+      [
+        "node-access-cancel-doorbell"
+      ]
+    ]
+  },
+  {
+    "id": "node-access-cancel-doorbell",
+    "type": "unifi-access-device",
+    "z": "tab-access-intercom-doorbell",
+    "name": "Cancel Doorbell",
+    "server": "config-access-intercom-doorbell",
+    "deviceType": "device",
+    "deviceId": "replace-with-intercom-id",
+    "capability": "cancelDoorbell",
+    "capabilityConfig": "{\"room_name\":\"\"}",
+    "timeout": "15000",
+    "x": 430,
+    "y": 320,
+    "wires": [
+      [
+        "debug-access-cancel-doorbell"
+      ],
+      []
+    ]
+  },
+  {
+    "id": "debug-access-cancel-doorbell",
+    "type": "debug",
+    "z": "tab-access-intercom-doorbell",
+    "name": "Cancel Response",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "x": 720,
+    "y": 320,
+    "wires": []
+  },
+  {
+    "id": "config-access-intercom-doorbell",
+    "type": "unifi-access-config",
+    "name": "My Access",
+    "host": "192.168.1.20",
+    "rejectUnauthorized": false
+  }
+]

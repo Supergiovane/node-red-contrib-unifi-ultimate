@@ -1,0 +1,205 @@
+[
+  {
+    "id": "tab-access-door-control",
+    "type": "tab",
+    "label": "UniFi Access Door Control",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "comment-access-door-control",
+    "type": "comment",
+    "z": "tab-access-door-control",
+    "name": "Setup",
+    "info": "Replace the Access host, API token, and door id before deploying.\nThis flow shows Observe, Unlock Door, and a temporary lock rule example.",
+    "x": 270,
+    "y": 60,
+    "wires": []
+  },
+  {
+    "id": "inject-access-door-observe",
+    "type": "inject",
+    "z": "tab-access-door-control",
+    "name": "Start Observe",
+    "props": [],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "x": 150,
+    "y": 140,
+    "wires": [
+      [
+        "node-access-door-observe"
+      ]
+    ]
+  },
+  {
+    "id": "node-access-door-observe",
+    "type": "unifi-access-device",
+    "z": "tab-access-door-control",
+    "name": "Observe Door",
+    "server": "config-access-door-control",
+    "deviceType": "door",
+    "deviceId": "replace-with-door-id",
+    "capability": "observe",
+    "capabilityConfig": "{}",
+    "timeout": "15000",
+    "x": 420,
+    "y": 140,
+    "wires": [
+      [
+        "debug-access-door-state"
+      ],
+      [
+        "debug-access-door-events"
+      ]
+    ]
+  },
+  {
+    "id": "debug-access-door-state",
+    "type": "debug",
+    "z": "tab-access-door-control",
+    "name": "Door State",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "x": 700,
+    "y": 120,
+    "wires": []
+  },
+  {
+    "id": "debug-access-door-events",
+    "type": "debug",
+    "z": "tab-access-door-control",
+    "name": "Door Events",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "x": 700,
+    "y": 160,
+    "wires": []
+  },
+  {
+    "id": "inject-access-door-unlock",
+    "type": "inject",
+    "z": "tab-access-door-control",
+    "name": "Unlock Door",
+    "props": [],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "x": 140,
+    "y": 240,
+    "wires": [
+      [
+        "node-access-door-unlock"
+      ]
+    ]
+  },
+  {
+    "id": "node-access-door-unlock",
+    "type": "unifi-access-device",
+    "z": "tab-access-door-control",
+    "name": "Unlock Door",
+    "server": "config-access-door-control",
+    "deviceType": "door",
+    "deviceId": "replace-with-door-id",
+    "capability": "unlockDoor",
+    "capabilityConfig": "{}",
+    "timeout": "15000",
+    "x": 410,
+    "y": 240,
+    "wires": [
+      [
+        "debug-access-door-unlock"
+      ],
+      []
+    ]
+  },
+  {
+    "id": "debug-access-door-unlock",
+    "type": "debug",
+    "z": "tab-access-door-control",
+    "name": "Unlock Response",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "x": 700,
+    "y": 240,
+    "wires": []
+  },
+  {
+    "id": "inject-access-door-lock-rule",
+    "type": "inject",
+    "z": "tab-access-door-control",
+    "name": "Set Temporary Lock Rule",
+    "props": [],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "x": 180,
+    "y": 320,
+    "wires": [
+      [
+        "node-access-door-lock-rule"
+      ]
+    ]
+  },
+  {
+    "id": "node-access-door-lock-rule",
+    "type": "unifi-access-device",
+    "z": "tab-access-door-control",
+    "name": "Keep Unlocked Until Timestamp",
+    "server": "config-access-door-control",
+    "deviceType": "door",
+    "deviceId": "replace-with-door-id",
+    "capability": "setTemporaryLockRule",
+    "capabilityConfig": "{\"type\":\"custom\",\"ended_time\":\"1775200000\"}",
+    "timeout": "15000",
+    "x": 460,
+    "y": 320,
+    "wires": [
+      [
+        "debug-access-door-lock-rule"
+      ],
+      []
+    ]
+  },
+  {
+    "id": "debug-access-door-lock-rule",
+    "type": "debug",
+    "z": "tab-access-door-control",
+    "name": "Lock Rule Response",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "x": 740,
+    "y": 320,
+    "wires": []
+  },
+  {
+    "id": "config-access-door-control",
+    "type": "unifi-access-config",
+    "name": "My Access",
+    "host": "192.168.1.20",
+    "rejectUnauthorized": false
+  }
+]

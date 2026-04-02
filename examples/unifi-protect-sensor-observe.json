@@ -1,0 +1,98 @@
+[
+  {
+    "id": "tab-protect-sensor-observe",
+    "type": "tab",
+    "label": "UniFi Protect Sensor Observe",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "comment-protect-sensor-observe",
+    "type": "comment",
+    "z": "tab-protect-sensor-observe",
+    "name": "Setup",
+    "info": "Replace the controller IP, API key, and sensor id before deploying.\nThis example emits true/false on output 1 using the selected sensor observable.",
+    "x": 220,
+    "y": 60,
+    "wires": []
+  },
+  {
+    "id": "inject-protect-sensor-observe",
+    "type": "inject",
+    "z": "tab-protect-sensor-observe",
+    "name": "Start Observe",
+    "props": [],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "x": 170,
+    "y": 140,
+    "wires": [
+      [
+        "node-protect-sensor-observe"
+      ]
+    ]
+  },
+  {
+    "id": "node-protect-sensor-observe",
+    "type": "unifi-protect-device",
+    "z": "tab-protect-sensor-observe",
+    "name": "Door Sensor Contact",
+    "server": "config-protect-sensor-observe",
+    "deviceType": "sensor",
+    "deviceId": "replace-with-sensor-id",
+    "capability": "observe",
+    "capabilityConfig": "{\"observable\":\"contact\"}",
+    "timeout": "15000",
+    "x": 450,
+    "y": 140,
+    "wires": [
+      [
+        "debug-protect-sensor-state"
+      ],
+      [
+        "debug-protect-sensor-events"
+      ]
+    ]
+  },
+  {
+    "id": "debug-protect-sensor-state",
+    "type": "debug",
+    "z": "tab-protect-sensor-observe",
+    "name": "Sensor Boolean State",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "x": 760,
+    "y": 120,
+    "wires": []
+  },
+  {
+    "id": "debug-protect-sensor-events",
+    "type": "debug",
+    "z": "tab-protect-sensor-observe",
+    "name": "Sensor Raw Events",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "x": 750,
+    "y": 160,
+    "wires": []
+  },
+  {
+    "id": "config-protect-sensor-observe",
+    "type": "unifi-protect-config",
+    "name": "My Protect",
+    "host": "192.168.1.10",
+    "authHeader": "X-API-Key",
+    "rejectUnauthorized": false
+  }
+]

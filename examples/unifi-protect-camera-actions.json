@@ -1,0 +1,189 @@
+[
+  {
+    "id": "tab-protect-camera-actions",
+    "type": "tab",
+    "label": "UniFi Protect Camera Actions",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "comment-protect-camera-actions",
+    "type": "comment",
+    "z": "tab-protect-camera-actions",
+    "name": "Setup",
+    "info": "Replace the controller IP, API key, and camera ids before deploying.\nUse a PTZ camera for the PTZ example and a doorbell camera for the doorbell message example.",
+    "x": 290,
+    "y": 60,
+    "wires": []
+  },
+  {
+    "id": "inject-protect-snapshot",
+    "type": "inject",
+    "z": "tab-protect-camera-actions",
+    "name": "Take Snapshot",
+    "props": [],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "x": 150,
+    "y": 140,
+    "wires": [
+      [
+        "node-protect-snapshot"
+      ]
+    ]
+  },
+  {
+    "id": "node-protect-snapshot",
+    "type": "unifi-protect-device",
+    "z": "tab-protect-camera-actions",
+    "name": "Front Camera Snapshot",
+    "server": "config-protect-camera-actions",
+    "deviceType": "camera",
+    "deviceId": "replace-with-camera-id",
+    "capability": "getSnapshot",
+    "capabilityConfig": "{\"forceHighQuality\":\"true\"}",
+    "timeout": "15000",
+    "x": 440,
+    "y": 140,
+    "wires": [
+      [
+        "debug-protect-snapshot"
+      ],
+      []
+    ]
+  },
+  {
+    "id": "debug-protect-snapshot",
+    "type": "debug",
+    "z": "tab-protect-camera-actions",
+    "name": "Snapshot Response",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 730,
+    "y": 140,
+    "wires": []
+  },
+  {
+    "id": "inject-protect-ptz-preset",
+    "type": "inject",
+    "z": "tab-protect-camera-actions",
+    "name": "Recall PTZ Preset",
+    "props": [],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "x": 160,
+    "y": 220,
+    "wires": [
+      [
+        "node-protect-ptz-preset"
+      ]
+    ]
+  },
+  {
+    "id": "node-protect-ptz-preset",
+    "type": "unifi-protect-device",
+    "z": "tab-protect-camera-actions",
+    "name": "PTZ Camera Preset 1",
+    "server": "config-protect-camera-actions",
+    "deviceType": "camera",
+    "deviceId": "replace-with-ptz-camera-id",
+    "capability": "gotoPtzPreset",
+    "capabilityConfig": "{\"slot\":\"1\"}",
+    "timeout": "15000",
+    "x": 450,
+    "y": 220,
+    "wires": [
+      [
+        "debug-protect-ptz"
+      ],
+      []
+    ]
+  },
+  {
+    "id": "debug-protect-ptz",
+    "type": "debug",
+    "z": "tab-protect-camera-actions",
+    "name": "PTZ Response",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "x": 730,
+    "y": 220,
+    "wires": []
+  },
+  {
+    "id": "inject-protect-doorbell-message",
+    "type": "inject",
+    "z": "tab-protect-camera-actions",
+    "name": "Show Doorbell Message",
+    "props": [],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "x": 170,
+    "y": 300,
+    "wires": [
+      [
+        "node-protect-doorbell-message"
+      ]
+    ]
+  },
+  {
+    "id": "node-protect-doorbell-message",
+    "type": "unifi-protect-device",
+    "z": "tab-protect-camera-actions",
+    "name": "Doorbell Message",
+    "server": "config-protect-camera-actions",
+    "deviceType": "camera",
+    "deviceId": "replace-with-doorbell-camera-id",
+    "capability": "setDoorbellMessage",
+    "capabilityConfig": "{\"messageType\":\"DO_NOT_DISTURB\",\"resetAt\":\"\"}",
+    "timeout": "15000",
+    "x": 450,
+    "y": 300,
+    "wires": [
+      [
+        "debug-protect-doorbell"
+      ],
+      []
+    ]
+  },
+  {
+    "id": "debug-protect-doorbell",
+    "type": "debug",
+    "z": "tab-protect-camera-actions",
+    "name": "Doorbell Response",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "x": 740,
+    "y": 300,
+    "wires": []
+  },
+  {
+    "id": "config-protect-camera-actions",
+    "type": "unifi-protect-config",
+    "name": "My Protect",
+    "host": "192.168.1.10",
+    "authHeader": "X-API-Key",
+    "rejectUnauthorized": false
+  }
+]

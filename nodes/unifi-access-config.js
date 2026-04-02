@@ -18,7 +18,7 @@ const {
 } = require("./utils/unifi-access-device-registry");
 
 module.exports = function(RED) {
-    const ACTIVE_DOORBELL_TTL_MS = 60000;
+    const ACTIVE_DOORBELL_TTL_MS = 180000;
 
     function UnifiAccessConfigNode(config) {
         RED.nodes.createNode(this, config);

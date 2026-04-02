@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0-beta.5
+
+- added ready-to-import example flows for Protect sensor observe, Protect camera actions, Access door control, and Access intercom doorbell handling
+- updated node help and README to match the current runtime behavior and capability labels
+- confirmed `Receive Events` subscriptions start at deploy time for both Protect and Access nodes
+- increased the shared UniFi Access safe-cancel ring tracking timeout from 60 seconds to 180 seconds
+
 ## 0.1.0-beta.2
 
 - added first UniFi Access support with shared config node, door and Access device handling, notification events, and doorbell actions
