@@ -8,6 +8,8 @@ Node-RED nodes for Ubiquiti UniFi integrations, currently covering UniFi Protect
 
 Current release status: `0.1.0-beta.5`
 
+[View Changelog](CHANGELOG.md)
+
 ## Included in this first version
 
 - `Unifi Protect Device`: generic Protect object node with discovery of device types, instances, and device-specific capabilities
