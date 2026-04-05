@@ -13,7 +13,7 @@ This package lets you:
 - trigger common Protect, Access, and Network actions from a single device node
 - start from ready-to-import example flows
 
-Current release status: `0.1.0-beta.5`
+Current release status: `0.1.0`
 
 [View Changelog](CHANGELOG.md)
 
@@ -178,5 +178,5 @@ Import one of these flows from the `examples` folder:
 ## Beta notes
 
 - UniFi Protect is the main supported surface today
-- UniFi Access is included as a first beta and may evolve faster across releases
-- UniFi Network is included as a first beta and currently focuses on read-first flows plus selected action utilities
+- UniFi Access is included in the first stable release and may still evolve quickly across upcoming releases
+- UniFi Network is included in the first stable release and currently focuses on read-first flows plus selected action utilities

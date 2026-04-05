@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0-beta.6
+## 0.1.0
 
 - improved runtime hardening to reduce the risk of unhandled exceptions and Node-RED crashes, including safer async timer flows and websocket initialization guards
 - added defensive fallback handling for `done` in node input handlers, with explicit `node.error(...)` fallback when `done` is not available
