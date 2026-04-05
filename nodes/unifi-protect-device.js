@@ -22,6 +22,8 @@ function resolveCapabilityId(configuredCapabilityId, msg) {
 }
 
 function parseCapabilityConfig(value) {
+    // Capability options are persisted as JSON in the editor, but runtime
+    // messages may already provide a parsed object.
     if (value && typeof value === "object" && !Array.isArray(value)) {
         return value;
     }
@@ -55,6 +57,8 @@ function buildNodeStatus(deviceType, payload) {
 }
 
 function requiresDeviceSpecificCapabilityValidation(deviceType, capabilityId) {
+    // Some camera actions only make sense on specific hardware variants, so the
+    // registry needs the live device payload before validating them.
     return String(deviceType || "").trim() === "camera" && [
         "startPtzPatrol",
         "stopPtzPatrol",
@@ -81,6 +85,8 @@ module.exports = function(RED) {
         node.isObserving = false;
 
         function sendOutputs(send, stateMsg, eventMsg) {
+            // Protect nodes always expose a state-oriented output and an event
+            // output, even when only one of them is used for a given update.
             send([stateMsg || null, eventMsg || null]);
         }
 
@@ -97,6 +103,8 @@ module.exports = function(RED) {
         function buildObservedStateMessage(deviceType, deviceId, capabilityConfig, payload, source, extra) {
             const observable = String(capabilityConfig.observable || "").trim();
             if (observable) {
+                // Observables let the node collapse complex Protect payloads into
+                // a stable boolean while preserving the original context in RAW.
                 const observableValue = resolveObservableState(deviceType, payload, observable, node.currentObservableValue);
                 node.currentObservableValue = Boolean(observableValue);
 
@@ -139,6 +147,8 @@ module.exports = function(RED) {
                 throw new Error("Unifi Protect configuration is missing.");
             }
 
+            // Merge editor configuration with runtime overrides so one node can
+            // drive multiple devices when required by the flow.
             const deviceType = resolveDeviceType(node.deviceType, msg);
             const deviceId = resolveDeviceId(node.deviceId, msg);
             const capabilityId = resolveCapabilityId(node.capability, msg);
@@ -161,6 +171,7 @@ module.exports = function(RED) {
             }
 
             if (capability.mode === "observe") {
+                // Manual input on an observe node acts like a forced refresh.
                 await fetchDeviceState(deviceType, deviceId, capabilityConfig, send, "manual-refresh");
                 return;
             }
@@ -213,8 +224,14 @@ module.exports = function(RED) {
                 return;
             }
 
-            node.server.removeClient(node);
-            node.server.addClient(node);
+            // Re-register the node to make sure the active websocket fan-out on
+            // the config node uses the latest node instance.
+            if (node.server && typeof node.server.removeClient === "function") {
+                node.server.removeClient(node);
+            }
+            if (node.server && typeof node.server.addClient === "function") {
+                node.server.addClient(node);
+            }
             node.isObserving = true;
 
             fetchDeviceState(node.deviceType, node.deviceId, parseCapabilityConfig(node.capabilityConfig), node.send.bind(node), "startup").catch(() => {
@@ -228,10 +245,16 @@ module.exports = function(RED) {
 
             try {
                 await invokeCapability(msg, send);
-                done();
+                if (typeof done === "function") {
+                    done();
+                }
             } catch (error) {
                 node.status({ fill: "red", shape: "ring", text: "error" });
-                done(error);
+                if (typeof done === "function") {
+                    done(error);
+                } else {
+                    node.error(error, msg);
+                }
             }
         });
 
@@ -242,6 +265,8 @@ module.exports = function(RED) {
                     return;
                 }
 
+                // Only react to device updates that match both the selected
+                // model family and the exact configured device id.
                 const deviceDefinition = getDeviceTypeDefinition(node.deviceType);
                 if (!deviceDefinition || item.modelKey !== deviceDefinition.modelKey || item.id !== node.deviceId) {
                     return;
@@ -272,6 +297,8 @@ module.exports = function(RED) {
                 const capabilityConfig = parseCapabilityConfig(node.capabilityConfig);
                 const observable = String(capabilityConfig.observable || "").trim();
                 if (observable) {
+                    // When the user selected an observable, events can update the
+                    // boolean state output directly instead of only the event port.
                     const observation = resolveObservableEventValue(node.deviceType, item, observable);
                     if (observation.matched) {
                         node.currentObservableValue = Boolean(observation.value);
@@ -326,7 +353,9 @@ module.exports = function(RED) {
                 node.server.removeClient(node);
             }
             node.isObserving = false;
-            done();
+            if (typeof done === "function") {
+                done();
+            }
         });
     }
 

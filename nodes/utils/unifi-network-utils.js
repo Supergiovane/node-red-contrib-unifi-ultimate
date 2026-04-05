@@ -4,8 +4,8 @@ const http = require("http");
 const https = require("https");
 
 function normalizeHost(value) {
-    // Access controllers usually live on port 12445. Accept bare hosts, host:port
-    // pairs and IPv6 literals, then normalize everything to one safe form.
+    // Accept either a bare host or a full URL from the editor and reduce it to
+    // the host:port form expected by the integration proxy base URL.
     let host = String(value || "").trim();
     if (!host) {
         return "";
@@ -13,26 +13,7 @@ function normalizeHost(value) {
 
     host = host.replace(/^https?:\/\//i, "");
     host = host.replace(/\/.*$/, "");
-    host = host.trim().replace(/\/+$/, "");
-
-    if (!host) {
-        return "";
-    }
-
-    if (host.startsWith("[") && host.includes("]")) {
-        return host.includes("]:") ? host : `${host}:12445`;
-    }
-
-    const colonCount = (host.match(/:/g) || []).length;
-    if (colonCount === 0) {
-        return `${host}:12445`;
-    }
-
-    if (colonCount === 1 && /^\S+:\d+$/.test(host)) {
-        return host;
-    }
-
-    return host;
+    return host.trim().replace(/\/+$/, "");
 }
 
 function buildBaseUrlFromHost(value) {
@@ -41,7 +22,7 @@ function buildBaseUrlFromHost(value) {
         return "";
     }
 
-    return `https://${host}`;
+    return `https://${host}/proxy/network/integration`;
 }
 
 function buildQueryString(query) {
@@ -69,8 +50,8 @@ function buildQueryString(query) {
 }
 
 function maybeParseBody(contentType, buffer) {
-    // Access can still return JSON with inconsistent headers, so detect it from
-    // the payload shape as well.
+    // Some UniFi endpoints return JSON with a missing/odd content-type header,
+    // so also inspect the raw payload before deciding to parse.
     const raw = buffer.toString("utf8");
     if (!raw) {
         return raw;
@@ -93,8 +74,8 @@ function maybeParseBody(contentType, buffer) {
 
 function doRequest(url, options, body) {
     return new Promise((resolve, reject) => {
-        // Use the native transports to avoid extra runtime dependencies inside
-        // Node-RED deployments.
+        // Stay on the built-in http/https clients to keep node dependencies
+        // minimal and compatible with Node-RED environments.
         const transport = url.protocol === "http:" ? http : https;
         const requestOptions = {
             protocol: url.protocol,
@@ -135,19 +116,19 @@ function doRequest(url, options, body) {
     });
 }
 
-function buildRequestHeaders(apiToken, msgHeaders) {
+function buildRequestHeaders(authHeader, apiKey, msgHeaders) {
     return Object.assign(
         {
             Accept: "application/json",
-            Authorization: `Bearer ${apiToken}`
+            [authHeader]: apiKey
         },
         msgHeaders && typeof msgHeaders === "object" ? msgHeaders : {}
     );
 }
 
 function buildRequestBody(headers, method, payload) {
-    // Centralize payload serialization so higher-level code can pass plain
-    // objects without worrying about headers and content length.
+    // Automatically serialize object payloads and keep Content-* headers in sync
+    // so registry/runtime code can focus on request semantics only.
     if (method === "GET" || method === "HEAD" || payload === undefined) {
         return undefined;
     }
@@ -174,8 +155,8 @@ function buildRequestBody(headers, method, payload) {
     return requestBody;
 }
 
-function extractAccessData(payload) {
-    // Access developer APIs often wrap the useful object under "data".
+function extractNetworkData(payload) {
+    // Official UniFi Network responses often wrap the real data under "data".
     if (payload && typeof payload === "object" && !Array.isArray(payload) && Object.prototype.hasOwnProperty.call(payload, "data")) {
         return payload.data;
     }
@@ -183,9 +164,10 @@ function extractAccessData(payload) {
     return payload;
 }
 
-function normalizeAccessCollection(payload) {
-    // Normalize singular objects, arrays and nested arrays into one flat list.
-    const data = extractAccessData(payload);
+function normalizeNetworkCollection(payload) {
+    // Collections are normalized to a flat array so discovery endpoints can
+    // tolerate both singular and nested response shapes.
+    const data = extractNetworkData(payload);
 
     if (!Array.isArray(data)) {
         return data && typeof data === "object" ? [data] : [];
@@ -200,6 +182,6 @@ module.exports = {
     doRequest,
     buildRequestHeaders,
     buildRequestBody,
-    extractAccessData,
-    normalizeAccessCollection
+    extractNetworkData,
+    normalizeNetworkCollection
 };

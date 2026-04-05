@@ -1,0 +1,399 @@
+<style>
+    .unifi-ultimate-card {
+        margin-left: 150px;
+        padding: 12px 14px;
+        border-radius: 12px;
+        background: #f5f7fa;
+        color: #334155;
+        line-height: 1.45;
+    }
+
+    .unifi-ultimate-card strong {
+        display: block;
+        margin-bottom: 4px;
+        color: #0f172a;
+        font-weight: 600;
+    }
+
+    .unifi-ultimate-advanced {
+        margin-top: 4px;
+        padding-top: 4px;
+        border-top: 1px solid #e5e7eb;
+    }
+
+</style>
+
+<script type="text/javascript">
+    RED.nodes.registerType("unifi-network-control-poe", {
+        category: "Unifi Ultimate",
+        color: "#CFE8FB",
+        defaults: {
+            name: { value: "" },
+            server: { value: "", type: "unifi-network-config", required: true },
+            deviceId: { value: "", required: true },
+            portIdx: { value: 1, required: true, validate: RED.validators.number() },
+            action: { value: "enable", required: true },
+            timeout: { value: 15000, required: true, validate: RED.validators.number() }
+        },
+        inputs: 1,
+        outputs: 1,
+        icon: "unifi-protect-icon.svg",
+        paletteLabel: "Control POE",
+        outputLabels: ["result"],
+        label: function () {
+            return this.name || "Control POE";
+        },
+        oneditprepare: function () {
+            const node = this;
+            const $name = $("#node-input-name");
+            const $server = $("#node-input-server");
+            const $deviceId = $("#node-input-deviceId");
+            const $portIdx = $("#node-input-portIdx");
+            const $action = $("#node-input-action");
+            const $refreshDevices = $("#node-input-refreshDevices");
+            const $selectionSummary = $("#node-input-selectionSummary");
+            const $selectionDetail = $("#node-input-selectionDetail");
+            let lastAutoName = "";
+            let suspendChangeHandling = false;
+
+            function requestJson(url) {
+                return new Promise(function (resolve, reject) {
+                    $.getJSON(url, function (data) {
+                        resolve(data);
+                    }).fail(function (xhr) {
+                        reject(xhr);
+                    });
+                });
+            }
+
+            function getConfigNodesByType(configType) {
+                const configs = [];
+                try {
+                    if (RED && RED.nodes) {
+                        // Read config nodes from the current editor workspace to
+                        // auto-bind new POE nodes to an existing Network config.
+                        if (typeof RED.nodes.eachConfig === "function") {
+                            RED.nodes.eachConfig(function (cfg) {
+                                if (cfg && cfg.type === configType) {
+                                    configs.push(cfg);
+                                }
+                            });
+                        } else if (typeof RED.nodes.eachNode === "function") {
+                            RED.nodes.eachNode(function (cfg) {
+                                if (cfg && cfg.type === configType) {
+                                    configs.push(cfg);
+                                }
+                            });
+                        }
+
+                        if (configs.length === 0 && typeof RED.nodes.filterNodes === "function") {
+                            try {
+                                const filtered = RED.nodes.filterNodes({ type: configType });
+                                if (Array.isArray(filtered)) {
+                                    filtered.forEach(function (cfg) {
+                                        configs.push(cfg);
+                                    });
+                                }
+                            } catch (error) {
+                            }
+                        }
+                    }
+                } catch (error) {
+                }
+                return configs;
+            }
+
+            function ensureDefaultServerSelection() {
+                // Only fill the connection automatically when the field is empty.
+                const currentValue = String($server.val() || node.server || "").trim();
+                if (currentValue !== "" && currentValue !== "_ADD_") {
+                    return;
+                }
+
+                const configs = getConfigNodesByType("unifi-network-config");
+                if (!Array.isArray(configs) || configs.length === 0) {
+                    return;
+                }
+
+                const firstConfigId = String(configs[0].id || "").trim();
+                if (!firstConfigId) {
+                    return;
+                }
+
+                $server.val(firstConfigId);
+            }
+
+            function makeSelectSearchable($select, placeholder) {
+                if (!$select || $select.length === 0) {
+                    return;
+                }
+                // Searchable selects were removed; this just strips any old
+                // helper input that might still exist in a cached browser session.
+                const selectId = String($select.attr("id") || "").trim();
+                if (selectId) {
+                    const $searchInput = $("#" + selectId + "-search");
+                    if ($searchInput.length > 0) {
+                        try {
+                            if ($searchInput.data("ui-autocomplete")) {
+                                $searchInput.autocomplete("destroy");
+                            }
+                        } catch (error) {
+                        }
+                        $searchInput.remove();
+                    }
+                }
+
+                $select.off(".unifiSearchable");
+                $select.removeData("unifi-searchable");
+                $select.removeData("unifi-options-count");
+                $select.show();
+            }
+
+            function getSelectedDeviceName() {
+                const $selected = $deviceId.find("option:selected");
+                return String($selected.data("deviceName") || "").trim();
+            }
+
+            function refreshSummary() {
+                const deviceName = getSelectedDeviceName();
+                const actionLabel = String($action.find("option:selected").text() || "PoE action").trim();
+                const portLabel = String($portIdx.val() || "").trim();
+
+                let summary = "Choose a switch and a port.";
+                let detail = "This node sends a port action request to UniFi Network.";
+
+                if (deviceName) {
+                    summary = actionLabel + " on " + deviceName + " (port " + (portLabel || "?") + ").";
+                    detail = "Use msg.action and msg.portIdx if you want runtime overrides.";
+                }
+
+                $selectionSummary.text(summary);
+                $selectionDetail.text(detail);
+            }
+
+            function syncNameFromSelection() {
+                const deviceName = getSelectedDeviceName();
+                const currentName = String($name.val() || "").trim();
+                const shouldUpdate = currentName === "" || currentName === lastAutoName;
+                if (!deviceName || !shouldUpdate) {
+                    return;
+                }
+
+                const value = "POE " + deviceName;
+                $name.val(value);
+                lastAutoName = value;
+            }
+
+            function renderDevices(items) {
+                const currentValue = String($deviceId.val() || node.deviceId || "").trim();
+                suspendChangeHandling = true;
+                try {
+                    $deviceId.empty();
+                    $deviceId.append($("<option></option>").val("").text("Choose a switch"));
+
+                    (items || []).forEach(function (item) {
+                        const stateSuffix = item.state ? " [" + item.state + "]" : "";
+                        $deviceId.append(
+                            $("<option></option>")
+                                .val(item.id)
+                                .text((item.name || item.id) + stateSuffix)
+                                .attr("data-device-name", item.name || item.id)
+                        );
+                    });
+
+                    if (currentValue && $deviceId.find("option[value='" + currentValue + "']").length > 0) {
+                        $deviceId.val(currentValue);
+                    } else {
+                        $deviceId.val("");
+                    }
+                } finally {
+                    suspendChangeHandling = false;
+                }
+
+                makeSelectSearchable($deviceId, "Search switches");
+                syncNameFromSelection();
+                refreshSummary();
+            }
+
+            function renderPorts(ports) {
+                const currentValue = String($portIdx.val() || node.portIdx || "").trim();
+                suspendChangeHandling = true;
+                try {
+                    $portIdx.empty();
+
+                    (ports || []).forEach(function (port) {
+                        const idx = String(port.idx);
+                        const poe = port.poeEnabled ? " PoE:" + port.poeEnabled : "";
+                        const state = port.state ? " [" + port.state + "]" : "";
+                        $portIdx.append(
+                            $("<option></option>")
+                                .val(idx)
+                                .text((port.name || ("Port " + idx)) + state + poe)
+                        );
+                    });
+
+                    if (currentValue && $portIdx.find("option[value='" + currentValue + "']").length > 0) {
+                        $portIdx.val(currentValue);
+                    } else if (ports && ports.length > 0) {
+                        $portIdx.val(String(ports[0].idx));
+                    } else {
+                        $portIdx.append($("<option></option>").val(currentValue || "1").text("Port " + (currentValue || "1")));
+                        $portIdx.val(currentValue || "1");
+                    }
+                } finally {
+                    suspendChangeHandling = false;
+                }
+
+                makeSelectSearchable($portIdx, "Search ports");
+                refreshSummary();
+            }
+
+            function loadPorts() {
+                const serverId = String($server.val() || "").trim();
+                const deviceId = String($deviceId.val() || "").trim();
+                if (!serverId || !deviceId || serverId === "_ADD_") {
+                    renderPorts([]);
+                    return Promise.resolve();
+                }
+
+                return requestJson(
+                    "unifiNetwork/device-ports?serverId=" + encodeURIComponent(serverId) +
+                    "&deviceId=" + encodeURIComponent(deviceId)
+                ).then(function (data) {
+                    renderPorts(Array.isArray(data) ? data : []);
+                }).catch(function (xhr) {
+                    renderPorts([]);
+                    const errorText = xhr && xhr.responseJSON && xhr.responseJSON.error ? xhr.responseJSON.error : "Unable to load ports";
+                    RED.notify(errorText, "error");
+                });
+            }
+
+            function loadDevices() {
+                const serverId = String($server.val() || "").trim();
+                if (!serverId || serverId === "_ADD_") {
+                    renderDevices([]);
+                    renderPorts([]);
+                    return Promise.resolve();
+                }
+
+                // Ports depend on the selected switch, so refresh both lists in
+                // one flow whenever the connection changes.
+                $refreshDevices.addClass("fa-spin");
+                return requestJson("unifiNetwork/devices?serverId=" + encodeURIComponent(serverId) + "&deviceType=device")
+                    .then(function (data) {
+                        renderDevices(Array.isArray(data) ? data : []);
+                        return loadPorts();
+                    })
+                    .catch(function (xhr) {
+                        renderDevices([]);
+                        renderPorts([]);
+                        const errorText = xhr && xhr.responseJSON && xhr.responseJSON.error ? xhr.responseJSON.error : "Unable to load devices";
+                        RED.notify(errorText, "error");
+                    })
+                    .finally(function () {
+                        $refreshDevices.removeClass("fa-spin");
+                    });
+            }
+
+            try {
+                RED.sidebar.show("help");
+            } catch (error) {
+            }
+
+            $server.on("change", function () {
+                if (suspendChangeHandling) {
+                    return;
+                }
+                loadDevices();
+            });
+
+            $deviceId.on("change", function () {
+                if (suspendChangeHandling) {
+                    return;
+                }
+                syncNameFromSelection();
+                loadPorts();
+            });
+
+            $portIdx.on("change", refreshSummary);
+            $action.on("change", refreshSummary);
+
+            $refreshDevices.on("click", function (event) {
+                event.preventDefault();
+                loadDevices();
+            });
+
+            ensureDefaultServerSelection();
+            makeSelectSearchable($deviceId, "Search switches");
+            makeSelectSearchable($portIdx, "Search ports");
+            refreshSummary();
+            loadDevices();
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="unifi-network-control-poe">
+    <div class="form-row">
+        <label for="node-input-server"><i class="fa fa-cog"></i> Connection</label>
+        <input type="text" id="node-input-server">
+    </div>
+    <div class="form-row">
+        <label for="node-input-deviceId"><i class="fa fa-exchange"></i> Switch</label>
+        <select id="node-input-deviceId" style="width:70%;"></select>
+        <a href="#" id="node-input-refreshDevices" class="editor-button" style="margin-left:6px;">
+            <i class="fa fa-refresh"></i>
+        </a>
+    </div>
+    <div class="form-row">
+        <label for="node-input-portIdx"><i class="fa fa-plug"></i> Port</label>
+        <select id="node-input-portIdx"></select>
+    </div>
+    <div class="form-row">
+        <label for="node-input-action"><i class="fa fa-power-off"></i> Action</label>
+        <select id="node-input-action">
+            <option value="enable">Enable PoE</option>
+            <option value="disable">Disable PoE</option>
+            <option value="cycle">Power Cycle</option>
+        </select>
+    </div>
+    <div class="form-row">
+        <div class="unifi-ultimate-card">
+            <strong id="node-input-selectionSummary">Choose a switch and a port.</strong>
+            <div id="node-input-selectionDetail">This node sends a port action request to UniFi Network.</div>
+        </div>
+    </div>
+    <div id="node-row-advanced" class="unifi-ultimate-advanced">
+        <div class="form-row">
+            <label for="node-input-name"><i class="fa fa-tag"></i> Label</label>
+            <input type="text" id="node-input-name" placeholder="Optional custom label">
+        </div>
+        <div class="form-row">
+            <label for="node-input-timeout"><i class="fa fa-clock-o"></i> Timeout</label>
+            <input type="text" id="node-input-timeout" placeholder="15000">
+        </div>
+    </div>
+</script>
+
+<script type="text/html" data-help-name="unifi-network-control-poe">
+    <p>Controls PoE on a selected switch port.</p>
+
+    <h3>Configuration</h3>
+    <p><b>Connection</b> selects the shared UniFi Network config node.</p>
+    <p><b>Switch</b> selects the adopted UniFi device.</p>
+    <p><b>Port</b> selects the physical port index.</p>
+    <p><b>Action</b> sends PoE action requests. The node automatically tries compatible action values for enable/disable and supports power cycle.</p>
+    <p><b>Timeout</b> controls the request timeout in milliseconds.</p>
+
+    <h3>Input</h3>
+    <ul>
+        <li>Optional runtime overrides: <code>msg.deviceId</code> or <code>msg.siteId</code> + <code>msg.resourceId</code>.</li>
+        <li><code>msg.portIdx</code> to override the selected port.</li>
+        <li><code>msg.action</code> to override action (<code>enable</code>, <code>disable</code>, <code>cycle</code>, or direct API action value).</li>
+    </ul>
+
+    <h3>Output</h3>
+    <ul>
+        <li><code>msg.payload</code>: API response payload.</li>
+        <li><code>msg.unifiNetworkPoe</code>: metadata with device/site/action/port.</li>
+    </ul>
+</script>

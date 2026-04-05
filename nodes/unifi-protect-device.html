@@ -1,3 +1,28 @@
+<style>
+    .unifi-ultimate-card {
+        margin-left: 150px;
+        padding: 12px 14px;
+        border-radius: 12px;
+        background: #f5f7fa;
+        color: #334155;
+        line-height: 1.45;
+    }
+
+    .unifi-ultimate-card strong {
+        display: block;
+        margin-bottom: 4px;
+        color: #0f172a;
+        font-weight: 600;
+    }
+
+    .unifi-ultimate-advanced {
+        margin-top: 4px;
+        padding-top: 4px;
+        border-top: 1px solid #e5e7eb;
+    }
+
+</style>
+
 <script type="text/javascript">
     RED.nodes.registerType("unifi-protect-device", {
         category: "Unifi Ultimate",
@@ -74,12 +99,16 @@
             const $capabilityConfigRow = $("#node-row-capabilityConfig");
             const $capabilityConfigContainer = $("#node-input-capabilityConfigContainer");
             const $refresh = $("#node-input-refreshDevices");
+            const $selectionSummary = $("#node-input-selectionSummary");
+            const $selectionDetail = $("#node-input-selectionDetail");
             let lastAutoName = "";
             let capabilityConfig = parseCapabilityConfig(node.capabilityConfig);
+            let capabilityListRequestId = 0;
             let capabilityOptionsRequestId = 0;
             let suspendChangeHandling = false;
             let isInitializingEditor = true;
-
+            let deviceTypeDefinitions = [];
+            let capabilityDefinitions = [];
             function parseCapabilityConfig(rawValue) {
                 if (rawValue && typeof rawValue === "object" && !Array.isArray(rawValue)) {
                     return rawValue;
@@ -134,6 +163,90 @@
                 });
             }
 
+            function getConfigNodesByType(configType) {
+                const configs = [];
+                try {
+                    if (RED && RED.nodes) {
+                        // Read config nodes directly from the editor registry so
+                        // new nodes can immediately bind to an existing connection.
+                        if (typeof RED.nodes.eachConfig === "function") {
+                            RED.nodes.eachConfig(function (cfg) {
+                                if (cfg && cfg.type === configType) {
+                                    configs.push(cfg);
+                                }
+                            });
+                        } else if (typeof RED.nodes.eachNode === "function") {
+                            RED.nodes.eachNode(function (cfg) {
+                                if (cfg && cfg.type === configType) {
+                                    configs.push(cfg);
+                                }
+                            });
+                        }
+
+                        if (configs.length === 0 && typeof RED.nodes.filterNodes === "function") {
+                            try {
+                                const filtered = RED.nodes.filterNodes({ type: configType });
+                                if (Array.isArray(filtered)) {
+                                    filtered.forEach(function (cfg) {
+                                        configs.push(cfg);
+                                    });
+                                }
+                            } catch (error) {
+                            }
+                        }
+                    }
+                } catch (error) {
+                }
+                return configs;
+            }
+
+            function ensureDefaultServerSelection() {
+                // Auto-select the first available config only for empty nodes.
+                // Existing saved nodes must keep their original connection.
+                const currentValue = String($server.val() || node.server || "").trim();
+                if (currentValue !== "" && currentValue !== "_ADD_") {
+                    return;
+                }
+
+                const configs = getConfigNodesByType("unifi-protect-config");
+                if (!Array.isArray(configs) || configs.length === 0) {
+                    return;
+                }
+
+                const firstConfigId = String(configs[0].id || "").trim();
+                if (!firstConfigId) {
+                    return;
+                }
+
+                $server.val(firstConfigId);
+            }
+
+            function makeSelectSearchable($select, placeholder) {
+                if (!$select || $select.length === 0) {
+                    return;
+                }
+                // Searchable comboboxes were removed, but this guard cleans up
+                // stale helper inputs if the browser had cached older editor code.
+                const selectId = String($select.attr("id") || "").trim();
+                if (selectId) {
+                    const $searchInput = $("#" + selectId + "-search");
+                    if ($searchInput.length > 0) {
+                        try {
+                            if ($searchInput.data("ui-autocomplete")) {
+                                $searchInput.autocomplete("destroy");
+                            }
+                        } catch (error) {
+                        }
+                        $searchInput.remove();
+                    }
+                }
+
+                $select.off(".unifiSearchable");
+                $select.removeData("unifi-searchable");
+                $select.removeData("unifi-options-count");
+                $select.show();
+            }
+
             function syncCapabilityConfigFromInputs() {
                 $capabilityConfigContainer.find("[id^='node-input-capability-config-']").each(function () {
                     const $field = $(this);
@@ -163,6 +276,78 @@
                 return String($selected.data("deviceName") || "").trim();
             }
 
+            function getSelectedDeviceTypeLabel() {
+                const selectedType = getCurrentOrNodeValue($deviceType, node.deviceType, "");
+                const match = deviceTypeDefinitions.find(function (item) {
+                    return item.type === selectedType;
+                });
+                return match ? String(match.label || "").trim() : "";
+            }
+
+            function getSelectedCapabilityDefinition() {
+                const selectedCapability = getCurrentOrNodeValue($capability, node.capability, "observe");
+                return capabilityDefinitions.find(function (item) {
+                    return item.id === selectedCapability;
+                }) || null;
+            }
+
+            function buildSelectionSummary(capabilityLabel, deviceName) {
+                const normalizedLabel = String(capabilityLabel || "").trim();
+                const normalizedDeviceName = String(deviceName || "").trim();
+
+                if (!normalizedLabel || !normalizedDeviceName) {
+                    return "";
+                }
+
+                if (normalizedLabel === "Receive Events") {
+                    return "Listening for live events from " + normalizedDeviceName + ".";
+                }
+
+                if (normalizedLabel === "Read Device State") {
+                    return "Reading the current state of " + normalizedDeviceName + ".";
+                }
+
+                if (normalizedLabel === "Take Snapshot") {
+                    return "Taking a snapshot from " + normalizedDeviceName + ".";
+                }
+
+                return normalizedLabel + " on " + normalizedDeviceName + ".";
+            }
+
+            function refreshSelectionSummary() {
+                const selectedServer = String($server.val() || "").trim();
+                const deviceTypeLabel = getSelectedDeviceTypeLabel();
+                const deviceName = getSelectedDeviceName();
+                const capabilityDefinition = getSelectedCapabilityDefinition();
+                let summary = "Choose a connection to begin.";
+                let detail = "The editor only shows actions supported by the selected UniFi Protect device.";
+
+                if (selectedServer && selectedServer !== "_ADD_") {
+                    summary = "Choose what you want to control.";
+                    detail = "Start with a device type, then pick a device and an action.";
+                }
+
+                if (deviceTypeLabel) {
+                    summary = "Choose the " + deviceTypeLabel.toLowerCase() + " you want to use.";
+                    detail = "Only compatible UniFi Protect devices from this category will be shown.";
+                }
+
+                if (deviceName) {
+                    summary = "Choose what you want to do with " + deviceName + ".";
+                    detail = "Only actions supported by this device are listed.";
+                }
+
+                if (capabilityDefinition && deviceName) {
+                    summary = buildSelectionSummary(capabilityDefinition.label, deviceName);
+                    detail = capabilityDefinition.description || detail;
+                } else if (capabilityDefinition && capabilityDefinition.description) {
+                    detail = capabilityDefinition.description;
+                }
+
+                $selectionSummary.text(summary);
+                $selectionDetail.text(detail);
+            }
+
             function syncNameFromSelection() {
                 const selectedDeviceName = getSelectedDeviceName();
                 const currentName = String($name.val() || "").trim();
@@ -177,10 +362,11 @@
             }
 
             function renderDeviceTypes(items) {
+                deviceTypeDefinitions = Array.isArray(items) ? items.slice() : [];
                 const currentValue = getCurrentOrNodeValue($deviceType, node.deviceType, "");
                 withSuppressedChanges(function () {
                     $deviceType.empty();
-                    $deviceType.append($("<option></option>").val("").text("Select a type"));
+                    $deviceType.append($("<option></option>").val("").text("Choose what to control"));
 
                     items.forEach(function (item) {
                         $deviceType.append(
@@ -196,9 +382,12 @@
                         $deviceType.val("");
                     }
                 });
+                makeSelectSearchable($deviceType, "Search controls");
+                refreshSelectionSummary();
             }
 
             function renderCapabilities(items) {
+                capabilityDefinitions = Array.isArray(items) ? items.slice() : [];
                 const currentValue = getCurrentOrNodeValue($capability, node.capability, "observe");
                 withSuppressedChanges(function () {
                     $capability.empty();
@@ -217,6 +406,8 @@
                         $capability.val("observe");
                     }
                 });
+                makeSelectSearchable($capability, "Search actions");
+                refreshSelectionSummary();
             }
 
             function normalizeFieldValue(field, rawValue) {
@@ -335,6 +526,7 @@
                         writeCapabilityConfig();
                     }
                     $capabilityConfigContainer.empty();
+                    refreshSelectionSummary();
                     return;
                 }
 
@@ -439,6 +631,9 @@
                     }
 
                     $capabilityConfigContainer.append($wrapper);
+                    if (field.type === "select") {
+                        makeSelectSearchable($input, "Search options");
+                    }
                 });
 
                 writeCapabilityConfig();
@@ -446,13 +641,14 @@
                 setTimeout(function () {
                     restoreRenderedFieldValues(fields);
                 }, 0);
+                refreshSelectionSummary();
             }
 
             function renderDevices(items) {
                 const currentValue = getCurrentOrNodeValue($deviceId, node.deviceId, "");
                 withSuppressedChanges(function () {
                     $deviceId.empty();
-                    $deviceId.append($("<option></option>").val("").text("Select a device"));
+                    $deviceId.append($("<option></option>").val("").text("Choose a device"));
 
                     items.forEach(function (item) {
                         const labelParts = [item.name || item.id];
@@ -474,13 +670,16 @@
                     }
                 });
 
+                makeSelectSearchable($deviceId, "Search devices");
                 syncNameFromSelection();
+                refreshSelectionSummary();
             }
 
             function loadCapabilities() {
+                const requestId = ++capabilityListRequestId;
                 const serverId = String($server.val() || "").trim();
-                const selectedType = getCurrentOrNodeValue($deviceType, node.deviceType, "");
-                const selectedDeviceId = getCurrentOrNodeValue($deviceId, node.deviceId, "");
+                const selectedType = String($deviceType.val() || "").trim() || String(node.deviceType || "").trim();
+                const selectedDeviceId = String($deviceId.val() || "").trim();
                 if (!selectedType) {
                     renderCapabilities([]);
                     renderCapabilityOptions({ fields: [] }, { clearStoredConfig: false });
@@ -494,9 +693,15 @@
 
                 return requestJson(requestUrl)
                     .then(function (data) {
+                        if (requestId !== capabilityListRequestId) {
+                            return;
+                        }
                         renderCapabilities(Array.isArray(data) ? data : []);
                     })
                     .catch(function (xhr) {
+                        if (requestId !== capabilityListRequestId) {
+                            return;
+                        }
                         renderCapabilities([]);
                         renderCapabilityOptions({ fields: [] }, { clearStoredConfig: false });
                         const errorText = xhr && xhr.responseJSON && xhr.responseJSON.error ? xhr.responseJSON.error : "Unable to load capabilities";
@@ -507,9 +712,9 @@
             function loadCapabilityOptions() {
                 const requestId = ++capabilityOptionsRequestId;
                 const serverId = $server.val();
-                const currentDeviceType = getCurrentOrNodeValue($deviceType, node.deviceType, "");
-                const currentDeviceId = getCurrentOrNodeValue($deviceId, node.deviceId, "");
-                const currentCapability = getCurrentOrNodeValue($capability, node.capability, "observe");
+                const currentDeviceType = String($deviceType.val() || "").trim() || String(node.deviceType || "").trim();
+                const currentDeviceId = String($deviceId.val() || "").trim();
+                const currentCapability = String($capability.val() || "").trim() || String(node.capability || "observe").trim();
                 if (!serverId || serverId === "_ADD_" || !currentDeviceType || !currentCapability) {
                     renderCapabilityOptions({ fields: [] }, { clearStoredConfig: false });
                     return Promise.resolve();
@@ -576,6 +781,8 @@
             }
 
             function refreshEditor() {
+                // Protect editor dependencies are hierarchical: device types
+                // first, then devices, then capabilities, then capability options.
                 return loadDeviceTypes()
                     .then(function () {
                         return loadDevices();
@@ -628,6 +835,9 @@
             }
 
             writeCapabilityConfig();
+            makeSelectSearchable($deviceType, "Search controls");
+            makeSelectSearchable($deviceId, "Search devices");
+            makeSelectSearchable($capability, "Search actions");
 
             $server.on("change", function () {
                 if (suspendChangeHandling || isInitializingEditor) {
@@ -665,6 +875,8 @@
                 refreshAfterServerChange();
             });
 
+            refreshSelectionSummary();
+            ensureDefaultServerSelection();
             refreshEditor();
         }
     });
@@ -672,15 +884,11 @@
 
 <script type="text/html" data-template-name="unifi-protect-device">
     <div class="form-row">
-        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
-        <input type="text" id="node-input-name" placeholder="Unifi Protect Device">
-    </div>
-    <div class="form-row">
-        <label for="node-input-server"><i class="fa fa-cog"></i> Config</label>
+        <label for="node-input-server"><i class="fa fa-cog"></i> Connection</label>
         <input type="text" id="node-input-server">
     </div>
     <div class="form-row">
-        <label for="node-input-deviceType"><i class="fa fa-cubes"></i> Type</label>
+        <label for="node-input-deviceType"><i class="fa fa-cubes"></i> Control</label>
         <select id="node-input-deviceType"></select>
     </div>
     <div class="form-row">
@@ -691,27 +899,42 @@
         </a>
     </div>
     <div class="form-row">
-        <label for="node-input-capability"><i class="fa fa-tasks"></i> Capability</label>
+        <label for="node-input-capability"><i class="fa fa-tasks"></i> Action</label>
         <select id="node-input-capability"></select>
     </div>
+    <div class="form-row">
+        <div class="unifi-ultimate-card">
+            <strong id="node-input-selectionSummary">Choose a connection to begin.</strong>
+            <div id="node-input-selectionDetail">The editor only shows actions supported by the selected UniFi Protect device.</div>
+        </div>
+    </div>
     <div class="form-row" id="node-row-capabilityConfig" style="display:none;">
-        <label><i class="fa fa-sliders"></i> Options</label>
+        <label><i class="fa fa-sliders"></i> Action options</label>
         <div id="node-input-capabilityConfigContainer" style="width:70%; display:inline-block;"></div>
         <input type="hidden" id="node-input-capabilityConfig">
     </div>
-    <div class="form-row">
-        <label for="node-input-timeout"><i class="fa fa-clock-o"></i> Timeout</label>
-        <input type="text" id="node-input-timeout" placeholder="15000">
+    <div id="node-row-advanced" class="unifi-ultimate-advanced">
+        <div class="form-row">
+            <label for="node-input-name"><i class="fa fa-tag"></i> Label</label>
+            <input type="text" id="node-input-name" placeholder="Optional custom label">
+        </div>
+        <div class="form-row">
+            <label for="node-input-timeout"><i class="fa fa-clock-o"></i> Timeout</label>
+            <input type="text" id="node-input-timeout" placeholder="15000">
+        </div>
     </div>
 </script>
 
 <script type="text/html" data-help-name="unifi-protect-device">
-    <p>Represents a generic UniFi Protect object. The node uses discovery for device types, instances, and supported capabilities.</p>
+    <p>Use this node to control a UniFi Protect device or listen for its live events.</p>
 
     <h3>Configuration</h3>
-    <p>Select a device type, then a specific instance, and finally the capability to use. The node filters the capability list using the selected Protect device, so PTZ actions, doorbell actions, and similar features appear only when the selected object looks compatible.</p>
-    <p><code>Receive Events</code> performs an initial fetch and stays connected to the Protect streams. If a capability exposes configurable options, the node presents them automatically. <code>Update One Property</code> discovers patchable properties from the selected device payload and adapts the editor to the selected value type.</p>
-    <p>For <code>Sensor + Receive Events</code>, <code>Camera + Receive Events</code>, and <code>Light + Receive Events</code> you can choose an observable and the node emits <code>true</code> or <code>false</code> in <code>msg.payload</code>, while keeping the original details in <code>msg.RAW</code>.</p>
+    <p><b>Connection</b> selects the shared UniFi Protect config node.</p>
+    <p><b>Control</b> chooses the Protect device category. <b>Device</b> chooses the specific item. <b>Action</b> only shows actions supported by that device.</p>
+    <p><b>Action options</b> appears only when the selected action needs extra input. For example, observables, PTZ presets, live views, or discovered properties.</p>
+    <p><code>Receive Events</code> performs an initial fetch and then stays connected to the Protect streams.</p>
+    <p>For <code>Sensor</code>, <code>Camera</code>, and <code>Light</code> observables, the node can normalize the main output to <code>true</code> or <code>false</code> and keep the original context in <code>msg.RAW</code>.</p>
+    <p><b>Label</b> is optional and only changes how the node is shown in the editor. <b>Timeout</b> controls the request timeout in milliseconds for direct API calls.</p>
 
     <h3>Input</h3>
     <ul>
@@ -728,6 +951,4 @@
         <li><code>msg.unifiProtect</code>: standardized metadata for the device and the selected capability</li>
         <li><code>msg.RAW</code>: full raw context when an observable is used</li>
     </ul>
-
-    <p><small>Note: some field labels and option descriptions are simplified by this node to make the editor easier to use. They are intended as user-friendly guidance.</small></p>
 </script>

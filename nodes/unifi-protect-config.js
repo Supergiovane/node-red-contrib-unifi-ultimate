@@ -52,6 +52,8 @@ module.exports = function(RED) {
                 throw new Error("The UniFi Protect API key is missing.");
             }
 
+            // Protect requests all share the same base proxy URL. Callers only
+            // provide relative API paths and optional query/payload details.
             const queryString = buildQueryString(query);
             const normalizedPath = String(path || "").startsWith("/") ? String(path || "") : `/${String(path || "")}`;
             const requestUrl = new URL(`${node.baseUrl}${normalizedPath}${queryString}`);
@@ -77,6 +79,8 @@ module.exports = function(RED) {
                 throw new Error(`Unsupported device type: ${deviceType}`);
             }
 
+            // Protect resource families have one direct collection endpoint each,
+            // so discovery is simpler than Network's cross-site enumeration.
             const response = await node.apiRequest({ path: definition.listPath, method: "GET" });
             if (response.statusCode < 200 || response.statusCode >= 300) {
                 throw new Error(`Failed to load ${deviceType} devices (${response.statusCode})`);
@@ -102,6 +106,8 @@ module.exports = function(RED) {
                 throw new Error("Missing file type.");
             }
 
+            // Asset files are used by dynamic editor options such as doorbell
+            // image messages.
             const response = await node.apiRequest({
                 path: `/v1/files/${encodeURIComponent(normalizedType)}`,
                 method: "GET"
@@ -139,12 +145,16 @@ module.exports = function(RED) {
         };
 
         node.buildWebSocketUrl = (path) => {
+            // Reuse the configured HTTPS base URL and only swap protocol for the
+            // matching websocket scheme.
             const url = new URL(`${node.baseUrl}${path}`);
             url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
             return url.toString();
         };
 
         node.broadcastDeviceUpdate = (update) => {
+            // The config node is the single websocket consumer; individual
+            // runtime nodes subscribe through addClient/removeClient.
             node.nodeClients.forEach((client) => {
                 try {
                     if (client && typeof client.handleProtectDeviceUpdate === "function") {
@@ -171,9 +181,15 @@ module.exports = function(RED) {
                 return;
             }
 
+            // Back off a little before reconnecting so temporary controller
+            // restarts do not cause a tight reconnect loop.
             node.reconnectTimer = setTimeout(() => {
                 node.reconnectTimer = null;
-                node.ensureWebSockets();
+                try {
+                    node.ensureWebSockets();
+                } catch (error) {
+                    node.warn(`Protect websocket reconnect failed: ${error && error.message ? error.message : error}`);
+                }
             }, 5000);
         };
 
@@ -184,6 +200,8 @@ module.exports = function(RED) {
                 return;
             }
 
+            // Load ws lazily so HTTP-only users do not pay the dependency cost
+            // until live observation is actually needed.
             try {
                 ({ WebSocket } = require("ws"));
             } catch (error) {
@@ -191,16 +209,25 @@ module.exports = function(RED) {
                 return;
             }
 
-            const ws = new WebSocket(node.buildWebSocketUrl(path), {
-                headers: {
-                    [node.authHeader]: apiKey,
-                    Accept: "application/json"
-                },
-                rejectUnauthorized: node.rejectUnauthorized
-            });
+            let ws;
+            try {
+                ws = new WebSocket(node.buildWebSocketUrl(path), {
+                    headers: {
+                        [node.authHeader]: apiKey,
+                        Accept: "application/json"
+                    },
+                    rejectUnauthorized: node.rejectUnauthorized
+                });
+            } catch (error) {
+                node.warn(`Unable to open Protect websocket '${kind}': ${error && error.message ? error.message : error}`);
+                node.scheduleReconnect();
+                return;
+            }
 
             ws.on("message", (rawData) => {
                 try {
+                    // Protect streams send JSON messages; malformed frames are
+                    // ignored so one bad packet does not kill the whole stream.
                     const text = Buffer.isBuffer(rawData) ? rawData.toString("utf8") : String(rawData);
                     const parsed = JSON.parse(text);
                     handler(parsed);
@@ -237,6 +264,7 @@ module.exports = function(RED) {
                 return;
             }
 
+            // Devices and events are split into two streams by the Protect API.
             if (!node.wsDevices) {
                 node.attachSocket("devices", "/v1/subscribe/devices", node.broadcastDeviceUpdate);
             }
@@ -273,9 +301,15 @@ module.exports = function(RED) {
             if (!client) {
                 return;
             }
+            // Keep the websocket connection alive only while at least one node
+            // needs live Protect updates.
             node.nodeClients = node.nodeClients.filter((entry) => entry && entry.id !== client.id);
             node.nodeClients.push(client);
-            node.ensureWebSockets();
+            try {
+                node.ensureWebSockets();
+            } catch (error) {
+                node.warn(`Unable to initialize Protect websockets: ${error && error.message ? error.message : error}`);
+            }
         };
 
         node.removeClient = (client) => {
@@ -288,7 +322,9 @@ module.exports = function(RED) {
         node.on("close", function(done) {
             node.isClosing = true;
             node.closeWebSockets();
-            done();
+            if (typeof done === "function") {
+                done();
+            }
         });
     }
 
@@ -300,6 +336,7 @@ module.exports = function(RED) {
 
     RED.httpAdmin.get("/unifiProtect/device-types", RED.auth.needsPermission("unifi-protect-config.read"), async (req, res) => {
         try {
+            // The editor only needs the list of supported resource families.
             res.json(getDeviceTypes().map((definition) => ({
                 type: definition.type,
                 label: definition.label,
@@ -321,6 +358,8 @@ module.exports = function(RED) {
             }
 
             if (!serverId || !deviceId) {
+                // Before a concrete device is selected, return the generic
+                // capability set for the chosen device family.
                 res.json(getCapabilitiesForType(deviceType));
                 return;
             }
@@ -405,4 +444,5 @@ module.exports = function(RED) {
             res.status(500).json({ error: error.message });
         }
     });
+
 };

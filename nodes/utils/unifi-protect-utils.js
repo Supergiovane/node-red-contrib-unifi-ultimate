@@ -4,6 +4,8 @@ const http = require("http");
 const https = require("https");
 
 function normalizeHost(value) {
+    // Protect editor fields may contain a host or a full URL; strip everything
+    // down to the host:port portion used by the integration proxy URL.
     let host = String(value || "").trim();
     if (!host) {
         return "";
@@ -45,6 +47,8 @@ function buildQueryString(query) {
 }
 
 function maybeParseBody(contentType, buffer) {
+    // Protect sometimes returns JSON-like payloads even when headers are not
+    // perfectly descriptive, so inspect both header and content shape.
     const raw = buffer.toString("utf8");
     if (!raw) {
         return raw;
@@ -67,6 +71,7 @@ function maybeParseBody(contentType, buffer) {
 
 function doRequest(url, options, body) {
     return new Promise((resolve, reject) => {
+        // Keep request plumbing dependency-free for easier Node-RED packaging.
         const transport = url.protocol === "http:" ? http : https;
         const requestOptions = {
             protocol: url.protocol,
@@ -118,6 +123,8 @@ function buildRequestHeaders(authHeader, apiKey, msgHeaders) {
 }
 
 function buildRequestBody(headers, method, payload) {
+    // Serialize payloads in one place so the higher-level registry/runtime
+    // logic only needs to provide semantic request data.
     if (method === "GET" || method === "HEAD" || payload === undefined) {
         return undefined;
     }

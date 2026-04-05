@@ -1,7 +1,7 @@
 {
   "name": "node-red-contrib-unifi-ultimate",
-  "version": "0.1.0-beta.5",
-  "description": "Node-RED nodes for Ubiquiti UniFi integrations, including UniFi Protect and UniFi Access.",
+  "version": "0.1.0-beta.6",
+  "description": "Node-RED nodes for Ubiquiti UniFi integrations, including UniFi Protect, UniFi Access, and UniFi Network.",
   "files": [
     "nodes/",
     "examples/",
@@ -12,6 +12,7 @@
     "node-red",
     "unifi",
     "ubiquiti",
+    "network",
     "protect",
     "access",
     "node-red-contrib"
@@ -34,11 +35,15 @@
     "nodes": {
       "unifi-access-config": "nodes/unifi-access-config.js",
       "unifi-access-device": "nodes/unifi-access-device.js",
+      "unifi-network-control-poe": "nodes/unifi-network-control-poe.js",
+      "unifi-network-config": "nodes/unifi-network-config.js",
+      "unifi-network-device": "nodes/unifi-network-device.js",
+      "unifi-network-presence": "nodes/unifi-network-presence.js",
       "unifi-protect-config": "nodes/unifi-protect-config.js",
       "unifi-protect-device": "nodes/unifi-protect-device.js"
     }
   },
   "scripts": {
-    "test": "node --check nodes/unifi-access-config.js && node --check nodes/unifi-access-device.js && node --check nodes/unifi-protect-config.js && node --check nodes/unifi-protect-device.js && node --check nodes/utils/unifi-access-utils.js && node --check nodes/utils/unifi-access-device-registry.js && node --check nodes/utils/unifi-protect-utils.js && node --check nodes/utils/unifi-protect-field-metadata.js && node --check nodes/utils/unifi-protect-device-registry.js"
+    "test": "node --check nodes/unifi-access-config.js && node --check nodes/unifi-access-device.js && node --check nodes/unifi-network-config.js && node --check nodes/unifi-network-control-poe.js && node --check nodes/unifi-network-device.js && node --check nodes/unifi-network-presence.js && node --check nodes/unifi-protect-config.js && node --check nodes/unifi-protect-device.js && node --check nodes/utils/unifi-access-utils.js && node --check nodes/utils/unifi-access-device-registry.js && node --check nodes/utils/unifi-network-utils.js && node --check nodes/utils/unifi-network-device-registry.js && node --check nodes/utils/unifi-protect-utils.js && node --check nodes/utils/unifi-protect-field-metadata.js && node --check nodes/utils/unifi-protect-device-registry.js"
   }
 }

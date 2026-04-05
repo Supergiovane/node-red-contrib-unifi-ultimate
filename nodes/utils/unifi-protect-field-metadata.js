@@ -1,5 +1,7 @@
 "use strict";
 
+// Human-friendly metadata used to turn raw Protect field names into editor
+// labels/help text when "Update One Property" discovers patchable paths.
 const COMMON_FIELD_METADATA = {
     name: {
         label: "Name",
@@ -24,6 +26,7 @@ const COMMON_FIELD_METADATA = {
     }
 };
 
+// Device-family-specific metadata overrides or extends the common dictionary.
 const TYPE_FIELD_METADATA = {
     camera: {
         isMicEnabled: {
@@ -164,6 +167,8 @@ const TYPE_FIELD_METADATA = {
     }
 };
 
+// Observable metadata powers the "Receive Events" helper text shown in the
+// editor when the user chooses which boolean state to expose.
 const OBSERVABLE_METADATA = {
     camera: {
         ring: {
@@ -248,6 +253,8 @@ const OBSERVABLE_METADATA = {
     }
 };
 
+// Preserve common acronyms during automatic label formatting so generated field
+// names look intentional instead of machine-expanded.
 const ACRONYM_REPLACEMENTS = {
     api: "API",
     fps: "FPS",

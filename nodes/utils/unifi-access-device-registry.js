@@ -1,5 +1,6 @@
 "use strict";
 
+// Shared registry for Access editor/runtime behavior.
 const DEVICE_TYPE_DEFINITIONS = {
     door: {
         type: "door",
@@ -14,6 +15,7 @@ const DEVICE_TYPE_DEFINITIONS = {
     }
 };
 
+// Capabilities common to all Access resource families.
 const COMMON_CAPABILITIES = [
     {
         id: "observe",
@@ -29,6 +31,8 @@ const COMMON_CAPABILITIES = [
     }
 ];
 
+// Family-specific capabilities. requestComposer turns editor values into the
+// exact payload expected by the Access developer endpoints.
 const TYPE_CAPABILITIES = {
     door: [
         {
@@ -227,6 +231,8 @@ function getCapabilitiesForType(deviceType, device) {
         return [];
     }
 
+    // Device-aware filtering keeps the editor clean, for example by only
+    // showing doorbell actions on hardware that can actually ring.
     return COMMON_CAPABILITIES
         .concat(TYPE_CAPABILITIES[definition.type] || [])
         .filter((capability) => isCapabilitySupportedForDevice(definition.type, capability, device))
@@ -241,6 +247,8 @@ function getCapabilityDefinition(deviceType, capabilityId, device) {
 }
 
 async function getCapabilityOptions(deviceType, capabilityId, context) {
+    // Access capability options are currently static, but keep the async shape
+    // consistent with the other registries so the editor can treat them equally.
     const capability = getCapabilityDefinition(deviceType, capabilityId, context && context.device);
     if (!capability || !capability.editor || !Array.isArray(capability.editor.fields)) {
         return {
@@ -256,6 +264,7 @@ async function getCapabilityOptions(deviceType, capabilityId, context) {
 }
 
 function buildPathFromTemplate(path, deviceId) {
+    // Access uses simple ":id" path templates, so replacement stays minimal.
     return String(path || "").replace(":id", encodeURIComponent(String(deviceId || "").trim()));
 }
 
@@ -282,6 +291,8 @@ function composeCapabilityExecution(deviceType, capabilityId, capabilityConfig, 
         throw new Error(`Unsupported capability '${capabilityId}' for device type '${deviceType}'.`);
     }
 
+    // requestComposer provides capability defaults; msg.query/msg.headers still
+    // merge in so advanced flows can customize individual requests.
     const normalizedConfig = normalizeObject(capabilityConfig);
     const composedRequest = typeof capability.requestComposer === "function"
         ? capability.requestComposer({
@@ -305,6 +316,8 @@ function composeCapabilityExecution(deviceType, capabilityId, capabilityConfig, 
 }
 
 function isCapabilitySupportedForDevice(deviceType, capability, device) {
+    // Access device APIs cover readers, intercoms and viewers; only some of
+    // them support doorbell semantics.
     if (!capability || String(deviceType || "").trim() !== "device") {
         return true;
     }
@@ -317,6 +330,8 @@ function isCapabilitySupportedForDevice(deviceType, capability, device) {
 }
 
 function isDoorbellCapableAccessDevice(device) {
+    // UniFi Access payloads are not perfectly normalized across models, so use
+    // multiple name/model signatures to infer doorbell support.
     const item = normalizeObject(device);
     const signatures = [
         item.type,
@@ -355,6 +370,8 @@ function normalizeObjectArray(value) {
 }
 
 function summarizeDevice(deviceType, device) {
+    // Normalize wildly different Access payloads into one dropdown-friendly
+    // summary shape for the editor.
     const normalizedType = String(deviceType || "").trim();
     const item = device && typeof device === "object" ? device : {};
     const id = String(item.id || "").trim();
@@ -385,6 +402,8 @@ function summarizeDevice(deviceType, device) {
 }
 
 function matchesEvent(deviceType, deviceId, currentDevice, eventPayload) {
+    // Event payloads identify targets through different keys depending on the
+    // event family, so match against a broader set of candidate fields.
     const selectedId = String(deviceId || "").trim();
     const event = eventPayload && typeof eventPayload === "object" ? eventPayload : {};
     const data = event.data && typeof event.data === "object" ? event.data : {};

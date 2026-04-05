@@ -1,0 +1,342 @@
+<style>
+    .unifi-ultimate-card {
+        margin-left: 150px;
+        padding: 12px 14px;
+        border-radius: 12px;
+        background: #f5f7fa;
+        color: #334155;
+        line-height: 1.45;
+    }
+
+    .unifi-ultimate-card strong {
+        display: block;
+        margin-bottom: 4px;
+        color: #0f172a;
+        font-weight: 600;
+    }
+
+    .unifi-ultimate-advanced {
+        margin-top: 4px;
+        padding-top: 4px;
+        border-top: 1px solid #e5e7eb;
+    }
+
+</style>
+
+<script type="text/javascript">
+    RED.nodes.registerType("unifi-network-presence", {
+        category: "Unifi Ultimate",
+        color: "#CFE8FB",
+        defaults: {
+            name: { value: "" },
+            server: { value: "", type: "unifi-network-config", required: true },
+            clientId: { value: "", required: true },
+            pollInterval: { value: 10, required: true, validate: RED.validators.number() },
+            onlineHysteresis: { value: 15, required: true, validate: RED.validators.number() },
+            offlineHysteresis: { value: 30, required: true, validate: RED.validators.number() },
+            timeout: { value: 8000, required: true, validate: RED.validators.number() }
+        },
+        inputs: 1,
+        outputs: 1,
+        icon: "unifi-protect-icon.svg",
+        paletteLabel: "Presence Detection",
+        outputLabels: ["presence"],
+        label: function () {
+            return this.name || "Presence Detection";
+        },
+        oneditprepare: function () {
+            const node = this;
+            const $name = $("#node-input-name");
+            const $server = $("#node-input-server");
+            const $clientId = $("#node-input-clientId");
+            const $refresh = $("#node-input-refreshClients");
+            const $selectionSummary = $("#node-input-selectionSummary");
+            const $selectionDetail = $("#node-input-selectionDetail");
+            let lastAutoName = "";
+            let suspendChangeHandling = false;
+
+            function requestJson(url) {
+                return new Promise(function (resolve, reject) {
+                    $.getJSON(url, function (data) {
+                        resolve(data);
+                    }).fail(function (xhr) {
+                        reject(xhr);
+                    });
+                });
+            }
+
+            function getConfigNodesByType(configType) {
+                const configs = [];
+                try {
+                    if (RED && RED.nodes) {
+                        // Read config nodes directly from the editor workspace so
+                        // a new Presence node can default to an existing connection.
+                        if (typeof RED.nodes.eachConfig === "function") {
+                            RED.nodes.eachConfig(function (cfg) {
+                                if (cfg && cfg.type === configType) {
+                                    configs.push(cfg);
+                                }
+                            });
+                        } else if (typeof RED.nodes.eachNode === "function") {
+                            RED.nodes.eachNode(function (cfg) {
+                                if (cfg && cfg.type === configType) {
+                                    configs.push(cfg);
+                                }
+                            });
+                        }
+
+                        if (configs.length === 0 && typeof RED.nodes.filterNodes === "function") {
+                            try {
+                                const filtered = RED.nodes.filterNodes({ type: configType });
+                                if (Array.isArray(filtered)) {
+                                    filtered.forEach(function (cfg) {
+                                        configs.push(cfg);
+                                    });
+                                }
+                            } catch (error) {
+                            }
+                        }
+                    }
+                } catch (error) {
+                }
+                return configs;
+            }
+
+            function ensureDefaultServerSelection() {
+                // Only auto-select a config for new/empty nodes.
+                const currentValue = String($server.val() || node.server || "").trim();
+                if (currentValue !== "" && currentValue !== "_ADD_") {
+                    return;
+                }
+
+                const configs = getConfigNodesByType("unifi-network-config");
+                if (!Array.isArray(configs) || configs.length === 0) {
+                    return;
+                }
+
+                const firstConfigId = String(configs[0].id || "").trim();
+                if (!firstConfigId) {
+                    return;
+                }
+
+                $server.val(firstConfigId);
+            }
+
+            function makeSelectSearchable($select, placeholder) {
+                if (!$select || $select.length === 0) {
+                    return;
+                }
+                // Presence now uses normal selects, but this removes old helper
+                // inputs if a cached editor instance created them before.
+                const selectId = String($select.attr("id") || "").trim();
+                if (selectId) {
+                    const $searchInput = $("#" + selectId + "-search");
+                    if ($searchInput.length > 0) {
+                        try {
+                            if ($searchInput.data("ui-autocomplete")) {
+                                $searchInput.autocomplete("destroy");
+                            }
+                        } catch (error) {
+                        }
+                        $searchInput.remove();
+                    }
+                }
+
+                $select.off(".unifiSearchable");
+                $select.removeData("unifi-searchable");
+                $select.removeData("unifi-options-count");
+                $select.show();
+            }
+
+            function getSelectedClientName() {
+                const $selected = $clientId.find("option:selected");
+                return String($selected.data("clientName") || "").trim();
+            }
+
+            function refreshSummary() {
+                const serverId = String($server.val() || "").trim();
+                const clientName = getSelectedClientName();
+                let summary = "Choose a connection to begin.";
+                let detail = "Select one client. The node emits true when connected and false when disconnected.";
+
+                if (serverId && serverId !== "_ADD_") {
+                    summary = "Choose the client to monitor.";
+                    detail = "Presence checks run on a fixed interval using UniFi Network data.";
+                }
+
+                if (clientName) {
+                    summary = "Monitoring presence for " + clientName + ".";
+                    detail = "Connect and disconnect hysteresis reduce false flapping on unstable links.";
+                }
+
+                $selectionSummary.text(summary);
+                $selectionDetail.text(detail);
+            }
+
+            function syncNameFromSelection() {
+                const clientName = getSelectedClientName();
+                const currentName = String($name.val() || "").trim();
+                const shouldUpdate = currentName === "" || currentName === lastAutoName;
+                if (!clientName || !shouldUpdate) {
+                    return;
+                }
+
+                $name.val(clientName);
+                lastAutoName = clientName;
+            }
+
+            function renderClients(items) {
+                const currentValue = String($clientId.val() || node.clientId || "").trim();
+                suspendChangeHandling = true;
+                try {
+                    $clientId.empty();
+                    $clientId.append($("<option></option>").val("").text("Choose a client"));
+
+                    (items || []).forEach(function (item) {
+                        const stateSuffix = item.state ? " [" + item.state + "]" : "";
+                        $clientId.append(
+                            $("<option></option>")
+                                .val(item.id)
+                                .text((item.name || item.id) + stateSuffix)
+                                .attr("data-client-name", item.name || item.id)
+                        );
+                    });
+
+                    if (currentValue && $clientId.find("option[value='" + currentValue + "']").length > 0) {
+                        $clientId.val(currentValue);
+                    } else {
+                        $clientId.val("");
+                    }
+                } finally {
+                    suspendChangeHandling = false;
+                }
+
+                makeSelectSearchable($clientId, "Search clients");
+                syncNameFromSelection();
+                refreshSummary();
+            }
+
+            function loadClients() {
+                const serverId = String($server.val() || "").trim();
+                if (!serverId || serverId === "_ADD_") {
+                    renderClients([]);
+                    return Promise.resolve();
+                }
+
+                // Client availability depends on the selected controller, so
+                // reload the list whenever the connection changes.
+                $refresh.addClass("fa-spin");
+                return requestJson("unifiNetwork/devices?serverId=" + encodeURIComponent(serverId) + "&deviceType=client")
+                    .then(function (data) {
+                        renderClients(Array.isArray(data) ? data : []);
+                    })
+                    .catch(function (xhr) {
+                        renderClients([]);
+                        const errorText = xhr && xhr.responseJSON && xhr.responseJSON.error ? xhr.responseJSON.error : "Unable to load clients";
+                        RED.notify(errorText, "error");
+                    })
+                    .finally(function () {
+                        $refresh.removeClass("fa-spin");
+                    });
+            }
+
+            try {
+                RED.sidebar.show("help");
+            } catch (error) {
+            }
+
+            $server.on("change", function () {
+                if (suspendChangeHandling) {
+                    return;
+                }
+                loadClients();
+            });
+
+            $clientId.on("change", function () {
+                if (suspendChangeHandling) {
+                    return;
+                }
+                syncNameFromSelection();
+                refreshSummary();
+            });
+
+            $refresh.on("click", function (event) {
+                event.preventDefault();
+                loadClients();
+            });
+
+            ensureDefaultServerSelection();
+            makeSelectSearchable($clientId, "Search clients");
+            refreshSummary();
+            loadClients();
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="unifi-network-presence">
+    <div class="form-row">
+        <label for="node-input-server"><i class="fa fa-cog"></i> Connection</label>
+        <input type="text" id="node-input-server">
+    </div>
+    <div class="form-row">
+        <label for="node-input-clientId"><i class="fa fa-wifi"></i> Client</label>
+        <select id="node-input-clientId" style="width:70%;"></select>
+        <a href="#" id="node-input-refreshClients" class="editor-button" style="margin-left:6px;">
+            <i class="fa fa-refresh"></i>
+        </a>
+    </div>
+    <div class="form-row">
+        <div class="unifi-ultimate-card">
+            <strong id="node-input-selectionSummary">Choose a connection to begin.</strong>
+            <div id="node-input-selectionDetail">Select one client. The node emits true when connected and false when disconnected.</div>
+        </div>
+    </div>
+    <div id="node-row-advanced" class="unifi-ultimate-advanced">
+        <div class="form-row">
+            <label for="node-input-name"><i class="fa fa-tag"></i> Label</label>
+            <input type="text" id="node-input-name" placeholder="Optional custom label">
+        </div>
+        <div class="form-row">
+            <label for="node-input-pollInterval"><i class="fa fa-repeat"></i> Poll (s)</label>
+            <input type="text" id="node-input-pollInterval" placeholder="10">
+        </div>
+        <div class="form-row">
+            <label for="node-input-onlineHysteresis"><i class="fa fa-hourglass-start"></i> Connect Hysteresis (s)</label>
+            <input type="text" id="node-input-onlineHysteresis" placeholder="15">
+        </div>
+        <div class="form-row">
+            <label for="node-input-offlineHysteresis"><i class="fa fa-hourglass-half"></i> Hysteresis (s)</label>
+            <input type="text" id="node-input-offlineHysteresis" placeholder="30">
+        </div>
+        <div class="form-row">
+            <label for="node-input-timeout"><i class="fa fa-clock-o"></i> Timeout</label>
+            <input type="text" id="node-input-timeout" placeholder="8000">
+        </div>
+    </div>
+</script>
+
+<script type="text/html" data-help-name="unifi-network-presence">
+    <p>Detects if a selected UniFi client is currently present on your UniFi WiFi network.</p>
+
+    <h3>Configuration</h3>
+    <p><b>Connection</b> selects the shared UniFi Network config node.</p>
+    <p><b>Client</b> selects the device to track.</p>
+    <p><b>Poll (s)</b> is how often the node checks presence.</p>
+    <p><b>Connect Hysteresis (s)</b> delays the <code>true</code> output so brief reconnects do not flap.</p>
+    <p><b>Hysteresis (s)</b> delays the <code>false</code> output to avoid flapping when the client disconnects briefly.</p>
+    <p><b>Timeout</b> is the HTTP timeout for each check.</p>
+
+    <h3>Input</h3>
+    <ul>
+        <li>Any input triggers an immediate presence check.</li>
+        <li>Optional runtime overrides: <code>msg.clientId</code> or <code>msg.siteId</code> + <code>msg.resourceId</code>.</li>
+    </ul>
+
+    <h3>Output</h3>
+    <ul>
+        <li><code>msg.payload</code>: <code>true</code> when present, <code>false</code> when absent.</li>
+        <li><code>msg.present</code>: same boolean presence value.</li>
+        <li><code>msg.client</code>: last known client object when available.</li>
+        <li><code>msg.unifiNetworkPresence</code>: metadata including site/client ids and hysteresis settings.</li>
+    </ul>
+</script>

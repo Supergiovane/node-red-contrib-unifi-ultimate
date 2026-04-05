@@ -18,6 +18,8 @@ const {
 } = require("./utils/unifi-access-device-registry");
 
 module.exports = function(RED) {
+    // Doorbell requests are "best effort" from the public API perspective, so
+    // keep a short-lived in-memory ledger to validate later cancel requests.
     const ACTIVE_DOORBELL_TTL_MS = 180000;
 
     function UnifiAccessConfigNode(config) {
@@ -53,6 +55,8 @@ module.exports = function(RED) {
                 throw new Error("The UniFi Access API token is missing.");
             }
 
+            // Access uses bearer authentication against the controller directly,
+            // so all callers only need to provide the relative path and options.
             const queryString = buildQueryString(query);
             const normalizedPath = String(path || "").startsWith("/") ? String(path || "") : `/${String(path || "")}`;
             const requestUrl = new URL(`${node.baseUrl}${normalizedPath}${queryString}`);
@@ -81,6 +85,8 @@ module.exports = function(RED) {
             const response = await node.apiRequest({
                 path: definition.listPath,
                 method: "GET",
+                // Some Access device inventories only refresh reliably when this
+                // query flag is present.
                 query: deviceType === "device" ? { refresh: "true" } : undefined
             });
 
@@ -98,6 +104,8 @@ module.exports = function(RED) {
             }
 
             if (definition.detailPath) {
+                // Doors expose a direct detail endpoint, while generic devices
+                // may need to be looked up from the collection response.
                 const response = await node.apiRequest({
                     path: definition.detailPath.replace(":id", encodeURIComponent(String(deviceId || "").trim())),
                     method: "GET"
@@ -136,12 +144,15 @@ module.exports = function(RED) {
         };
 
         node.buildWebSocketUrl = (path) => {
+            // Rebuild the websocket URL from the configured HTTPS controller URL.
             const url = new URL(`${node.baseUrl}${path}`);
             url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
             return url.toString();
         };
 
         node.broadcastNotification = (payload) => {
+            // The config node centralizes one websocket stream and fans it out
+            // to all Access runtime nodes interested in events.
             node.nodeClients.forEach((client) => {
                 try {
                     if (client && typeof client.handleAccessEventUpdate === "function") {
@@ -153,6 +164,8 @@ module.exports = function(RED) {
         };
 
         node.updateDoorbellState = (payload) => {
+            // Track doorbell lifecycle so "Cancel Doorbell" can avoid sending a
+            // blind cancel when no active ring is currently known.
             const eventName = String(payload && payload.event || "").trim();
             const data = payload && payload.data && typeof payload.data === "object" ? payload.data : {};
             const device = data.device && typeof data.device === "object" ? data.device : {};
@@ -177,6 +190,8 @@ module.exports = function(RED) {
             }
 
             if (eventName.startsWith("access.doorbell.completed")) {
+                // If a request id is present, use it to avoid deleting a newer
+                // active ring with an old completion event.
                 const current = node.activeDoorbells.get(deviceId);
                 if (!current) {
                     return;
@@ -189,6 +204,8 @@ module.exports = function(RED) {
         };
 
         node.purgeExpiredDoorbells = () => {
+            // Clean stale entries opportunistically instead of running a
+            // dedicated timer for such a small in-memory cache.
             const now = Date.now();
             Array.from(node.activeDoorbells.entries()).forEach(([deviceId, entry]) => {
                 const expiresAt = Number(entry && entry.expiresAt);
@@ -214,6 +231,8 @@ module.exports = function(RED) {
         };
 
         node.markDoorbellTriggered = (deviceId, metadata) => {
+            // Manual trigger requests can arrive before the websocket confirms
+            // the ring, so pre-mark them as active for safe cancel behavior.
             const normalizedId = String(deviceId || "").trim();
             if (!normalizedId) {
                 return;
@@ -237,9 +256,15 @@ module.exports = function(RED) {
                 return;
             }
 
+            // Delay reconnect attempts slightly to avoid a busy loop while the
+            // controller is restarting or upgrading.
             node.reconnectTimer = setTimeout(() => {
                 node.reconnectTimer = null;
-                node.ensureWebSocket();
+                try {
+                    node.ensureWebSocket();
+                } catch (error) {
+                    node.warn(`Access websocket reconnect failed: ${error && error.message ? error.message : error}`);
+                }
             }, 5000);
         };
 
@@ -254,6 +279,7 @@ module.exports = function(RED) {
                 return;
             }
 
+            // Load ws only when live notifications are actually needed.
             try {
                 ({ WebSocket } = require("ws"));
             } catch (error) {
@@ -261,16 +287,25 @@ module.exports = function(RED) {
                 return;
             }
 
-            const ws = new WebSocket(node.buildWebSocketUrl("/api/v1/developer/devices/notifications"), {
-                headers: {
-                    Authorization: `Bearer ${apiToken}`,
-                    Accept: "application/json"
-                },
-                rejectUnauthorized: node.rejectUnauthorized
-            });
+            let ws;
+            try {
+                ws = new WebSocket(node.buildWebSocketUrl("/api/v1/developer/devices/notifications"), {
+                    headers: {
+                        Authorization: `Bearer ${apiToken}`,
+                        Accept: "application/json"
+                    },
+                    rejectUnauthorized: node.rejectUnauthorized
+                });
+            } catch (error) {
+                node.warn(`Unable to open Access websocket: ${error && error.message ? error.message : error}`);
+                node.scheduleReconnect();
+                return;
+            }
 
             ws.on("message", (rawData) => {
                 try {
+                    // Ignore malformed websocket frames rather than killing the
+                    // whole notification stream.
                     const text = Buffer.isBuffer(rawData) ? rawData.toString("utf8") : String(rawData);
                     const parsed = JSON.parse(text);
                     node.updateDoorbellState(parsed);
@@ -316,9 +351,15 @@ module.exports = function(RED) {
                 return;
             }
 
+            // Maintain one entry per runtime node and spin up the websocket only
+            // when the first client subscribes.
             node.nodeClients = node.nodeClients.filter((entry) => entry && entry.id !== client.id);
             node.nodeClients.push(client);
-            node.ensureWebSocket();
+            try {
+                node.ensureWebSocket();
+            } catch (error) {
+                node.warn(`Unable to initialize Access websocket: ${error && error.message ? error.message : error}`);
+            }
         };
 
         node.removeClient = (client) => {
@@ -332,7 +373,9 @@ module.exports = function(RED) {
             node.isClosing = true;
             node.activeDoorbells.clear();
             node.closeWebSocket();
-            done();
+            if (typeof done === "function") {
+                done();
+            }
         });
     }
 
@@ -344,6 +387,8 @@ module.exports = function(RED) {
 
     RED.httpAdmin.get("/unifiAccess/device-types", RED.auth.needsPermission("unifi-access-config.read"), async (req, res) => {
         try {
+            // Editor bootstrap endpoint: return only the small list needed to
+            // populate the "Control" dropdown.
             res.json(getDeviceTypes().map((definition) => ({
                 type: definition.type,
                 label: definition.label
@@ -364,6 +409,8 @@ module.exports = function(RED) {
             }
 
             if (!serverId || !deviceId) {
+                // Before a concrete device is selected, return the generic
+                // capability set for the chosen Access family.
                 res.json(getCapabilitiesForType(deviceType));
                 return;
             }
@@ -448,4 +495,5 @@ module.exports = function(RED) {
             res.status(500).json({ error: error.message });
         }
     });
+
 };

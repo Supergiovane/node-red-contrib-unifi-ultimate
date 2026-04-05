@@ -20,82 +20,78 @@
         padding-top: 4px;
         border-top: 1px solid #e5e7eb;
     }
-
 </style>
 
 <script type="text/javascript">
-    RED.nodes.registerType("unifi-protect-config", {
+    RED.nodes.registerType("unifi-network-config", {
         category: "config",
         defaults: {
-            name: { value: "Unifi Protect Config" },
+            name: { value: "Unifi Network Config" },
             host: { value: "", required: true },
-            authHeader: { value: "X-API-Key", required: true },
             rejectUnauthorized: { value: false }
         },
         credentials: {
             apiKey: { type: "password", required: true }
         },
         label: function () {
-            return this.name || this.host || "Unifi Protect Config";
+            return this.name || this.host || "Unifi Network Config";
         },
         oneditprepare: function () {
             const $host = $("#node-config-input-host");
             const $connectionHint = $("#node-config-input-connectionHint");
 
             function escapeHtml(value) {
-                // The preview is injected as HTML, so sanitize user-controlled
-                // host values before displaying them in the summary card.
+                // The preview is rendered as HTML, so sanitize user input before
+                // echoing the controller host back into the hint box.
                 return String(value || "")
                     .replace(/&/g, "&amp;")
                     .replace(/</g, "&lt;")
                     .replace(/>/g, "&gt;")
-                    .replace(/"/g, "&quot;")
+                    .replace(/\"/g, "&quot;")
                     .replace(/'/g, "&#39;");
             }
 
             function refreshConnectionHint() {
                 const host = String($host.val() || "").trim();
                 if (!host) {
-                    $connectionHint.html("<strong>Enter your controller address</strong>The node builds the Protect connection automatically.");
+                    $connectionHint.html("<strong>Enter your controller address</strong>The node builds the UniFi Network connection automatically.");
                     return;
                 }
 
-                // The runtime normalizes the host and then appends the Protect
-                // integration proxy path. Mirror that behavior in the preview.
+                // The runtime accepts either a bare host or a full URL, but the
+                // preview intentionally shows the normalized integration endpoint.
                 const normalizedHost = host.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
                 $connectionHint.html(
                     "<strong>Connection preview</strong>Will connect to <code>https://" +
                     escapeHtml(normalizedHost) +
-                    "/proxy/protect/integration</code>"
+                    "/proxy/network/integration</code>"
                 );
             }
 
             try {
-                // Show the help sidebar immediately so the API header guidance is
-                // visible while the user configures the node.
+                // Keep the node help visible while configuring the connection so
+                // first-time users can see the authentication guidance.
                 RED.sidebar.show("help");
             } catch (error) {
             }
 
             refreshConnectionHint();
-
             $host.on("change input", function () {
-                // Refresh the preview in real time when the controller changes.
+                // Update the preview live as the user edits the controller host.
                 refreshConnectionHint();
             });
-
         }
     });
 </script>
 
-<script type="text/html" data-template-name="unifi-protect-config">
+<script type="text/html" data-template-name="unifi-network-config">
     <div class="form-row">
         <label for="node-config-input-host"><i class="fa fa-globe"></i> Controller</label>
         <input type="text" id="node-config-input-host" placeholder="192.168.1.10">
     </div>
     <div class="form-row">
         <label for="node-config-input-apiKey"><i class="fa fa-key"></i> API Key</label>
-        <input type="password" id="node-config-input-apiKey" placeholder="Paste your UniFi Protect API key">
+        <input type="password" id="node-config-input-apiKey" placeholder="Paste your UniFi Network API key">
     </div>
     <div class="form-row">
         <label for="node-config-input-rejectUnauthorized"><i class="fa fa-lock"></i> Security</label>
@@ -110,18 +106,13 @@
             <label for="node-config-input-name"><i class="fa fa-tag"></i> Label</label>
             <input type="text" id="node-config-input-name" placeholder="Optional custom label">
         </div>
-        <div class="form-row">
-            <label for="node-config-input-authHeader"><i class="fa fa-header"></i> API Header</label>
-            <input type="text" id="node-config-input-authHeader" placeholder="X-API-Key">
-        </div>
     </div>
 </script>
 
-<script type="text/html" data-help-name="unifi-protect-config">
-    <p>Connects the node to your UniFi Protect controller.</p>
-    <p><b>Controller</b> accepts the UniFi OS host or IP address. The node builds the Protect integration URL automatically.</p>
+<script type="text/html" data-help-name="unifi-network-config">
+    <p>Connects the node to your UniFi Network controller.</p>
+    <p><b>Controller</b> accepts the UniFi OS host or IP address. The node builds the local UniFi Network integration URL automatically.</p>
     <p><b>API Key</b> is required for authentication.</p>
     <p><b>Security</b> controls certificate verification. Disable it only when your controller uses a self-signed certificate.</p>
     <p><b>Label</b> is optional and only changes how the config node is shown in the editor.</p>
-    <p><b>API Header</b> is an advanced field. Leave the default value unless your UniFi Protect setup expects a different header name.</p>
 </script>

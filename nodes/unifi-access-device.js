@@ -22,6 +22,8 @@ function resolveCapabilityId(configuredCapabilityId, msg) {
 }
 
 function parseCapabilityConfig(value) {
+    // Access action options are stored as JSON by the editor, but runtime
+    // overrides may pass an already parsed object.
     if (value && typeof value === "object" && !Array.isArray(value)) {
         return value;
     }
@@ -62,6 +64,8 @@ function buildNodeStatus(deviceType, payload) {
 }
 
 function requiresDeviceSpecificCapabilityValidation(deviceType, capabilityId) {
+    // Doorbell capabilities depend on the exact device subtype, so the live
+    // payload is needed before the registry can validate them.
     return String(deviceType || "").trim() === "device" && ["triggerDoorbell", "cancelDoorbell"].includes(String(capabilityId || "").trim());
 }
 
@@ -81,6 +85,8 @@ module.exports = function(RED) {
         node.isObserving = false;
 
         function sendOutputs(send, stateMsg, eventMsg) {
+            // Keep the state and event channels explicit, mirroring the editor
+            // labels and avoiding shape changes on the output array.
             send([stateMsg || null, eventMsg || null]);
         }
 
@@ -115,6 +121,8 @@ module.exports = function(RED) {
                 throw new Error("Unifi Access configuration is missing.");
             }
 
+            // Resolve the final execution target by combining editor values with
+            // any runtime overrides coming from the input message.
             const deviceType = resolveDeviceType(node.deviceType, msg);
             const deviceId = resolveDeviceId(node.deviceId, msg);
             const capabilityId = resolveCapabilityId(node.capability, msg);
@@ -138,6 +146,8 @@ module.exports = function(RED) {
             }
 
             if (capabilityId === "cancelDoorbell" && typeof node.server.hasAnyActiveDoorbell === "function" && !node.server.hasAnyActiveDoorbell()) {
+                // UniFi Access does not provide a safe "cancel even if idle"
+                // endpoint, so avoid firing blind cancel requests.
                 const skippedMsg = RED.util.cloneMessage(msg);
                 skippedMsg.payload = {
                     skipped: true,
@@ -156,6 +166,8 @@ module.exports = function(RED) {
             }
 
             if (capability.mode === "observe" || capability.mode === "fetch") {
+                // Read-only capabilities reuse the same fetch path and only
+                // differ in the source metadata attached to the output.
                 await fetchDeviceState(
                     deviceType,
                     deviceId,
@@ -186,6 +198,8 @@ module.exports = function(RED) {
             }
 
             if (capabilityId === "triggerDoorbell" && typeof node.server.markDoorbellTriggered === "function") {
+                // Track the ring on the shared config node so a later cancel
+                // request can be validated safely.
                 node.server.markDoorbellTriggered(deviceId, {
                     capabilityConfig
                 });
@@ -227,6 +241,8 @@ module.exports = function(RED) {
 
             node.isObserving = true;
 
+            // Emit one initial snapshot so the flow starts with a known state
+            // before websocket events arrive.
             fetchDeviceState(node.deviceType, node.deviceId, "observe", node.send.bind(node), "startup").catch(() => {
             });
         }
@@ -238,15 +254,23 @@ module.exports = function(RED) {
 
             try {
                 await invokeCapability(msg, send);
-                done();
+                if (typeof done === "function") {
+                    done();
+                }
             } catch (error) {
                 node.status({ fill: "red", shape: "ring", text: "error" });
-                done(error);
+                if (typeof done === "function") {
+                    done(error);
+                } else {
+                    node.error(error, msg);
+                }
             }
         });
 
         node.handleAccessEventUpdate = (eventPayload) => {
             try {
+                // Event matching is delegated to the registry because Access
+                // events differ across doors, hubs, intercoms and devices.
                 if (!node.isObserving || !matchesEvent(node.deviceType, node.deviceId, node.currentDevice, eventPayload)) {
                     return;
                 }
@@ -282,7 +306,9 @@ module.exports = function(RED) {
                 node.server.removeClient(node);
             }
             node.isObserving = false;
-            done();
+            if (typeof done === "function") {
+                done();
+            }
         });
     }
 

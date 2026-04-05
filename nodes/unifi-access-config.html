@@ -1,3 +1,28 @@
+<style>
+    .unifi-ultimate-card {
+        margin-left: 150px;
+        padding: 12px 14px;
+        border-radius: 12px;
+        background: #f5f7fa;
+        color: #334155;
+        line-height: 1.45;
+    }
+
+    .unifi-ultimate-card strong {
+        display: block;
+        margin-bottom: 4px;
+        color: #0f172a;
+        font-weight: 600;
+    }
+
+    .unifi-ultimate-advanced {
+        margin-top: 4px;
+        padding-top: 4px;
+        border-top: 1px solid #e5e7eb;
+    }
+
+</style>
+
 <script type="text/javascript">
     RED.nodes.registerType("unifi-access-config", {
         category: "config",
@@ -13,38 +38,85 @@
             return this.name || this.host || "Unifi Access Config";
         },
         oneditprepare: function () {
+            const $host = $("#node-config-input-host");
+            const $connectionHint = $("#node-config-input-connectionHint");
+
+            function escapeHtml(value) {
+                // The connection preview is rendered as HTML, so sanitize any
+                // host text typed by the user first.
+                return String(value || "")
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/"/g, "&quot;")
+                    .replace(/'/g, "&#39;");
+            }
+
+            function refreshConnectionHint() {
+                const host = String($host.val() || "").trim();
+                if (!host) {
+                    $connectionHint.html("<strong>Enter your controller address</strong>The node uses the standard UniFi Access API connection automatically.");
+                    return;
+                }
+
+                // UniFi Access defaults to port 12445. Show the fully resolved
+                // host in the preview even when the user omitted the port.
+                const normalizedHost = host.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+                const hasPort = /:\d+$/.test(normalizedHost);
+                const previewHost = hasPort ? normalizedHost : normalizedHost + ":12445";
+                $connectionHint.html(
+                    "<strong>Connection preview</strong>Will connect to <code>https://" +
+                    escapeHtml(previewHost) +
+                    "</code>"
+                );
+            }
+
             try {
+                // Open the help panel automatically so token/port notes are
+                // visible while the user configures the connection.
                 RED.sidebar.show("help");
             } catch (error) {
             }
+
+            refreshConnectionHint();
+
+            $host.on("change input", function () {
+                // Keep the preview synchronized with the current host value.
+                refreshConnectionHint();
+            });
         }
     });
 </script>
 
 <script type="text/html" data-template-name="unifi-access-config">
     <div class="form-row">
-        <label for="node-config-input-name"><i class="fa fa-tag"></i> Name</label>
-        <input type="text" id="node-config-input-name" placeholder="Unifi Access Config">
-    </div>
-    <div class="form-row">
-        <label for="node-config-input-host"><i class="fa fa-globe"></i> Host</label>
+        <label for="node-config-input-host"><i class="fa fa-globe"></i> Controller</label>
         <input type="text" id="node-config-input-host" placeholder="192.168.1.10 or access.local:12445">
     </div>
     <div class="form-row">
         <label for="node-config-input-apiToken"><i class="fa fa-key"></i> API Token</label>
-        <input type="password" id="node-config-input-apiToken">
+        <input type="password" id="node-config-input-apiToken" placeholder="Paste your UniFi Access token">
     </div>
     <div class="form-row">
-        <label for="node-config-input-rejectUnauthorized"><i class="fa fa-lock"></i> Verify TLS</label>
+        <label for="node-config-input-rejectUnauthorized"><i class="fa fa-lock"></i> Security</label>
         <input type="checkbox" id="node-config-input-rejectUnauthorized" style="display:inline-block; width:auto; vertical-align:top;">
-        <span style="margin-left:8px;">Reject invalid/self-signed certificates</span>
+        <span style="margin-left:8px;">Secure connection only</span>
+    </div>
+    <div class="form-row">
+        <div id="node-config-input-connectionHint" class="unifi-ultimate-card"></div>
+    </div>
+    <div id="node-config-row-advanced" class="unifi-ultimate-advanced">
+        <div class="form-row">
+            <label for="node-config-input-name"><i class="fa fa-tag"></i> Label</label>
+            <input type="text" id="node-config-input-name" placeholder="Optional custom label">
+        </div>
     </div>
 </script>
 
 <script type="text/html" data-help-name="unifi-access-config">
-    <p>Shared configuration for UniFi Access nodes.</p>
-    <p>Enter the UniFi Access host or <code>host:port</code>. If the port is omitted, the node uses the documented default <code>12445</code> and builds requests as <code>https://host:12445</code>.</p>
-    <p>Authentication uses the official bearer token model: the node sends <code>Authorization: Bearer &lt;token&gt;</code>.</p>
-    <p>This config node also keeps the shared WebSocket connection and the controller-level doorbell ring tracking used by <code>Cancel Doorbell</code>.</p>
-    <p><small>Note: the official UniFi Access API documentation states that the API is not available after upgrading to Identity Enterprise.</small></p>
+    <p>Connects the node to your UniFi Access controller.</p>
+    <p><b>Controller</b> accepts the UniFi Access host or <code>host:port</code>. If you omit the port, the node uses the default UniFi Access port automatically.</p>
+    <p><b>API Token</b> is the bearer token used for authentication.</p>
+    <p><b>Security</b> controls certificate verification. Disable it only when your controller uses a self-signed certificate.</p>
+    <p><b>Label</b> is optional and only changes how the config node is shown in the editor.</p>
 </script>

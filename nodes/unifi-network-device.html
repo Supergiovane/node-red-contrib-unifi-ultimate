@@ -24,12 +24,12 @@
 </style>
 
 <script type="text/javascript">
-    RED.nodes.registerType("unifi-access-device", {
+    RED.nodes.registerType("unifi-network-device", {
         category: "Unifi Ultimate",
         color: "#7DB7E8",
         defaults: {
             name: { value: "" },
-            server: { value: "", type: "unifi-access-config", required: true },
+            server: { value: "", type: "unifi-network-config", required: true },
             deviceType: { value: "", required: true },
             deviceId: { value: "", required: true },
             capability: { value: "observe", required: true },
@@ -37,12 +37,12 @@
             timeout: { value: 15000, required: true, validate: RED.validators.number() }
         },
         inputs: 1,
-        outputs: 2,
+        outputs: 1,
         icon: "unifi-protect-icon.svg",
-        paletteLabel: "ACCESS",
-        outputLabels: ["state", "events"],
+        paletteLabel: "NETWORK",
+        outputLabels: ["result"],
         label: function () {
-            return this.name || this.deviceId || "Unifi Access";
+            return this.name || this.deviceId || "Unifi Network";
         },
         oneditsave: function () {
             const $capabilityConfig = $("#node-input-capabilityConfig");
@@ -167,8 +167,8 @@
                 const configs = [];
                 try {
                     if (RED && RED.nodes) {
-                        // Pull config nodes from the editor registry so a new
-                        // Access node can attach itself without extra clicks.
+                        // Use the editor-side config registry so a freshly dropped
+                        // node can preselect an existing connection immediately.
                         if (typeof RED.nodes.eachConfig === "function") {
                             RED.nodes.eachConfig(function (cfg) {
                                 if (cfg && cfg.type === configType) {
@@ -201,13 +201,14 @@
             }
 
             function ensureDefaultServerSelection() {
-                // Default only empty nodes; never override an explicit connection.
+                // Only auto-pick a config node for brand-new / empty nodes.
+                // Never replace an explicit saved selection.
                 const currentValue = String($server.val() || node.server || "").trim();
                 if (currentValue !== "" && currentValue !== "_ADD_") {
                     return;
                 }
 
-                const configs = getConfigNodesByType("unifi-access-config");
+                const configs = getConfigNodesByType("unifi-network-config");
                 if (!Array.isArray(configs) || configs.length === 0) {
                     return;
                 }
@@ -224,8 +225,8 @@
                 if (!$select || $select.length === 0) {
                     return;
                 }
-                // Searchable selects are disabled now, but this still removes any
-                // cached helper input left by older editor versions.
+                // Searchable selects were removed, but this cleanup keeps the
+                // editor safe if old cached markup left any helper input behind.
                 const selectId = String($select.attr("id") || "").trim();
                 if (selectId) {
                     const $searchInput = $("#" + selectId + "-search");
@@ -298,16 +299,36 @@
                     return "";
                 }
 
-                if (normalizedLabel === "Receive Events") {
-                    return "Listening for live events from " + normalizedDeviceName + ".";
-                }
-
                 if (normalizedLabel === "Read State") {
                     return "Reading the current state of " + normalizedDeviceName + ".";
                 }
 
-                if (normalizedLabel === "Unlock Door") {
-                    return "Unlocking " + normalizedDeviceName + ".";
+                if (normalizedLabel === "Read Details") {
+                    return "Reading full details of " + normalizedDeviceName + ".";
+                }
+
+                if (normalizedLabel === "List Site Devices") {
+                    return "Loading devices from " + normalizedDeviceName + ".";
+                }
+
+                if (normalizedLabel === "List Site Clients") {
+                    return "Loading clients from " + normalizedDeviceName + ".";
+                }
+
+                if (normalizedLabel === "Restart Device") {
+                    return "Restarting " + normalizedDeviceName + ".";
+                }
+
+                if (normalizedLabel === "Power Cycle Port") {
+                    return "Power cycling a port on " + normalizedDeviceName + ".";
+                }
+
+                if (normalizedLabel === "Authorize Guest Access") {
+                    return "Authorizing guest access for " + normalizedDeviceName + ".";
+                }
+
+                if (normalizedLabel === "Revoke Guest Access") {
+                    return "Revoking guest access for " + normalizedDeviceName + ".";
                 }
 
                 return normalizedLabel + " on " + normalizedDeviceName + ".";
@@ -319,21 +340,21 @@
                 const deviceName = getSelectedDeviceName();
                 const capabilityDefinition = getSelectedCapabilityDefinition();
                 let summary = "Choose a connection to begin.";
-                let detail = "The editor only shows actions supported by the selected UniFi Access device.";
+                let detail = "The editor only shows actions supported by the selected UniFi Network item.";
 
                 if (selectedServer && selectedServer !== "_ADD_") {
                     summary = "Choose what you want to control.";
-                    detail = "Start with a device type, then pick a device and an action.";
+                    detail = "Start with a resource type, then pick an item and an action.";
                 }
 
                 if (deviceTypeLabel) {
                     summary = "Choose the " + deviceTypeLabel.toLowerCase() + " you want to use.";
-                    detail = "Only compatible UniFi Access items from this category will be shown.";
+                    detail = "Only compatible UniFi Network items from this category will be shown.";
                 }
 
                 if (deviceName) {
                     summary = "Choose what you want to do with " + deviceName + ".";
-                    detail = "Only actions supported by this device are listed.";
+                    detail = "Only actions supported by this item are listed.";
                 }
 
                 if (capabilityDefinition && deviceName) {
@@ -381,7 +402,7 @@
                         $deviceType.val("");
                     }
                 });
-                makeSelectSearchable($deviceType, "Search controls");
+                makeSelectSearchable($deviceType, "Search resources");
                 refreshSelectionSummary();
             }
 
@@ -624,7 +645,7 @@
                 const currentValue = getCurrentOrNodeValue($deviceId, node.deviceId, "");
                 withSuppressedChanges(function () {
                     $deviceId.empty();
-                    $deviceId.append($("<option></option>").val("").text("Choose a device"));
+                    $deviceId.append($("<option></option>").val("").text("Choose an item"));
 
                     items.forEach(function (item) {
                         const labelParts = [item.name || item.id];
@@ -646,7 +667,7 @@
                     }
                 });
 
-                makeSelectSearchable($deviceId, "Search devices");
+                makeSelectSearchable($deviceId, "Search items");
                 syncNameFromSelection();
                 refreshSelectionSummary();
             }
@@ -662,7 +683,7 @@
                     return Promise.resolve();
                 }
 
-                let requestUrl = "unifiAccess/device-capabilities?deviceType=" + encodeURIComponent(selectedType);
+                let requestUrl = "unifiNetwork/device-capabilities?deviceType=" + encodeURIComponent(selectedType);
                 if (serverId && serverId !== "_ADD_" && selectedDeviceId) {
                     requestUrl += "&serverId=" + encodeURIComponent(serverId) + "&deviceId=" + encodeURIComponent(selectedDeviceId);
                 }
@@ -697,7 +718,7 @@
                 }
 
                 return requestJson(
-                    "unifiAccess/device-capability-options?serverId=" + encodeURIComponent(serverId) +
+                    "unifiNetwork/device-capability-options?serverId=" + encodeURIComponent(serverId) +
                     "&deviceType=" + encodeURIComponent(currentDeviceType) +
                     "&deviceId=" + encodeURIComponent(currentDeviceId || "") +
                     "&capability=" + encodeURIComponent(currentCapability) +
@@ -728,7 +749,7 @@
 
                 $refresh.addClass("fa-spin");
                 return requestJson(
-                    "unifiAccess/devices?serverId=" + encodeURIComponent(serverId) + "&deviceType=" + encodeURIComponent(selectedType)
+                    "unifiNetwork/devices?serverId=" + encodeURIComponent(serverId) + "&deviceType=" + encodeURIComponent(selectedType)
                 ).then(function (data) {
                     renderDevices(Array.isArray(data) ? data : []);
                 }).catch(function (xhr) {
@@ -742,7 +763,7 @@
             }
 
             function loadDeviceTypes() {
-                return requestJson("unifiAccess/device-types")
+                return requestJson("unifiNetwork/device-types")
                     .then(function (data) {
                         renderDeviceTypes(Array.isArray(data) ? data : []);
                     })
@@ -757,8 +778,11 @@
             }
 
             function refreshEditor() {
-                // The Access editor progressively narrows the UI:
-                // connection -> control family -> device -> action -> options.
+                // Full editor refresh order matters:
+                // 1. load available resource families
+                // 2. load items for the selected family
+                // 3. load actions allowed for the selected item
+                // 4. render action-specific options
                 return loadDeviceTypes()
                     .then(function () {
                         return loadDevices();
@@ -811,14 +835,15 @@
             }
 
             writeCapabilityConfig();
-            makeSelectSearchable($deviceType, "Search controls");
-            makeSelectSearchable($deviceId, "Search devices");
+            makeSelectSearchable($deviceType, "Search resources");
+            makeSelectSearchable($deviceId, "Search items");
             makeSelectSearchable($capability, "Search actions");
 
             $server.on("change", function () {
                 if (suspendChangeHandling || isInitializingEditor) {
                     return;
                 }
+                // Changing the connection invalidates everything downstream.
                 refreshAfterServerChange();
             });
             $deviceType.on("change", function () {
@@ -858,17 +883,17 @@
     });
 </script>
 
-<script type="text/html" data-template-name="unifi-access-device">
+<script type="text/html" data-template-name="unifi-network-device">
     <div class="form-row">
         <label for="node-input-server"><i class="fa fa-cog"></i> Connection</label>
         <input type="text" id="node-input-server">
     </div>
     <div class="form-row">
-        <label for="node-input-deviceType"><i class="fa fa-cubes"></i> Control</label>
+        <label for="node-input-deviceType"><i class="fa fa-cubes"></i> Resource</label>
         <select id="node-input-deviceType"></select>
     </div>
     <div class="form-row">
-        <label for="node-input-deviceId"><i class="fa fa-dot-circle-o"></i> Device</label>
+        <label for="node-input-deviceId"><i class="fa fa-dot-circle-o"></i> Item</label>
         <select id="node-input-deviceId" style="width:70%;"></select>
         <a href="#" id="node-input-refreshDevices" class="editor-button" style="margin-left:6px;">
             <i class="fa fa-refresh"></i>
@@ -881,7 +906,7 @@
     <div class="form-row">
         <div class="unifi-ultimate-card">
             <strong id="node-input-selectionSummary">Choose a connection to begin.</strong>
-            <div id="node-input-selectionDetail">The editor only shows actions supported by the selected UniFi Access device.</div>
+            <div id="node-input-selectionDetail">The editor only shows actions supported by the selected UniFi Network item.</div>
         </div>
     </div>
     <div class="form-row" id="node-row-capabilityConfig" style="display:none;">
@@ -901,21 +926,22 @@
     </div>
 </script>
 
-<script type="text/html" data-help-name="unifi-access-device">
-    <p>Use this node to control a UniFi Access item or listen for its live events.</p>
+<script type="text/html" data-help-name="unifi-network-device">
+    <p>Use this node to read and query UniFi Network sites, devices, and clients.</p>
 
     <h3>Configuration</h3>
-    <p><b>Connection</b> selects the shared UniFi Access config node.</p>
-    <p><b>Control</b> chooses the Access category. <b>Device</b> chooses the specific door or Access device. <b>Action</b> only shows actions supported by that item.</p>
-    <p><b>Action options</b> appears only when the selected action needs extra input, such as a temporary lock rule or a room name for doorbell actions.</p>
-    <p><code>Receive Events</code> fetches the current state once and then listens to the official UniFi Access notifications WebSocket.</p>
-    <p><code>Trigger Doorbell</code> and <code>Cancel Doorbell</code> use a manual <code>Room Name</code> field when needed. The node does not currently discover Intercom directory names automatically.</p>
-    <p><code>Cancel Doorbell</code> uses a shared safe-cancel guard in the UniFi Access config node. A cancel request is sent only if an active ring is still tracked there, using a 3 minute tracking window.</p>
+    <p><b>Connection</b> selects the shared UniFi Network config node.</p>
+    <p><b>Resource</b> chooses what you want to work with: Site, UniFi Device, or Client.</p>
+    <p><b>Item</b> chooses the specific site/device/client. <b>Action</b> only shows actions supported by that selection.</p>
+    <p><b>Action options</b> appears only when the selected action needs extra input.</p>
+    <p>Action highlights: <code>Authorize Guest Access</code>, <code>Revoke Guest Access</code>, <code>Restart Device</code>, and <code>Power Cycle Port</code>.</p>
     <p><b>Label</b> is optional and only changes how the node is shown in the editor. <b>Timeout</b> controls the request timeout in milliseconds for direct API calls.</p>
 
     <h3>Input</h3>
     <ul>
         <li><code>msg.deviceType</code>, <code>msg.deviceId</code>, and <code>msg.capability</code> for runtime overrides</li>
+        <li><code>msg.siteId</code> + <code>msg.resourceId</code> as an alternative runtime selector for device/client items</li>
+        <li><code>msg.portIdx</code> to override the selected port for <code>Power Cycle Port</code></li>
         <li><code>msg.capabilityConfig</code> for runtime overrides of the options selected in the editor</li>
         <li><code>msg.query</code>, <code>msg.headers</code>, and <code>msg.payload</code> for the HTTP request</li>
     </ul>
@@ -923,8 +949,6 @@
     <h3>Output</h3>
     <ul>
         <li>Output 1: current state or primary capability response</li>
-        <li>Output 2: Access notification events related to the selected item</li>
-        <li><code>msg.unifiAccess</code>: standardized metadata for the device and selected capability</li>
-        <li>Safe-cancel skip: <code>msg.payload.skipped = true</code> when <code>Cancel Doorbell</code> is blocked because no active ring is currently tracked</li>
+        <li><code>msg.unifiNetwork</code>: standardized metadata for the selected item and capability</li>
     </ul>
 </script>

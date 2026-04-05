@@ -4,13 +4,13 @@
 
 # node-red-contrib-unifi-ultimate
 
-Use UniFi Protect and UniFi Access inside Node-RED without building custom API calls.
+Use UniFi Protect, UniFi Access, and UniFi Network inside Node-RED without building custom API calls.
 
 This package lets you:
 
-- monitor cameras, sensors, lights, doors, and Access devices
+- monitor cameras, sensors, lights, doors, Access devices, sites, clients, and UniFi devices
 - react to live events inside your flows
-- trigger common Protect and Access actions from a single device node
+- trigger common Protect, Access, and Network actions from a single device node
 - start from ready-to-import example flows
 
 Current release status: `0.1.0-beta.5`
@@ -23,7 +23,8 @@ Current release status: `0.1.0-beta.5`
 - Node.js `18` or newer
 - For UniFi Protect: controller IP or host, API key header, and API key
 - For UniFi Access: host and bearer token
-- If your UniFi controller uses a self-signed certificate, both config nodes let you adjust TLS behavior
+- For UniFi Network: controller host and API key
+- If your UniFi controller uses a self-signed certificate, each config node lets you adjust TLS behavior
 
 ## Install
 
@@ -37,7 +38,7 @@ In Node-RED:
 ## Quick start
 
 1. Add the right config node for your UniFi product:
-   `Unifi Protect Config` or `Unifi Access Config`
+   `Unifi Protect Config`, `Unifi Access Config`, or `Unifi Network Config`
 2. Enter your connection details and credentials
 3. Add a `Device` node
 4. Select the device type, the specific UniFi device, and the capability you want
@@ -54,6 +55,10 @@ If you want the fastest path, import one of the included example flows and repla
 - `Unifi Protect Device`: select a Protect device, read its state, listen for events, or trigger actions
 - `Unifi Access Config`: stores the connection settings for UniFi Access
 - `Unifi Access Device`: select a door or Access device, read its state, listen for events, or trigger actions
+- `Unifi Network Config`: stores the connection settings for UniFi Network
+- `Unifi Network Device`: select a site, client, or UniFi device and run supported Network actions
+- `Unifi Network Presence`: emits `true/false` presence for a selected client with disconnect hysteresis
+- `Unifi Network Control POE`: controls PoE state on a selected switch port
 
 ## UniFi Protect
 
@@ -128,10 +133,36 @@ Access device capabilities:
 
 When you use `Receive Events`, the node first fetches the current state and then keeps listening for matching UniFi Access notifications.
 
+## UniFi Network
+
+Supported resource types:
+
+- `Site`
+- `UniFi Device`
+- `Client`
+
+Common capabilities:
+
+- `Read State`
+- `Read Details`
+
+Additional capabilities:
+
+- Site: `List Site Devices`, `List Site Clients`
+- UniFi Device: `Read Latest Statistics`, `Restart Device`, `Power Cycle Port`
+- Client: `Authorize Guest Access`, `Revoke Guest Access`
+
+For device and client resources, the editor automatically includes the site context behind the scenes and still keeps selection simple for the end user.
+
+Dedicated utility nodes:
+
+- `Unifi Network Presence`: checks one selected client and emits `msg.payload = true` when connected, `false` when disconnected, with disconnect hysteresis to avoid flapping
+- `Unifi Network Control POE`: enables/disables PoE (and supports power cycle) on a selected switch port
+
 ## Outputs
 
 - Output 1 returns the current state or the main action response
-- Output 2 returns live events when the selected capability is `Receive Events`
+- Output 2 returns live events when the selected capability is `Receive Events` (Protect and Access nodes)
 - The message also includes product-specific metadata and the last known device data when available
 
 ## Example flows
@@ -148,3 +179,4 @@ Import one of these flows from the `examples` folder:
 
 - UniFi Protect is the main supported surface today
 - UniFi Access is included as a first beta and may evolve faster across releases
+- UniFi Network is included as a first beta and currently focuses on read-first flows plus selected action utilities

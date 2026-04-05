@@ -8,6 +8,10 @@ const {
     formatValueWithMetadata
 } = require("./unifi-protect-field-metadata");
 
+// Central Protect registry used by:
+// - the editor for device/capability discovery
+// - the runtime for request validation/building
+// - the event layer for observable matching
 const DEVICE_TYPE_DEFINITIONS = {
     camera: {
         type: "camera",
@@ -60,6 +64,7 @@ const DEVICE_TYPE_DEFINITIONS = {
     }
 };
 
+// Baseline actions available across most Protect resources.
 const COMMON_CAPABILITIES = [
     {
         id: "observe",
@@ -177,6 +182,8 @@ const LIGHT_OBSERVABLE_DEFINITIONS = [
 ];
 
 function createSetPropertyCapability() {
+    // "Update One Property" is built once and reused across multiple device
+    // families. The real property list is discovered dynamically per device.
     return {
         id: "setProperty",
         label: "Update One Property",
@@ -216,6 +223,8 @@ function createSetPropertyCapability() {
     };
 }
 
+// Per-type capability registry. Definitions can expose dynamic editor fields,
+// custom request composers and additional runtime filtering heuristics.
 const TYPE_CAPABILITIES = {
     camera: [
         {
@@ -461,6 +470,8 @@ function getCapabilitiesForType(deviceType, device) {
         return [];
     }
 
+    // Device-aware filtering removes actions that the selected hardware cannot
+    // support, such as PTZ actions on non-PTZ cameras.
     return COMMON_CAPABILITIES
         .concat(TYPE_CAPABILITIES[definition.type] || [])
         .filter((capability) => isCapabilitySupportedForDevice(definition.type, capability, device))
@@ -475,6 +486,8 @@ function getCapabilityDefinition(deviceType, capabilityId, device) {
 }
 
 function buildDevicePath(deviceType, kind, deviceId, params) {
+    // Some Protect endpoints come from the generic type definition (list/detail),
+    // while others provide their own custom path template.
     const definition = getDeviceTypeDefinition(deviceType);
     if (!definition) {
         throw new Error(`Unsupported device type: ${deviceType}`);
@@ -531,6 +544,8 @@ function composeCapabilityExecution(deviceType, capabilityId, capabilityConfig, 
         throw new Error(`Unsupported capability '${capabilityId}' for device type '${deviceType}'.`);
     }
 
+    // If a capability has no custom composer, the runtime forwards msg params,
+    // query, headers and payload as-is.
     if (typeof capability.requestComposer !== "function") {
         return {
             params: normalizeObject(msg && msg.params),
@@ -582,6 +597,8 @@ function composeCapabilityExecution(deviceType, capabilityId, capabilityConfig, 
 }
 
 async function getCapabilityOptions(deviceType, capabilityId, context) {
+    // The editor asks the registry for action options. Some actions are fully
+    // static, while others need live API discovery before the fields can exist.
     if (capabilityId === "observe") {
         const observableDefinitions = getObservableDefinitions(deviceType);
         if (observableDefinitions.length > 0) {
@@ -644,6 +661,8 @@ async function getCapabilityOptions(deviceType, capabilityId, context) {
 }
 
 function buildPathFromTemplate(pathTemplate, deviceId, params) {
+    // Custom capability paths can combine the selected device id with optional
+    // params such as PTZ slots or patrol numbers.
     let path = String(pathTemplate || "");
 
     if (path.includes(":id")) {
@@ -700,6 +719,8 @@ function summarizeDevice(deviceType, device) {
 }
 
 function buildPtzPresetField(camera, baseField) {
+    // Prefer a friendly select when presets are discoverable; otherwise fall
+    // back to free text so the action still remains usable.
     const options = extractPtzPresetOptions(camera);
     if (options.length > 0) {
         return {
@@ -744,6 +765,8 @@ function buildLiveviewOptions(liveviews, allowEmpty, emptyLabel) {
 }
 
 function isCapabilitySupportedForDevice(deviceType, capability, device) {
+    // Protect exposes one broad family of camera APIs, but not every camera
+    // model supports every feature. Filter those actions in the editor.
     if (!capability || !device || typeof device !== "object" || Array.isArray(device)) {
         return true;
     }
@@ -768,6 +791,11 @@ function isCapabilitySupportedForDevice(deviceType, capability, device) {
 }
 
 function isPtzCapableCamera(device) {
+    // Use a layered heuristic:
+    // 1. explicit feature flags
+    // 2. discovered presets
+    // 3. model/name signature
+    // 4. nested key search as last fallback
     const directValue = firstDefinedValue(device, [
         "isPtz",
         "hasPtz",
@@ -840,6 +868,8 @@ function hasCameraMicrophone(device) {
 }
 
 async function buildDoorbellMessageFields(context, capability) {
+    // Doorbell message options are conditional: text for custom messages,
+    // asset picker for image messages, and reset policy for both.
     const capabilityConfig = normalizeObject(context && context.capabilityConfig);
     const messageType = String(capabilityConfig.messageType || "DO_NOT_DISTURB").trim() || "DO_NOT_DISTURB";
     const fields = [
@@ -888,6 +918,8 @@ function buildAssetFileOptions(files) {
 }
 
 function buildObservableFields(deviceType, context) {
+    // Observables let the generic "Receive Events" capability expose a simple
+    // boolean output tailored to the selected Protect device family.
     const capabilityConfig = normalizeObject(context && context.capabilityConfig);
     const observableOptions = getObservableOptions(deviceType);
     const selectedObservable = resolveSelectedObservable(observableOptions, capabilityConfig.observable);
@@ -910,6 +942,8 @@ function buildObservableFields(deviceType, context) {
 }
 
 async function buildSetPropertyFields(deviceType, context, capability) {
+    // Property patching is driven by the live device payload so the editor can
+    // list valid paths, value types and friendly labels.
     if (!context || !context.deviceId || typeof context.fetchDevice !== "function") {
         return {
             capabilityId: capability.id,
