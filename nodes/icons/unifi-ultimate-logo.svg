@@ -38,9 +38,6 @@
 
     <g transform="translate(0 132)">
       <rect x="0" y="0" width="156" height="40" rx="20" fill="#ffffff"/>
-      <text x="25" y="26" fill="#42556b" font-family="Helvetica, Arial, sans-serif" font-size="20" font-weight="600">
-        Beta Package
-      </text>
     </g>
   </g>
 </svg>

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1
+
+- bumped package patch version from `0.1.0` to `0.1.1`
+- updated README badges with npm/node/flows/docs/download/license coverage
+- added YouTube badge to README using the same channel link as related project docs
+
 ## 0.1.0
 
 - improved runtime hardening to reduce the risk of unhandled exceptions and Node-RED crashes, including safer async timer flows and websocket initialization guards
@@ -8,14 +14,14 @@
 - added automatic preselection of an existing `-config` node when dropping a new node with an empty connection field
 - expanded inline code comments across runtime nodes, config nodes, registries, utils, and editor files for easier maintenance
 
-## 0.1.0-beta.5
+## 0.1.0-pre.5
 
 - added ready-to-import example flows for Protect sensor observe, Protect camera actions, Access door control, and Access intercom doorbell handling
 - updated node help and README to match the current runtime behavior and capability labels
 - confirmed `Receive Events` subscriptions start at deploy time for both Protect and Access nodes
 - increased the shared UniFi Access safe-cancel ring tracking timeout from 60 seconds to 180 seconds
 
-## 0.1.0-beta.2
+## 0.1.0-pre.2
 
 - added first UniFi Access support with shared config node, door and Access device handling, notification events, and doorbell actions
 - added controller-level safe cancel tracking for UniFi Access doorbells with a 60 second timeout

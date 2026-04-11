@@ -2,6 +2,15 @@
   <img src="nodes/icons/unifi-ultimate-logo.svg" alt="Unifi Ultimate" width="720">
 </p>
 
+[![NPM version][npm-version-image]][npm-url]
+[![Node.js version][node-version-image]][npm-url]
+[![Node-RED Flow Library][flows-image]][flows-url]
+[![Docs][docs-image]][docs-url]
+[![NPM downloads per month][npm-downloads-month-image]][npm-url]
+[![NPM downloads total][npm-downloads-total-image]][npm-url]
+[![MIT License][license-image]][license-url]
+[![Youtube][youtube-image]][youtube-url]
+
 # node-red-contrib-unifi-ultimate
 
 Use UniFi Protect, UniFi Access, and UniFi Network inside Node-RED without building custom API calls.
@@ -13,7 +22,7 @@ This package lets you:
 - trigger common Protect, Access, and Network actions from a single device node
 - start from ready-to-import example flows
 
-Current release status: `0.1.0`
+Current release status: `0.1.1`
 
 [View Changelog](CHANGELOG.md)
 
@@ -175,8 +184,22 @@ Import one of these flows from the `examples` folder:
 - [examples/unifi-access-door-control.json](examples/unifi-access-door-control.json): observe a door, unlock it, and manage a temporary lock rule
 - [examples/unifi-access-intercom-doorbell.json](examples/unifi-access-intercom-doorbell.json): observe an intercom device, trigger a doorbell, and cancel it safely
 
-## Beta notes
+## Release notes
 
 - UniFi Protect is the main supported surface today
 - UniFi Access is included in the first stable release and may still evolve quickly across upcoming releases
 - UniFi Network is included in the first stable release and currently focuses on read-first flows plus selected action utilities
+
+[npm-version-image]: https://img.shields.io/npm/v/node-red-contrib-unifi-ultimate.svg
+[npm-url]: https://www.npmjs.com/package/node-red-contrib-unifi-ultimate
+[node-version-image]: https://img.shields.io/node/v/node-red-contrib-unifi-ultimate.svg
+[flows-image]: https://img.shields.io/badge/Node--RED-Flow%20Library-red
+[flows-url]: https://flows.nodered.org/node/node-red-contrib-unifi-ultimate
+[docs-image]: https://img.shields.io/badge/docs-documents-blue
+[docs-url]: https://github.com/Supergiovane/node-red-contrib-unifi-ultimate#readme
+[npm-downloads-month-image]: https://img.shields.io/npm/dm/node-red-contrib-unifi-ultimate.svg
+[npm-downloads-total-image]: https://img.shields.io/npm/dt/node-red-contrib-unifi-ultimate.svg
+[license-image]: https://img.shields.io/badge/license-MIT-green.svg
+[license-url]: https://opensource.org/licenses/MIT
+[youtube-image]: https://img.shields.io/badge/YouTube-Subscribe-red?logo=youtube&logoColor=white
+[youtube-url]: https://www.youtube.com/@maxsupervibe
