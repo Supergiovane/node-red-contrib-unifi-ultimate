@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+## 0.1.2
+
+- UniFi Protect: added `Read Application Info` capability on NVR (`GET /v1/meta/info`)
+- UniFi Protect: added Sensor observable `Extreme Values` mapped to `sensorExtremeValues` events
+- UniFi Network: added site capability `Read Application Info` (`GET /v1/info`)
+- UniFi Access: updated temporary lock rule editor/payload for current `custom` duration (`interval`) with legacy `ended_time` fallback
+- UniFi Access editor UX: temporary lock rule inputs now adapt to selected rule type, with contextual help text and auto-refresh of dependent fields
+- refreshed README and node help text to include the new capabilities
+- updated Protect and Network node help HTML with the new action/observable details
+
 ## 0.1.1
 
 - bumped package patch version from `0.1.0` to `0.1.1`

@@ -1,0 +1,96 @@
+<svg width="1200" height="720" viewBox="0 0 1200 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">node-red-contrib-unifi-ultimate overview</title>
+  <desc id="desc">Node-RED flows using UniFi Protect, Access and Network nodes with unified outputs.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f8fafc"/>
+      <stop offset="100%" stop-color="#eef2ff"/>
+    </linearGradient>
+    <linearGradient id="nodered" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#fee2e2"/>
+      <stop offset="100%" stop-color="#fecaca"/>
+    </linearGradient>
+    <linearGradient id="protect" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#dcfce7"/>
+      <stop offset="100%" stop-color="#bbf7d0"/>
+    </linearGradient>
+    <linearGradient id="access" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#dbeafe"/>
+      <stop offset="100%" stop-color="#bfdbfe"/>
+    </linearGradient>
+    <linearGradient id="network" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#fef9c3"/>
+      <stop offset="100%" stop-color="#fde68a"/>
+    </linearGradient>
+    <linearGradient id="out" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ede9fe"/>
+      <stop offset="100%" stop-color="#ddd6fe"/>
+    </linearGradient>
+    <style>
+      .title { font: 700 32px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; fill: #0f172a; }
+      .subtitle { font: 500 18px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; fill: #334155; }
+      .h { font: 700 22px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; fill: #0f172a; }
+      .b { font: 500 16px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; fill: #1e293b; }
+      .s { font: 500 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; fill: #334155; }
+      .card { stroke: #94a3b8; stroke-width: 1.2; rx: 16; }
+      .line { stroke: #475569; stroke-width: 2.4; fill: none; marker-end: url(#arrow); }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1200" height="720" fill="url(#bg)"/>
+
+  <text x="60" y="70" class="title">UniFi Ultimate for Node-RED</text>
+  <text x="60" y="102" class="subtitle">One palette for Protect, Access, and Network automation flows.</text>
+
+  <rect class="card" x="60" y="160" width="310" height="360" fill="url(#nodered)"/>
+  <text x="90" y="205" class="h">Node-RED</text>
+  <text x="90" y="238" class="b">Config nodes:</text>
+  <text x="90" y="265" class="s">- Unifi Protect Config</text>
+  <text x="90" y="289" class="s">- Unifi Access Config</text>
+  <text x="90" y="313" class="s">- Unifi Network Config</text>
+  <text x="90" y="355" class="b">Device nodes:</text>
+  <text x="90" y="382" class="s">- Protect Device</text>
+  <text x="90" y="406" class="s">- Access Device</text>
+  <text x="90" y="430" class="s">- Network Device</text>
+  <text x="90" y="472" class="b">Utilities:</text>
+  <text x="90" y="499" class="s">- Network Presence</text>
+  <text x="90" y="523" class="s">- Network Control POE</text>
+
+  <rect class="card" x="455" y="130" width="300" height="150" fill="url(#protect)"/>
+  <text x="485" y="175" class="h">UniFi Protect</text>
+  <text x="485" y="205" class="s">Cameras, sensors, lights, viewers</text>
+  <text x="485" y="229" class="s">events, snapshots, PTZ, talkback</text>
+  <text x="485" y="253" class="s">NVR app info and live streams</text>
+
+  <rect class="card" x="455" y="315" width="300" height="150" fill="url(#access)"/>
+  <text x="485" y="360" class="h">UniFi Access</text>
+  <text x="485" y="390" class="s">Doors and access devices</text>
+  <text x="485" y="414" class="s">unlock, lock rules, emergency mode</text>
+  <text x="485" y="438" class="s">doorbell trigger/cancel and events</text>
+
+  <rect class="card" x="455" y="500" width="300" height="150" fill="url(#network)"/>
+  <text x="485" y="545" class="h">UniFi Network</text>
+  <text x="485" y="575" class="s">Sites, devices, clients</text>
+  <text x="485" y="599" class="s">state/details, restart, guest auth</text>
+  <text x="485" y="623" class="s">POE and presence automations</text>
+
+  <rect class="card" x="840" y="250" width="300" height="250" fill="url(#out)"/>
+  <text x="870" y="295" class="h">Unified outputs</text>
+  <text x="870" y="327" class="s">Output 1: state/action response</text>
+  <text x="870" y="351" class="s">Output 2: live events (where supported)</text>
+  <text x="870" y="395" class="s">Metadata fields:</text>
+  <text x="870" y="422" class="s">- msg.unifiProtect</text>
+  <text x="870" y="446" class="s">- msg.unifiAccess</text>
+  <text x="870" y="470" class="s">- msg.unifiNetwork</text>
+
+  <path class="line" d="M 370 235 C 410 235, 420 205, 455 205"/>
+  <path class="line" d="M 370 335 C 410 335, 420 390, 455 390"/>
+  <path class="line" d="M 370 465 C 410 465, 420 575, 455 575"/>
+
+  <path class="line" d="M 755 205 C 790 205, 805 290, 840 290"/>
+  <path class="line" d="M 755 390 C 790 390, 805 390, 840 390"/>
+  <path class="line" d="M 755 575 C 790 575, 805 470, 840 470"/>
+</svg>

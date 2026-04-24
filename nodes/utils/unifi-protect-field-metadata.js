@@ -237,6 +237,11 @@ const OBSERVABLE_METADATA = {
             label: "Smoke Test",
             description: "True while a smoke test is active.",
             source: "inferred"
+        },
+        extremeValues: {
+            label: "Extreme Values",
+            description: "True while the sensor is reporting an active extreme-values event.",
+            source: "official"
         }
     },
     light: {

@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 280" role="img" aria-labelledby="title desc">
+  <title id="title">UniFi Ultimate Minimal</title>
+  <desc id="desc">Minimal logo variant for node-red-contrib-unifi-ultimate.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#f3f7ff"/>
+    </linearGradient>
+    <linearGradient id="icon" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0ea5e9"/>
+      <stop offset="100%" stop-color="#1d4ed8"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#0f2747" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <rect x="14" y="14" width="932" height="252" rx="28" fill="url(#bg)"/>
+
+  <g transform="translate(44 46)" filter="url(#shadow)">
+    <rect x="0" y="0" width="188" height="188" rx="36" fill="#ffffff"/>
+    <rect x="18" y="18" width="152" height="152" rx="30" fill="url(#icon)"/>
+
+    <g transform="translate(34 34)" fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M24 46v34c0 22.091 17.909 40 40 40s40-17.909 40-40V46" stroke-width="12"/>
+      <path d="M64 18v18" stroke-width="6"/>
+      <path d="M24 64h16" stroke-width="5" opacity="0.78"/>
+      <path d="M88 64h16" stroke-width="5" opacity="0.78"/>
+    </g>
+  </g>
+
+  <g transform="translate(286 86)">
+    <text x="0" y="54" fill="#0d223a" font-family="'Avenir Next', 'Segoe UI', Roboto, Arial, sans-serif" font-size="58" font-weight="700" letter-spacing="0.1">
+      UniFi Ultimate
+    </text>
+    <text x="2" y="96" fill="#3b5f84" font-family="'Avenir Next', 'Segoe UI', Roboto, Arial, sans-serif" font-size="24" font-weight="500">
+      Simple. Clean. Ready for Node-RED.
+    </text>
+  </g>
+</svg>

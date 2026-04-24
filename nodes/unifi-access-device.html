@@ -310,6 +310,22 @@
                     return "Unlocking " + normalizedDeviceName + ".";
                 }
 
+                if (normalizedLabel === "Set Temporary Lock Rule") {
+                    return "Configuring a temporary lock rule on " + normalizedDeviceName + ".";
+                }
+
+                if (normalizedLabel === "Set Emergency Mode") {
+                    return "Applying emergency mode for Access doors.";
+                }
+
+                if (normalizedLabel === "Trigger Doorbell") {
+                    return "Triggering doorbell on " + normalizedDeviceName + ".";
+                }
+
+                if (normalizedLabel === "Cancel Doorbell") {
+                    return "Cancelling doorbell on " + normalizedDeviceName + ".";
+                }
+
                 return normalizedLabel + " on " + normalizedDeviceName + ".";
             }
 
@@ -589,6 +605,10 @@
                         }
 
                         writeCapabilityConfig();
+
+                        if (field.reloadOnChange) {
+                            loadCapabilityOptions();
+                        }
                     });
 
                     if (isHiddenField) {
@@ -908,6 +928,7 @@
     <p><b>Connection</b> selects the shared UniFi Access config node.</p>
     <p><b>Control</b> chooses the Access category. <b>Device</b> chooses the specific door or Access device. <b>Action</b> only shows actions supported by that item.</p>
     <p><b>Action options</b> appears only when the selected action needs extra input, such as a temporary lock rule or a room name for doorbell actions.</p>
+    <p>For <code>Set Temporary Lock Rule</code>, choose <code>Custom Duration</code> to reveal the minutes field. Legacy <code>ended_time</code> is still available only as fallback compatibility.</p>
     <p><code>Receive Events</code> fetches the current state once and then listens to the official UniFi Access notifications WebSocket.</p>
     <p><code>Trigger Doorbell</code> and <code>Cancel Doorbell</code> use a manual <code>Room Name</code> field when needed. The node does not currently discover Intercom directory names automatically.</p>
     <p><code>Cancel Doorbell</code> uses a shared safe-cancel guard in the UniFi Access config node. A cancel request is sent only if an active ring is still tracked there, using a 3 minute tracking window.</p>

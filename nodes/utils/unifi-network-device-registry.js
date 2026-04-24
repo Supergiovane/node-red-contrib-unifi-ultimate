@@ -45,6 +45,14 @@ const COMMON_CAPABILITIES = [
 const TYPE_CAPABILITIES = {
     site: [
         {
+            id: "getApplicationInfo",
+            label: "Read Application Info",
+            description: "Fetch UniFi Network application metadata.",
+            method: "GET",
+            path: "/v1/info",
+            mode: "request"
+        },
+        {
             id: "listSiteDevices",
             label: "List Site Devices",
             description: "Fetch all adopted devices for the selected site.",

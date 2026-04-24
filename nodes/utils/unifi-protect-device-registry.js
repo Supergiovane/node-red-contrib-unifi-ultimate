@@ -132,6 +132,11 @@ const SENSOR_OBSERVABLE_DEFINITIONS = [
         id: "smokeTest",
         label: "Smoke test",
         eventTypes: ["sensorSmokeTest"]
+    },
+    {
+        id: "extremeValues",
+        label: "Extreme values",
+        eventTypes: ["sensorExtremeValues"]
     }
 ];
 
@@ -453,7 +458,16 @@ const TYPE_CAPABILITIES = {
         },
         createSetPropertyCapability()
     ],
-    nvr: []
+    nvr: [
+        {
+            id: "getApplicationInfo",
+            label: "Read Application Info",
+            description: "Fetch Protect application metadata from /v1/meta/info.",
+            method: "GET",
+            path: "/v1/meta/info",
+            mode: "request"
+        }
+    ]
 };
 
 function getDeviceTypes() {
@@ -1390,6 +1404,14 @@ function resolveSensorObservableState(sensor, observable, fallbackValue) {
             "isSmokeTestRunning",
             "smokeTestRunning",
             "status.smokeTestRunning"
+        ]),
+        extremeValues: () => firstDefinedValue(sensor, [
+            "isExtremeValuesDetected",
+            "extremeValuesDetected",
+            "status.extremeValuesDetected",
+            "isExtremeValueDetected",
+            "extremeValueDetected",
+            "status.extremeValueDetected"
         ])
     };
 

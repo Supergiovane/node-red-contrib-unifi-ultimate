@@ -2,6 +2,10 @@
   <img src="nodes/icons/unifi-ultimate-logo.svg" alt="Unifi Ultimate" width="720">
 </p>
 
+<p align="center">
+  <img src="nodes/icons/readme-overview.svg" alt="Overview of Node-RED UniFi Ultimate architecture" width="980">
+</p>
+
 [![NPM version][npm-version-image]][npm-url]
 [![Node.js version][node-version-image]][npm-url]
 [![Node-RED Flow Library][flows-image]][flows-url]
@@ -13,27 +17,29 @@
 
 # node-red-contrib-unifi-ultimate
 
-Use UniFi Protect, UniFi Access, and UniFi Network inside Node-RED without building custom API calls.
-
-This package lets you:
-
-- monitor cameras, sensors, lights, doors, Access devices, sites, clients, and UniFi devices
-- react to live events inside your flows
-- trigger common Protect, Access, and Network actions from a single device node
-- start from ready-to-import example flows
-
-Current release status: `0.1.1`
+Build UniFi automations in Node-RED without hand-writing API calls.
 
 [View Changelog](CHANGELOG.md)
 
-## Before you start
+## At A Glance
 
-- Node-RED `3.1.1` or newer
-- Node.js `18` or newer
-- For UniFi Protect: controller IP or host, API key header, and API key
-- For UniFi Access: host and bearer token
-- For UniFi Network: controller host and API key
-- If your UniFi controller uses a self-signed certificate, each config node lets you adjust TLS behavior
+- one package for `UniFi Protect`, `UniFi Access`, and `UniFi Network`
+- device-first UX: pick item, then only compatible actions are shown
+- built-in live events for Protect and Access
+- utility nodes for Network presence and PoE control
+- import-ready example flows included
+
+## Quick Navigation
+
+- [Install](#install)
+- [Quick Start](#quick-start)
+- [Available Nodes](#available-nodes)
+- [UniFi Protect](#unifi-protect)
+- [UniFi Access](#unifi-access)
+- [UniFi Network](#unifi-network)
+- [Outputs](#outputs)
+- [Example Flows](#example-flows)
+- [Project Status](#project-status)
 
 ## Install
 
@@ -44,30 +50,31 @@ In Node-RED:
 3. Search for `node-red-contrib-unifi-ultimate`
 4. Install the package
 
-## Quick start
+## Quick Start
 
-1. Add the right config node for your UniFi product:
-   `Unifi Protect Config`, `Unifi Access Config`, or `Unifi Network Config`
-2. Enter your connection details and credentials
-3. Add a `Device` node
-4. Select the device type, the specific UniFi device, and the capability you want
+1. Add a config node: `Unifi Protect Config`, `Unifi Access Config`, or `Unifi Network Config`
+2. Enter host and credentials
+3. Add a corresponding device node
+4. Choose type, item, and action
 5. Deploy
-6. Connect:
-   Output 1 for state or action results
-   Output 2 for live events when you use `Receive Events`
+6. Wire outputs:
+   Output 1 for state/action responses
+   Output 2 for live events (when action is `Receive Events`)
 
-If you want the fastest path, import one of the included example flows and replace the credentials with your own.
+If you want the fastest path, import one of the flows from `examples/` and replace credentials.
 
-## Available nodes
+## Available Nodes
 
-- `Unifi Protect Config`: stores the connection settings for UniFi Protect
-- `Unifi Protect Device`: select a Protect device, read its state, listen for events, or trigger actions
-- `Unifi Access Config`: stores the connection settings for UniFi Access
-- `Unifi Access Device`: select a door or Access device, read its state, listen for events, or trigger actions
-- `Unifi Network Config`: stores the connection settings for UniFi Network
-- `Unifi Network Device`: select a site, client, or UniFi device and run supported Network actions
-- `Unifi Network Presence`: emits `true/false` presence for a selected client with disconnect hysteresis
-- `Unifi Network Control POE`: controls PoE state on a selected switch port
+| Node | Purpose |
+|---|---|
+| `Unifi Protect Config` | stores UniFi Protect connection settings |
+| `Unifi Protect Device` | reads state, receives events, and executes Protect actions |
+| `Unifi Access Config` | stores UniFi Access connection settings |
+| `Unifi Access Device` | reads state, receives events, and executes Access actions |
+| `Unifi Network Config` | stores UniFi Network connection settings |
+| `Unifi Network Device` | reads state/details and executes supported Network actions |
+| `Unifi Network Presence` | emits stable `true/false` presence for one client |
+| `Unifi Network Control POE` | enables/disables/cycles PoE on one switch port |
 
 ## UniFi Protect
 
@@ -87,7 +94,7 @@ Common capabilities:
 - `Read Device State`
 - `Send Raw Update`
 
-Additional capabilities available when supported by the selected device:
+Additional capabilities (when supported by selected device):
 
 - `Take Snapshot`
 - `List RTSPS Streams`
@@ -101,17 +108,17 @@ Additional capabilities available when supported by the selected device:
 - `Show Doorbell Message`
 - `Switch Live View`
 - `Update One Property`
+- `Read Application Info` (NVR)
 
-The editor adapts to the selected device and capability. For example, it can offer:
+Editor adaptation examples:
 
-- sensor observables such as contact, motion, alarm, water leak, tamper, or battery low
-- camera observables such as ring, motion, and smart detections
-- light observables such as motion or light on/off
-- PTZ preset choices for supported cameras
-- live view choices for supported viewers
-- patchable properties discovered from the selected device
+- sensor observables: contact, motion, alarm, water leak, tamper, battery low, extreme values
+- camera observables: ring, motion, smart detections
+- PTZ preset selector only on PTZ-capable cameras
+- live view selector for viewers
+- patchable property discovery from selected device
 
-For supported boolean event observables, the main payload is normalized to `true` or `false`, while the original event details remain available in the message.
+For supported observables, `msg.payload` can be normalized to `true/false`; raw context remains available in `msg.RAW`.
 
 ## UniFi Access
 
@@ -133,6 +140,11 @@ Door capabilities:
 - `Read Emergency Mode`
 - `Set Emergency Mode`
 
+Temporary lock rule UX:
+
+- selecting `Custom Duration` reveals minutes (`interval`)
+- legacy unix `ended_time` fallback is still supported for compatibility
+
 Access device capabilities:
 
 - `Read Access Methods`
@@ -140,7 +152,7 @@ Access device capabilities:
 - `Trigger Doorbell`
 - `Cancel Doorbell`
 
-When you use `Receive Events`, the node first fetches the current state and then keeps listening for matching UniFi Access notifications.
+When using `Receive Events`, the node fetches current state once and then listens to official Access notifications.
 
 ## UniFi Network
 
@@ -157,38 +169,43 @@ Common capabilities:
 
 Additional capabilities:
 
-- Site: `List Site Devices`, `List Site Clients`
+- Site: `Read Application Info`, `List Site Devices`, `List Site Clients`
 - UniFi Device: `Read Latest Statistics`, `Restart Device`, `Power Cycle Port`
 - Client: `Authorize Guest Access`, `Revoke Guest Access`
 
-For device and client resources, the editor automatically includes the site context behind the scenes and still keeps selection simple for the end user.
+Notes:
+
+- for device/client resources, site context is handled automatically behind the scenes
+- `Read Application Info` is available on `Site` and returns Network application metadata
 
 Dedicated utility nodes:
 
-- `Unifi Network Presence`: checks one selected client and emits `msg.payload = true` when connected, `false` when disconnected, with disconnect hysteresis to avoid flapping
-- `Unifi Network Control POE`: enables/disables PoE (and supports power cycle) on a selected switch port
+- `Unifi Network Presence`: stable presence with disconnect hysteresis
+- `Unifi Network Control POE`: enable, disable, or cycle PoE on one selected port
 
 ## Outputs
 
-- Output 1 returns the current state or the main action response
-- Output 2 returns live events when the selected capability is `Receive Events` (Protect and Access nodes)
-- The message also includes product-specific metadata and the last known device data when available
+- Output 1: current state or action response
+- Output 2: live events when capability is `Receive Events` (Protect and Access)
+- Metadata is attached via product-specific fields (`msg.unifiProtect`, `msg.unifiAccess`, `msg.unifiNetwork`)
 
-## Example flows
+## Example Flows
 
-Import one of these flows from the `examples` folder:
+Import from `examples/`:
 
-- [examples/unifi-protect-info.json](examples/unifi-protect-info.json): read the state of a Protect camera
-- [examples/unifi-protect-sensor-observe.json](examples/unifi-protect-sensor-observe.json): observe a Protect sensor as a boolean event stream
-- [examples/unifi-protect-camera-actions.json](examples/unifi-protect-camera-actions.json): take snapshots, use PTZ presets, and show doorbell messages
-- [examples/unifi-access-door-control.json](examples/unifi-access-door-control.json): observe a door, unlock it, and manage a temporary lock rule
-- [examples/unifi-access-intercom-doorbell.json](examples/unifi-access-intercom-doorbell.json): observe an intercom device, trigger a doorbell, and cancel it safely
+| Flow file | What it demonstrates |
+|---|---|
+| [examples/unifi-protect-info.json](examples/unifi-protect-info.json) | read Protect camera state |
+| [examples/unifi-protect-sensor-observe.json](examples/unifi-protect-sensor-observe.json) | boolean sensor observable stream |
+| [examples/unifi-protect-camera-actions.json](examples/unifi-protect-camera-actions.json) | snapshot, PTZ presets, doorbell messages |
+| [examples/unifi-access-door-control.json](examples/unifi-access-door-control.json) | door observe, unlock, temporary lock rule |
+| [examples/unifi-access-intercom-doorbell.json](examples/unifi-access-intercom-doorbell.json) | intercom observe, trigger/cancel doorbell safely |
 
-## Release notes
+## Project Status
 
-- UniFi Protect is the main supported surface today
-- UniFi Access is included in the first stable release and may still evolve quickly across upcoming releases
-- UniFi Network is included in the first stable release and currently focuses on read-first flows plus selected action utilities
+- UniFi Protect is currently the most complete surface
+- UniFi Access is stable but may evolve quickly in upcoming releases
+- UniFi Network currently focuses on read-first flows plus selected action utilities
 
 [npm-version-image]: https://img.shields.io/npm/v/node-red-contrib-unifi-ultimate.svg
 [npm-url]: https://www.npmjs.com/package/node-red-contrib-unifi-ultimate

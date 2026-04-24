@@ -66,19 +66,28 @@ const TYPE_CAPABILITIES = {
                         id: "type",
                         label: "Rule",
                         type: "select",
+                        reloadOnChange: true,
                         options: [
                             { value: "keep_lock", label: "Keep Locked" },
                             { value: "keep_unlock", label: "Keep Unlocked" },
                             { value: "custom", label: "Custom Duration" },
+                            { value: "reset", label: "Reset Temporary Rule" },
+                            { value: "lock_now", label: "Lock Now" },
                             { value: "lock_early", label: "End Unlock Early" },
-                            { value: "schedule", label: "Schedule" }
+                            { value: "schedule", label: "Schedule (Legacy)" }
                         ]
                     },
                     {
+                        id: "interval",
+                        label: "Duration (minutes)",
+                        type: "number",
+                        placeholder: "Used for custom, example: 10"
+                    },
+                    {
                         id: "ended_time",
-                        label: "End Time",
+                        label: "Legacy End Time (Unix)",
                         type: "text",
-                        placeholder: "Unix timestamp, only used for custom"
+                        placeholder: "Optional legacy custom mode value"
                     }
                 ]
             },
@@ -87,9 +96,15 @@ const TYPE_CAPABILITIES = {
                     type: String(capabilityConfig.type || "keep_lock").trim() || "keep_lock"
                 };
 
+                const interval = Number(capabilityConfig.interval);
                 const endedTime = Number(capabilityConfig.ended_time);
-                if (payload.type === "custom" && Number.isFinite(endedTime)) {
-                    payload.ended_time = endedTime;
+                if (payload.type === "custom") {
+                    if (Number.isFinite(interval) && interval > 0) {
+                        payload.interval = Math.trunc(interval);
+                    } else if (Number.isFinite(endedTime)) {
+                        // Keep backward compatibility with older Access payloads.
+                        payload.ended_time = endedTime;
+                    }
                 }
 
                 return { payload };
@@ -257,9 +272,54 @@ async function getCapabilityOptions(deviceType, capabilityId, context) {
         };
     }
 
+    if (capability.id === "setTemporaryLockRule") {
+        return buildTemporaryLockRuleFields(capabilityId, capability, context && context.capabilityConfig);
+    }
+
     return {
         capabilityId,
         fields: capability.editor.fields.map((field) => ({ ...field }))
+    };
+}
+
+function buildTemporaryLockRuleFields(capabilityId, capability, capabilityConfig) {
+    // Keep the editor simple: only show duration inputs when the user picks
+    // the custom temporary rule type.
+    const config = normalizeObject(capabilityConfig);
+    const selectedType = String(config.type || "keep_lock").trim() || "keep_lock";
+    const typeField = capability.editor.fields[0];
+    const intervalField = capability.editor.fields[1];
+    const endedTimeField = capability.editor.fields[2];
+    const fields = [
+        {
+            ...typeField,
+            defaultValue: selectedType,
+            helpText: "Choose the lock behavior. Select Custom Duration to set a temporary unlock window."
+        }
+    ];
+
+    if (selectedType === "custom") {
+        fields.push(
+            {
+                ...intervalField,
+                defaultValue: config.interval !== undefined && config.interval !== null
+                    ? String(config.interval)
+                    : "",
+                helpText: "Recommended: duration in minutes for the temporary custom rule."
+            },
+            {
+                ...endedTimeField,
+                defaultValue: config.ended_time !== undefined && config.ended_time !== null
+                    ? String(config.ended_time)
+                    : "",
+                helpText: "Legacy fallback only. Leave empty unless your controller requires ended_time."
+            }
+        );
+    }
+
+    return {
+        capabilityId,
+        fields
     };
 }
 

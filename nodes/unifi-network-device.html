@@ -315,6 +315,10 @@
                     return "Loading clients from " + normalizedDeviceName + ".";
                 }
 
+                if (normalizedLabel === "Read Application Info") {
+                    return "Reading UniFi Network application information.";
+                }
+
                 if (normalizedLabel === "Restart Device") {
                     return "Restarting " + normalizedDeviceName + ".";
                 }
@@ -934,7 +938,8 @@
     <p><b>Resource</b> chooses what you want to work with: Site, UniFi Device, or Client.</p>
     <p><b>Item</b> chooses the specific site/device/client. <b>Action</b> only shows actions supported by that selection.</p>
     <p><b>Action options</b> appears only when the selected action needs extra input.</p>
-    <p>Action highlights: <code>Authorize Guest Access</code>, <code>Revoke Guest Access</code>, <code>Restart Device</code>, and <code>Power Cycle Port</code>.</p>
+    <p>Action highlights: <code>Read Application Info</code>, <code>Authorize Guest Access</code>, <code>Revoke Guest Access</code>, <code>Restart Device</code>, and <code>Power Cycle Port</code>.</p>
+    <p><code>Read Application Info</code> is available on the <code>Site</code> resource type and returns Network application metadata.</p>
     <p><b>Label</b> is optional and only changes how the node is shown in the editor. <b>Timeout</b> controls the request timeout in milliseconds for direct API calls.</p>
 
     <h3>Input</h3>

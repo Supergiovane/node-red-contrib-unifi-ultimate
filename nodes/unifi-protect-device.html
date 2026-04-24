@@ -311,6 +311,10 @@
                     return "Taking a snapshot from " + normalizedDeviceName + ".";
                 }
 
+                if (normalizedLabel === "Read Application Info") {
+                    return "Reading Protect application information.";
+                }
+
                 return normalizedLabel + " on " + normalizedDeviceName + ".";
             }
 
@@ -932,8 +936,9 @@
     <p><b>Connection</b> selects the shared UniFi Protect config node.</p>
     <p><b>Control</b> chooses the Protect device category. <b>Device</b> chooses the specific item. <b>Action</b> only shows actions supported by that device.</p>
     <p><b>Action options</b> appears only when the selected action needs extra input. For example, observables, PTZ presets, live views, or discovered properties.</p>
+    <p>Action highlights: <code>Receive Events</code>, <code>Read Device State</code>, <code>Take Snapshot</code>, <code>Show Doorbell Message</code>, and <code>Read Application Info</code> on <code>NVR</code>.</p>
     <p><code>Receive Events</code> performs an initial fetch and then stays connected to the Protect streams.</p>
-    <p>For <code>Sensor</code>, <code>Camera</code>, and <code>Light</code> observables, the node can normalize the main output to <code>true</code> or <code>false</code> and keep the original context in <code>msg.RAW</code>.</p>
+    <p>For <code>Sensor</code>, <code>Camera</code>, and <code>Light</code> observables, the node can normalize the main output to <code>true</code> or <code>false</code> and keep the original context in <code>msg.RAW</code>. Sensor observables include <code>Extreme Values</code>.</p>
     <p><b>Label</b> is optional and only changes how the node is shown in the editor. <b>Timeout</b> controls the request timeout in milliseconds for direct API calls.</p>
 
     <h3>Input</h3>
