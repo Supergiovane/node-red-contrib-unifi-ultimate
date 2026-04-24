@@ -25,6 +25,11 @@ module.exports = function(RED) {
     const DOORBELL_EVENT_COMPLETED_PREFIX = "access.doorbell.completed";
     const DOORBELL_EVENT_REMOTE_VIEW = "access.remote_view";
     const DOORBELL_EVENT_REMOTE_VIEW_CHANGE = "access.remote_view.change";
+    const DOORBELL_LOG_EVENT_REMOTE_CALL_REQUEST = "access.remotecall.request";
+    const DOORBELL_LOG_EVENT_DOOR_UNLOCK = "access.door.unlock";
+    const DOORBELL_LOG_POLL_INTERVAL_MS = 10000;
+    const DOORBELL_LOG_POLL_LOOKBACK_SECONDS = 45;
+    const DOORBELL_LOG_ACTIVE_WINDOW_MS = 25000;
 
     function normalizeEventName(value) {
         return String(value || "").trim().toLowerCase();
@@ -52,6 +57,10 @@ module.exports = function(RED) {
         return "";
     }
 
+    function isLikelyDoorbellDeviceId(value) {
+        return /^[0-9a-f]{12}$/i.test(String(value || "").trim());
+    }
+
     function UnifiAccessConfigNode(config) {
         RED.nodes.createNode(this, config);
 
@@ -66,6 +75,10 @@ module.exports = function(RED) {
         node.isClosing = false;
         node.activeDoorbells = new Map();
         node.activeDoorbellRequests = new Map();
+        node.doorbellLogPollTimer = null;
+        node.doorbellLogPollInFlight = false;
+        node.doorbellLogPollCursor = 0;
+        node.seenDoorbellLogIds = new Set();
 
         node.getApiToken = () => node.credentials && node.credentials.apiToken;
 
@@ -270,6 +283,8 @@ module.exports = function(RED) {
             let deviceId = firstNonEmptyString([
                 device.id,
                 data.device_id,
+                data.uah_id,
+                data.uah_device_id,
                 objectData.device_id,
                 nestedObjectData.device_id,
                 data.connected_uah_id
@@ -283,10 +298,6 @@ module.exports = function(RED) {
             }
 
             if (isDoorbellIncomingEvent(eventName)) {
-                if (!deviceId) {
-                    return;
-                }
-
                 if (clearRequestId) {
                     const previousDeviceId = normalizeString(node.activeDoorbellRequests.get(clearRequestId));
                     if (previousDeviceId) {
@@ -294,8 +305,18 @@ module.exports = function(RED) {
                     }
                 }
 
-                node.setActiveDoorbell(deviceId, {
+                // Use the requestId as fallback storage key when the event does not
+                // carry a recognisable device id (e.g. physical button presses or
+                // triggers from external systems). hasAnyActiveDoorbell() will still
+                // return true so the cancel guard can allow the request through.
+                const storageKey = deviceId || requestId;
+                if (!storageKey) {
+                    return;
+                }
+
+                node.setActiveDoorbell(storageKey, {
                     requestId,
+                    deviceId,
                     updatedAt: Date.now(),
                     expiresAt: Date.now() + ACTIVE_DOORBELL_TTL_MS,
                     source: "event",
@@ -321,6 +342,186 @@ module.exports = function(RED) {
             }
 
             node.clearActiveDoorbell(deviceId, [requestId, clearRequestId].filter(Boolean));
+        };
+
+        node.extractDoorbellDeviceIdFromLogEntry = (entry) => {
+            const source = entry && entry._source && typeof entry._source === "object" ? entry._source : {};
+            const targets = Array.isArray(source.target) ? source.target : [];
+
+            // Prefer direct intercom targets.
+            for (const target of targets) {
+                const targetType = normalizeString(target && target.type).toLowerCase();
+                const targetId = normalizeString(target && target.id);
+                if (!isLikelyDoorbellDeviceId(targetId)) {
+                    continue;
+                }
+                if (targetType.includes("intercom") && !targetType.includes("viewer")) {
+                    return targetId;
+                }
+            }
+
+            // Fallback: parse the device id from activity resource ids such as
+            // "protect_<deviceId>_<uuid>".
+            for (const target of targets) {
+                const targetType = normalizeString(target && target.type).toLowerCase();
+                const targetId = normalizeString(target && target.id);
+                if (!targetType.includes("resource") || !targetId) {
+                    continue;
+                }
+
+                const match = targetId.match(/(?:^|_)([0-9a-f]{12})(?:_|$)/i);
+                if (match && isLikelyDoorbellDeviceId(match[1])) {
+                    return normalizeString(match[1]);
+                }
+            }
+
+            return "";
+        };
+
+        node.processDoorbellLogEntry = (entry) => {
+            const source = entry && entry._source && typeof entry._source === "object" ? entry._source : {};
+            const event = source.event && typeof source.event === "object" ? source.event : {};
+            const eventType = normalizeEventName(event.type);
+            const logKey = normalizeEventName(event.log_key);
+            const deviceId = node.extractDoorbellDeviceIdFromLogEntry(entry);
+
+            // Doorbell request log means a ring has just started.
+            if (eventType === DOORBELL_LOG_EVENT_REMOTE_CALL_REQUEST) {
+                if (!deviceId) {
+                    return false;
+                }
+
+                const published = Number(event.published);
+                const publishedMs = Number.isFinite(published) && published > 0 ? published : Date.now();
+                const expiresAt = Math.min(
+                    publishedMs + DOORBELL_LOG_ACTIVE_WINDOW_MS,
+                    Date.now() + DOORBELL_LOG_ACTIVE_WINDOW_MS
+                );
+                if (expiresAt <= Date.now()) {
+                    return false;
+                }
+
+                node.setActiveDoorbell(deviceId, {
+                    requestId: "",
+                    updatedAt: publishedMs,
+                    expiresAt,
+                    source: "logs",
+                    payload: entry
+                });
+                return true;
+            }
+
+            // Access writes call-end outcomes as access.door.unlock with a
+            // doorbell-specific log key (for example "missed"). Treat those as
+            // completion signals and clear the tracked ring.
+            if (eventType === DOORBELL_LOG_EVENT_DOOR_UNLOCK && logKey.includes("access.doorbell.")) {
+                if (!deviceId) {
+                    return false;
+                }
+                node.clearActiveDoorbell(deviceId);
+                return true;
+            }
+
+            return false;
+        };
+
+        node.pollDoorbellLogs = async ({ since, until }) => {
+            if (!node.baseUrl || !node.getApiToken() || !since || !until || until <= since) {
+                return 0;
+            }
+
+            const response = await node.apiRequest({
+                path: "/api/v1/developer/system/logs",
+                method: "POST",
+                query: {
+                    page_size: 200,
+                    page_num: 1
+                },
+                payload: {
+                    topic: "all",
+                    since,
+                    until
+                },
+                timeout: 10000
+            });
+
+            if (response.statusCode < 200 || response.statusCode >= 300) {
+                return 0;
+            }
+
+            const logPayload = extractAccessData(response.payload);
+            const hits = Array.isArray(logPayload && logPayload.hits) ? logPayload.hits : [];
+            let matchedEvents = 0;
+
+            for (const entry of hits) {
+                const logId = normalizeString(entry && entry._id);
+                if (logId) {
+                    if (node.seenDoorbellLogIds.has(logId)) {
+                        continue;
+                    }
+                    node.seenDoorbellLogIds.add(logId);
+                }
+
+                if (node.processDoorbellLogEntry(entry)) {
+                    matchedEvents += 1;
+                }
+            }
+
+            if (node.seenDoorbellLogIds.size > 2000) {
+                node.seenDoorbellLogIds.clear();
+            }
+
+            return matchedEvents;
+        };
+
+        node.refreshDoorbellState = async (options) => {
+            const lookbackSeconds = Number(options && options.lookbackSeconds) > 0
+                ? Math.floor(Number(options.lookbackSeconds))
+                : DOORBELL_LOG_POLL_LOOKBACK_SECONDS;
+            const until = Math.floor(Date.now() / 1000);
+            const since = Math.max(0, until - lookbackSeconds);
+            return node.pollDoorbellLogs({ since, until });
+        };
+
+        node.runDoorbellLogPoll = async () => {
+            if (node.doorbellLogPollInFlight) {
+                return;
+            }
+            node.doorbellLogPollInFlight = true;
+
+            try {
+                const until = Math.floor(Date.now() / 1000);
+                const baseCursor = Number(node.doorbellLogPollCursor) > 0
+                    ? Number(node.doorbellLogPollCursor)
+                    : until - DOORBELL_LOG_POLL_LOOKBACK_SECONDS;
+                const since = Math.max(0, baseCursor - 2);
+                await node.pollDoorbellLogs({ since, until });
+                node.doorbellLogPollCursor = until;
+            } catch (error) {
+                node.warn(`Access doorbell log polling failed: ${error && error.message ? error.message : error}`);
+            } finally {
+                node.doorbellLogPollInFlight = false;
+            }
+        };
+
+        node.ensureDoorbellLogPolling = () => {
+            if (node.isClosing || node.nodeClients.length === 0 || node.doorbellLogPollTimer) {
+                return;
+            }
+
+            node.doorbellLogPollCursor = Math.floor(Date.now() / 1000) - DOORBELL_LOG_POLL_LOOKBACK_SECONDS;
+            node.runDoorbellLogPoll();
+            node.doorbellLogPollTimer = setInterval(() => {
+                node.runDoorbellLogPoll();
+            }, DOORBELL_LOG_POLL_INTERVAL_MS);
+        };
+
+        node.stopDoorbellLogPolling = () => {
+            if (node.doorbellLogPollTimer) {
+                clearInterval(node.doorbellLogPollTimer);
+                node.doorbellLogPollTimer = null;
+            }
+            node.doorbellLogPollInFlight = false;
         };
 
         node.purgeExpiredDoorbells = () => {
@@ -486,6 +687,7 @@ module.exports = function(RED) {
             node.nodeClients.push(client);
             try {
                 node.ensureWebSocket();
+                node.ensureDoorbellLogPolling();
             } catch (error) {
                 node.warn(`Unable to initialize Access websocket: ${error && error.message ? error.message : error}`);
             }
@@ -495,6 +697,7 @@ module.exports = function(RED) {
             node.nodeClients = node.nodeClients.filter((entry) => entry && client && entry.id !== client.id);
             if (node.nodeClients.length === 0) {
                 node.closeWebSocket();
+                node.stopDoorbellLogPolling();
             }
         };
 
@@ -503,6 +706,7 @@ module.exports = function(RED) {
             node.activeDoorbells.clear();
             node.activeDoorbellRequests.clear();
             node.closeWebSocket();
+            node.stopDoorbellLogPolling();
             if (typeof done === "function") {
                 done();
             }

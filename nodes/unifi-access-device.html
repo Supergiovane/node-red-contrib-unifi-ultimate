@@ -931,7 +931,7 @@
     <p>For <code>Set Temporary Lock Rule</code>, choose <code>Custom Duration</code> to reveal the minutes field. Legacy <code>ended_time</code> is still available only as fallback compatibility.</p>
     <p><code>Receive Events</code> fetches the current state once and then listens to the official UniFi Access notifications WebSocket.</p>
     <p><code>Trigger Doorbell</code> and <code>Cancel Doorbell</code> use a manual <code>Room Name</code> field when needed. The node does not currently discover Intercom directory names automatically.</p>
-    <p><code>Cancel Doorbell</code> uses a shared safe-cancel guard in the UniFi Access config node. A cancel request is sent only if an active ring is still tracked there, using a 3 minute tracking window.</p>
+    <p><code>Cancel Doorbell</code> uses a shared safe-cancel guard in the UniFi Access config node with a 3 minute tracking window. Tracking is updated by websocket events and a fallback system-log poller.</p>
     <p><b>Label</b> is optional and only changes how the node is shown in the editor. <b>Timeout</b> controls the request timeout in milliseconds for direct API calls.</p>
 
     <h3>Input</h3>

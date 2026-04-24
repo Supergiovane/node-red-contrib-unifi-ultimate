@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.1.3
 
-- UniFi Access: fixed `Cancel Doorbell` safe-cancel tracking so external rings (for example physical button press or `Trigger Doorbell` from another Node-RED instance) are recognized through websocket `access.remote_view` events
+- fixed ring handling for UniFi Access doorbell trigger/cancel
 
 ## 0.1.2
 

@@ -146,16 +146,32 @@ module.exports = function(RED) {
             }
 
             if (capabilityId === "cancelDoorbell") {
-                let hasActiveDoorbell = true;
-                if (deviceId && typeof node.server.hasActiveDoorbell === "function") {
-                    hasActiveDoorbell = node.server.hasActiveDoorbell(deviceId);
-                } else if (typeof node.server.hasAnyActiveDoorbell === "function") {
-                    hasActiveDoorbell = node.server.hasAnyActiveDoorbell();
+                const hasTrackedDoorbell = () => {
+                    const hasByDevice = deviceId && typeof node.server.hasActiveDoorbell === "function"
+                        ? node.server.hasActiveDoorbell(deviceId)
+                        : false;
+                    const hasByAny = typeof node.server.hasAnyActiveDoorbell === "function"
+                        ? node.server.hasAnyActiveDoorbell()
+                        : true;
+                    // When the node is bound to one explicit device, only
+                    // trust per-device tracking. Global fallback can cause
+                    // false positives that re-enable the cancel toggle bug.
+                    return deviceId ? hasByDevice : hasByAny;
+                };
+
+                // Prevent toggling: on some device types the cancel endpoint
+                // acts as a trigger when called with no active ring.
+                let hasActiveDoorbell = hasTrackedDoorbell();
+
+                if (!hasActiveDoorbell && typeof node.server.refreshDoorbellState === "function") {
+                    // Some Access devices do not emit the expected doorbell
+                    // websocket event family. Refresh from system logs once
+                    // before deciding that no active ring is present.
+                    await node.server.refreshDoorbellState({ lookbackSeconds: 45 });
+                    hasActiveDoorbell = hasTrackedDoorbell();
                 }
 
                 if (!hasActiveDoorbell) {
-                    // UniFi Access does not provide a safe "cancel even if
-                    // idle" endpoint, so avoid firing blind cancel requests.
                     const skippedMsg = RED.util.cloneMessage(msg);
                     skippedMsg.payload = {
                         skipped: true,
