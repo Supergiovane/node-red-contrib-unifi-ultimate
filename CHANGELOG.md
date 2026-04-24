@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- UniFi Access: fixed `Cancel Doorbell` safe-cancel tracking so external rings (for example physical button press or `Trigger Doorbell` from another Node-RED instance) are recognized through websocket `access.remote_view` events
+
 ## 0.1.2
 
 - UniFi Protect: added `Read Application Info` capability on NVR (`GET /v1/meta/info`)

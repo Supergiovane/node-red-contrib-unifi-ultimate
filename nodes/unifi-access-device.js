@@ -145,24 +145,33 @@ module.exports = function(RED) {
                 throw new Error(`Unsupported capability '${capabilityId}' for device type '${deviceType}'.`);
             }
 
-            if (capabilityId === "cancelDoorbell" && typeof node.server.hasAnyActiveDoorbell === "function" && !node.server.hasAnyActiveDoorbell()) {
-                // UniFi Access does not provide a safe "cancel even if idle"
-                // endpoint, so avoid firing blind cancel requests.
-                const skippedMsg = RED.util.cloneMessage(msg);
-                skippedMsg.payload = {
-                    skipped: true,
-                    reason: "No active doorbell ring is currently tracked by the UniFi Access configuration node."
-                };
-                skippedMsg.device = node.currentDevice;
-                skippedMsg.unifiAccess = buildBaseMetadata(deviceType, deviceId, capabilityId, {
-                    source: "request",
-                    skipped: true,
-                    safeCancel: true
-                });
+            if (capabilityId === "cancelDoorbell") {
+                let hasActiveDoorbell = true;
+                if (deviceId && typeof node.server.hasActiveDoorbell === "function") {
+                    hasActiveDoorbell = node.server.hasActiveDoorbell(deviceId);
+                } else if (typeof node.server.hasAnyActiveDoorbell === "function") {
+                    hasActiveDoorbell = node.server.hasAnyActiveDoorbell();
+                }
 
-                node.status({ fill: "yellow", shape: "ring", text: "no ring" });
-                sendOutputs(send, skippedMsg, null);
-                return;
+                if (!hasActiveDoorbell) {
+                    // UniFi Access does not provide a safe "cancel even if
+                    // idle" endpoint, so avoid firing blind cancel requests.
+                    const skippedMsg = RED.util.cloneMessage(msg);
+                    skippedMsg.payload = {
+                        skipped: true,
+                        reason: "No active doorbell ring is currently tracked by the UniFi Access configuration node."
+                    };
+                    skippedMsg.device = node.currentDevice;
+                    skippedMsg.unifiAccess = buildBaseMetadata(deviceType, deviceId, capabilityId, {
+                        source: "request",
+                        skipped: true,
+                        safeCancel: true
+                    });
+
+                    node.status({ fill: "yellow", shape: "ring", text: "no ring" });
+                    sendOutputs(send, skippedMsg, null);
+                    return;
+                }
             }
 
             if (capability.mode === "observe" || capability.mode === "fetch") {
@@ -197,21 +206,26 @@ module.exports = function(RED) {
                 throw new Error(`UniFi Access request failed with status ${response.statusCode}`);
             }
 
+            const responseData = extractAccessData(response.payload);
+            if (responseData && typeof responseData === "object" && !Array.isArray(responseData)) {
+                node.currentDevice = responseData;
+            }
+
             if (capabilityId === "triggerDoorbell" && typeof node.server.markDoorbellTriggered === "function") {
                 // Track the ring on the shared config node so a later cancel
                 // request can be validated safely.
                 node.server.markDoorbellTriggered(deviceId, {
+                    requestId: String(
+                        responseData && typeof responseData === "object"
+                            ? (responseData.request_id || responseData.remote_call_request_id || "")
+                            : ""
+                    ).trim(),
                     capabilityConfig
                 });
             }
 
             if (capabilityId === "cancelDoorbell" && typeof node.server.markDoorbellCanceled === "function") {
-                node.server.markDoorbellCanceled();
-            }
-
-            const responseData = extractAccessData(response.payload);
-            if (responseData && typeof responseData === "object" && !Array.isArray(responseData)) {
-                node.currentDevice = responseData;
+                node.server.markDoorbellCanceled(deviceId);
             }
 
             const stateMsg = RED.util.cloneMessage(msg);

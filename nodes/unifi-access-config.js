@@ -21,6 +21,36 @@ module.exports = function(RED) {
     // Doorbell requests are "best effort" from the public API perspective, so
     // keep a short-lived in-memory ledger to validate later cancel requests.
     const ACTIVE_DOORBELL_TTL_MS = 180000;
+    const DOORBELL_EVENT_INCOMING_PREFIX = "access.doorbell.incoming";
+    const DOORBELL_EVENT_COMPLETED_PREFIX = "access.doorbell.completed";
+    const DOORBELL_EVENT_REMOTE_VIEW = "access.remote_view";
+    const DOORBELL_EVENT_REMOTE_VIEW_CHANGE = "access.remote_view.change";
+
+    function normalizeEventName(value) {
+        return String(value || "").trim().toLowerCase();
+    }
+
+    function normalizeString(value) {
+        return String(value || "").trim();
+    }
+
+    function isDoorbellIncomingEvent(eventName) {
+        return eventName.startsWith(DOORBELL_EVENT_INCOMING_PREFIX) || eventName === DOORBELL_EVENT_REMOTE_VIEW;
+    }
+
+    function isDoorbellCompletedEvent(eventName) {
+        return eventName.startsWith(DOORBELL_EVENT_COMPLETED_PREFIX) || eventName === DOORBELL_EVENT_REMOTE_VIEW_CHANGE;
+    }
+
+    function firstNonEmptyString(values) {
+        for (const value of values) {
+            const normalized = normalizeString(value);
+            if (normalized) {
+                return normalized;
+            }
+        }
+        return "";
+    }
 
     function UnifiAccessConfigNode(config) {
         RED.nodes.createNode(this, config);
@@ -35,6 +65,7 @@ module.exports = function(RED) {
         node.reconnectTimer = null;
         node.isClosing = false;
         node.activeDoorbells = new Map();
+        node.activeDoorbellRequests = new Map();
 
         node.getApiToken = () => node.credentials && node.credentials.apiToken;
 
@@ -163,23 +194,107 @@ module.exports = function(RED) {
             });
         };
 
-        node.updateDoorbellState = (payload) => {
-            // Track doorbell lifecycle so "Cancel Doorbell" can avoid sending a
-            // blind cancel when no active ring is currently known.
-            const eventName = String(payload && payload.event || "").trim();
-            const data = payload && payload.data && typeof payload.data === "object" ? payload.data : {};
-            const device = data.device && typeof data.device === "object" ? data.device : {};
-            const deviceId = String(device.id || "").trim();
-            const objectData = payload && payload.object && typeof payload.object === "object" ? payload.object : {};
-            const nestedObjectData = data.object && typeof data.object === "object" ? data.object : {};
-            const requestId = String(objectData.request_id || nestedObjectData.request_id || "").trim();
-
-            if (!deviceId) {
+        node.setActiveDoorbell = (deviceId, entry) => {
+            const normalizedId = normalizeString(deviceId);
+            if (!normalizedId) {
                 return;
             }
 
-            if (eventName.startsWith("access.doorbell.incoming")) {
-                node.activeDoorbells.set(deviceId, {
+            const previous = node.activeDoorbells.get(normalizedId);
+            if (previous && normalizeString(previous.requestId)) {
+                node.activeDoorbellRequests.delete(normalizeString(previous.requestId));
+            }
+
+            const normalizedEntry = entry && typeof entry === "object" ? { ...entry } : {};
+            normalizedEntry.requestId = normalizeString(normalizedEntry.requestId);
+            node.activeDoorbells.set(normalizedId, normalizedEntry);
+
+            if (normalizedEntry.requestId) {
+                node.activeDoorbellRequests.set(normalizedEntry.requestId, normalizedId);
+            }
+        };
+
+        node.clearActiveDoorbell = (deviceId, expectedRequestIds) => {
+            const normalizedId = normalizeString(deviceId);
+            if (!normalizedId) {
+                return false;
+            }
+
+            const current = node.activeDoorbells.get(normalizedId);
+            if (!current) {
+                return false;
+            }
+
+            const requestId = normalizeString(current.requestId);
+            const expectedIds = Array.isArray(expectedRequestIds)
+                ? expectedRequestIds.map((value) => normalizeString(value)).filter(Boolean)
+                : [];
+
+            // Ignore stale completion events that target an older request id.
+            if (expectedIds.length > 0 && requestId && !expectedIds.includes(requestId)) {
+                return false;
+            }
+
+            node.activeDoorbells.delete(normalizedId);
+            if (requestId && node.activeDoorbellRequests.get(requestId) === normalizedId) {
+                node.activeDoorbellRequests.delete(requestId);
+            }
+            return true;
+        };
+
+        node.updateDoorbellState = (payload) => {
+            // Track doorbell lifecycle so "Cancel Doorbell" can avoid sending a
+            // blind cancel when no active ring is currently known.
+            const event = payload && typeof payload === "object" ? payload : {};
+            const eventName = normalizeEventName(event.event);
+            if (!isDoorbellIncomingEvent(eventName) && !isDoorbellCompletedEvent(eventName)) {
+                return;
+            }
+
+            const data = event.data && typeof event.data === "object" ? event.data : {};
+            const device = data.device && typeof data.device === "object" ? data.device : {};
+            const objectData = event.object && typeof event.object === "object" ? event.object : {};
+            const nestedObjectData = data.object && typeof data.object === "object" ? data.object : {};
+
+            const requestId = firstNonEmptyString([
+                data.request_id,
+                data.remote_call_request_id,
+                objectData.request_id,
+                nestedObjectData.request_id
+            ]);
+            const clearRequestId = firstNonEmptyString([
+                data.clear_request_id,
+                objectData.clear_request_id,
+                nestedObjectData.clear_request_id
+            ]);
+            let deviceId = firstNonEmptyString([
+                device.id,
+                data.device_id,
+                objectData.device_id,
+                nestedObjectData.device_id,
+                data.connected_uah_id
+            ]);
+
+            if (!deviceId && requestId) {
+                deviceId = normalizeString(node.activeDoorbellRequests.get(requestId));
+            }
+            if (!deviceId && clearRequestId) {
+                deviceId = normalizeString(node.activeDoorbellRequests.get(clearRequestId));
+            }
+
+            if (isDoorbellIncomingEvent(eventName)) {
+                if (!deviceId) {
+                    return;
+                }
+
+                if (clearRequestId) {
+                    const previousDeviceId = normalizeString(node.activeDoorbellRequests.get(clearRequestId));
+                    if (previousDeviceId) {
+                        node.clearActiveDoorbell(previousDeviceId, [clearRequestId]);
+                    }
+                }
+
+                node.setActiveDoorbell(deviceId, {
                     requestId,
                     updatedAt: Date.now(),
                     expiresAt: Date.now() + ACTIVE_DOORBELL_TTL_MS,
@@ -189,18 +304,23 @@ module.exports = function(RED) {
                 return;
             }
 
-            if (eventName.startsWith("access.doorbell.completed")) {
-                // If a request id is present, use it to avoid deleting a newer
-                // active ring with an old completion event.
-                const current = node.activeDoorbells.get(deviceId);
-                if (!current) {
-                    return;
+            if (!deviceId) {
+                if (requestId) {
+                    const mappedDeviceId = normalizeString(node.activeDoorbellRequests.get(requestId));
+                    if (mappedDeviceId) {
+                        node.clearActiveDoorbell(mappedDeviceId, [requestId]);
+                    }
                 }
-
-                if (!requestId || !current.requestId || current.requestId === requestId) {
-                    node.activeDoorbells.delete(deviceId);
+                if (clearRequestId) {
+                    const mappedDeviceId = normalizeString(node.activeDoorbellRequests.get(clearRequestId));
+                    if (mappedDeviceId) {
+                        node.clearActiveDoorbell(mappedDeviceId, [clearRequestId]);
+                    }
                 }
+                return;
             }
+
+            node.clearActiveDoorbell(deviceId, [requestId, clearRequestId].filter(Boolean));
         };
 
         node.purgeExpiredDoorbells = () => {
@@ -210,20 +330,22 @@ module.exports = function(RED) {
             Array.from(node.activeDoorbells.entries()).forEach(([deviceId, entry]) => {
                 const expiresAt = Number(entry && entry.expiresAt);
                 if (Number.isFinite(expiresAt) && expiresAt > 0 && expiresAt <= now) {
-                    node.activeDoorbells.delete(deviceId);
+                    node.clearActiveDoorbell(deviceId);
                 }
             });
         };
 
         node.getActiveDoorbell = (deviceId) => {
             node.purgeExpiredDoorbells();
-            const normalizedId = String(deviceId || "").trim();
+            const normalizedId = normalizeString(deviceId);
             if (!normalizedId) {
                 return null;
             }
 
             return node.activeDoorbells.get(normalizedId) || null;
         };
+
+        node.hasActiveDoorbell = (deviceId) => Boolean(node.getActiveDoorbell(deviceId));
 
         node.hasAnyActiveDoorbell = () => {
             node.purgeExpiredDoorbells();
@@ -233,13 +355,13 @@ module.exports = function(RED) {
         node.markDoorbellTriggered = (deviceId, metadata) => {
             // Manual trigger requests can arrive before the websocket confirms
             // the ring, so pre-mark them as active for safe cancel behavior.
-            const normalizedId = String(deviceId || "").trim();
+            const normalizedId = normalizeString(deviceId);
             if (!normalizedId) {
                 return;
             }
 
-            node.activeDoorbells.set(normalizedId, {
-                requestId: "",
+            node.setActiveDoorbell(normalizedId, {
+                requestId: metadata && typeof metadata === "object" ? metadata.requestId : "",
                 updatedAt: Date.now(),
                 expiresAt: Date.now() + ACTIVE_DOORBELL_TTL_MS,
                 source: "request",
@@ -247,8 +369,15 @@ module.exports = function(RED) {
             });
         };
 
-        node.markDoorbellCanceled = () => {
-            node.activeDoorbells.clear();
+        node.markDoorbellCanceled = (deviceId) => {
+            const normalizedId = normalizeString(deviceId);
+            if (!normalizedId) {
+                node.activeDoorbells.clear();
+                node.activeDoorbellRequests.clear();
+                return;
+            }
+
+            node.clearActiveDoorbell(normalizedId);
         };
 
         node.scheduleReconnect = () => {
@@ -372,6 +501,7 @@ module.exports = function(RED) {
         node.on("close", function(done) {
             node.isClosing = true;
             node.activeDoorbells.clear();
+            node.activeDoorbellRequests.clear();
             node.closeWebSocket();
             if (typeof done === "function") {
                 done();
