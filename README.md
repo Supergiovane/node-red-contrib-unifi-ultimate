@@ -2,10 +2,6 @@
   <img src="nodes/icons/unifi-ultimate-logo.svg" alt="Unifi Ultimate" width="720">
 </p>
 
-<p align="center">
-  <img src="nodes/icons/readme-overview.svg" alt="Overview of Node-RED UniFi Ultimate architecture" width="980">
-</p>
-
 [![NPM version][npm-version-image]][npm-url]
 [![Node.js version][node-version-image]][npm-url]
 [![Node-RED Flow Library][flows-image]][flows-url]
@@ -20,15 +16,6 @@
 Control and monitor `UniFi Network`, `UniFi Protect`, and `UniFi Access` from Node-RED without building API requests by hand.
 
 [View Changelog](CHANGELOG.md)
-
-## Why Use It
-
-- Manage UniFi cameras, sensors, doors, clients, switches, and PoE ports from Node-RED.
-- Pick devices and clients from searchable lists instead of copying IDs manually.
-- Trigger configured actions with any incoming message.
-- Receive live events from Protect and Access.
-- Build presence, door, camera, and PoE automations with less custom code.
-- Use one package for the main UniFi applications.
 
 ## Install
 
@@ -53,16 +40,16 @@ The incoming message is only a trigger. The node uses the item and action config
 
 ## Available Nodes
 
-| Node | What it does |
-|---|---|
-| `Unifi Network Config` | Connection settings for UniFi Network |
-| `Unifi Network Device` | Read sites, devices, clients, and run supported Network actions |
-| `Unifi Network Presence` | Track whether a selected client is present |
-| `Unifi Network Control POE` | Enable, disable, or power-cycle PoE on a switch port |
-| `Unifi Protect Config` | Connection settings for UniFi Protect |
-| `Unifi Protect Device` | Read cameras/sensors/devices, receive events, and run Protect actions |
-| `Unifi Access Config` | Connection settings for UniFi Access |
-| `Unifi Access Device` | Read doors/devices, receive events, and run Access actions |
+| Node                        | What it does                                                          |
+| --------------------------- | --------------------------------------------------------------------- |
+| `Unifi Network Config`      | Connection settings for UniFi Network                                 |
+| `Unifi Network Device`      | Read sites, devices, clients, and run supported Network actions       |
+| `Unifi Network Presence`    | Track whether a selected client is present                            |
+| `Unifi Network Control POE` | Enable, disable, or power-cycle PoE on a switch port                  |
+| `Unifi Protect Config`      | Connection settings for UniFi Protect                                 |
+| `Unifi Protect Device`      | Read cameras/sensors/devices, receive events, and run Protect actions |
+| `Unifi Access Config`       | Connection settings for UniFi Access                                  |
+| `Unifi Access Device`       | Read doors/devices, receive events, and run Access actions            |
 
 ## UniFi Network
 
@@ -168,12 +155,12 @@ Useful metadata is attached to the output message, for example:
 
 Import from `examples/`:
 
-| Flow file | What it demonstrates |
-|---|---|
-| [examples/unifi-protect-info.json](examples/unifi-protect-info.json) | Read Protect camera state |
-| [examples/unifi-protect-sensor-observe.json](examples/unifi-protect-sensor-observe.json) | Receive boolean sensor events |
-| [examples/unifi-protect-camera-actions.json](examples/unifi-protect-camera-actions.json) | Snapshot, PTZ presets, and doorbell messages |
-| [examples/unifi-access-door-control.json](examples/unifi-access-door-control.json) | Door state, unlock, and temporary lock rule |
+| Flow file                                                                                    | What it demonstrates                           |
+| -------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| [examples/unifi-protect-info.json](examples/unifi-protect-info.json)                         | Read Protect camera state                      |
+| [examples/unifi-protect-sensor-observe.json](examples/unifi-protect-sensor-observe.json)     | Receive boolean sensor events                  |
+| [examples/unifi-protect-camera-actions.json](examples/unifi-protect-camera-actions.json)     | Snapshot, PTZ presets, and doorbell messages   |
+| [examples/unifi-access-door-control.json](examples/unifi-access-door-control.json)           | Door state, unlock, and temporary lock rule    |
 | [examples/unifi-access-intercom-doorbell.json](examples/unifi-access-intercom-doorbell.json) | Intercom observe, trigger, and cancel doorbell |
 
 ## Notes
