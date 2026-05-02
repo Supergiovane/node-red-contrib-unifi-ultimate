@@ -68,7 +68,7 @@ The incoming message is only a trigger. The node uses the item and action config
 
 <p align="center">
   <a href="https://ui.com/switching">
-    <img src="https://www.ui.com/microsite/og-image.switching.jpg" alt="UniFi Network switching" width="860">
+    <img src="nodes/readme-assets/unifi-network-switching.jpg" alt="UniFi Network switching" width="860">
   </a>
 </p>
 
@@ -98,8 +98,8 @@ Editor conveniences:
 ## UniFi Protect
 
 <p align="center">
-  <a href="https://ui.com/camera-security">
-    <img src="https://www.ui.com/microsite/og-image.homepage.jpg" alt="UniFi Protect camera security" width="860">
+  <a href="https://store.ui.com/us/en/products/uvc-g5-pro">
+    <img src="nodes/readme-assets/unifi-protect-camera.png" alt="UniFi Protect camera" width="520">
   </a>
 </p>
 
@@ -129,7 +129,7 @@ For supported observables, the node can output simple `true/false` values while 
 
 <p align="center">
   <a href="https://ui.com/door-access">
-    <img src="https://www.ui.com/microsite/og-image.door-access-v2.jpg" alt="UniFi Access door access" width="860">
+    <img src="nodes/readme-assets/unifi-access-door-access.jpg" alt="UniFi Access door access" width="860">
   </a>
 </p>
 
