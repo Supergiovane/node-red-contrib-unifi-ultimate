@@ -237,7 +237,86 @@ module.exports = function(RED) {
                 }
             });
 
-            return Array.from(dedupMap.values());
+            const discoveredItems = Array.from(dedupMap.values());
+
+            if (definition.type !== "client") {
+                return discoveredItems;
+            }
+
+            const knownClients = [];
+            await Promise.all(sites.map(async (site) => {
+                const siteId = String(site && site.id || "").trim();
+                if (!siteId) {
+                    return;
+                }
+                try {
+                    const legacyClients = await fetchLegacyKnownClients(siteId);
+                    knownClients.push(...legacyClients);
+                } catch (error) {
+                }
+            }));
+
+            const clientsByKey = new Map();
+            function addClientCandidate(client, preferExisting) {
+                const item = client && typeof client === "object" && !Array.isArray(client)
+                    ? client
+                    : null;
+                if (!item) {
+                    return;
+                }
+
+                const summary = summarizeDevice("client", item);
+                const key = normalizeIdentifierKey(item.macAddress)
+                    || normalizeIdentifierKey(item.mac)
+                    || normalizeIdentifierKey(item.mac_address)
+                    || normalizeIdentifierKey(summary.raw && summary.raw.macAddress)
+                    || normalizeIdentifierKey(summary.raw && summary.raw.mac)
+                    || normalizeIdentifierKey(summary.id)
+                    || normalizeIdentifierKey(item.id);
+                if (!key) {
+                    return;
+                }
+
+                if (preferExisting && clientsByKey.has(key)) {
+                    const existing = clientsByKey.get(key);
+                    const itemIsOffline = item.offline === true
+                        || item.isOnline === false
+                        || item.online === false
+                        || String(item.state || "").trim().toLowerCase() === "offline";
+                    const itemIsOnline = item.isOnline === true
+                        || item.online === true
+                        || String(item.state || "").trim().toLowerCase() === "online";
+                    if (itemIsOffline || itemIsOnline) {
+                        const merged = {
+                            ...existing,
+                            ...item,
+                            id: existing.id || item.id,
+                            clientId: existing.clientId || item.clientId,
+                            siteId: existing.siteId || item.siteId,
+                            siteName: existing.siteName || item.siteName,
+                            macAddress: existing.macAddress || item.macAddress || item.mac
+                        };
+                        clientsByKey.set(key, {
+                            ...merged,
+                            ...(itemIsOffline
+                                ? { isOnline: false, online: false, offline: true, state: "offline" }
+                                : { isOnline: true, online: true, offline: false })
+                        });
+                    }
+                    return;
+                }
+
+                clientsByKey.set(key, item);
+            }
+
+            discoveredItems.forEach((client) => addClientCandidate({
+                ...client,
+                isOnline: client && client.isOnline !== false,
+                online: client && client.online !== false
+            }, false));
+            knownClients.forEach((client) => addClientCandidate(client, true));
+
+            return Array.from(clientsByKey.values());
         };
 
         node.fetchDeviceByTypeAndId = async (deviceType, deviceId) => {
@@ -513,6 +592,11 @@ module.exports = function(RED) {
                     item.network_device_id,
                     item.switchId,
                     item.switch_id,
+                    item.sw_mac,
+                    item.switch_mac,
+                    item.uplink_mac,
+                    item.uplinkDeviceMac,
+                    item.uplink_device_mac,
                     item.accessPointId,
                     item.access_point_id,
                     item.apId,
@@ -669,8 +753,68 @@ module.exports = function(RED) {
             const clients = await fetchLegacySiteCollection(siteId, "/stat/sta");
             return clients.map((client) => ({
                 ...client,
+                __unifiUltimateOnline: true,
                 siteId
             }));
+        }
+
+        async function fetchLegacyKnownClients(siteId) {
+            const [activeClients, allUsers, restUsers] = await Promise.all([
+                fetchLegacySiteCollection(siteId, "/stat/sta"),
+                fetchLegacySiteCollection(siteId, "/stat/alluser"),
+                fetchLegacySiteCollection(siteId, "/rest/user")
+            ]);
+            const activeKeys = new Set();
+            activeClients.forEach((client) => {
+                [
+                    client && client.mac,
+                    client && client.macAddress,
+                    client && client.mac_address,
+                    client && client._id,
+                    client && client.user_id
+                ].forEach((value) => {
+                    const key = normalizeIdentifierKey(value);
+                    if (key) {
+                        activeKeys.add(key);
+                    }
+                });
+            });
+
+            const clientsByKey = new Map();
+            function addKnownClient(client, online) {
+                const item = client && typeof client === "object" && !Array.isArray(client)
+                    ? client
+                    : null;
+                if (!item) {
+                    return;
+                }
+
+                const key = normalizeIdentifierKey(item.mac)
+                    || normalizeIdentifierKey(item.macAddress)
+                    || normalizeIdentifierKey(item.mac_address)
+                    || normalizeIdentifierKey(item._id)
+                    || normalizeIdentifierKey(item.user_id);
+                if (!key) {
+                    return;
+                }
+
+                const isOnline = online || activeKeys.has(key);
+                if (clientsByKey.has(key) && !isOnline) {
+                    return;
+                }
+
+                clientsByKey.set(key, {
+                    ...item,
+                    __unifiUltimateOnline: isOnline,
+                    siteId
+                });
+            }
+
+            activeClients.forEach((client) => addKnownClient(client, true));
+            allUsers.forEach((client) => addKnownClient(client, false));
+            restUsers.forEach((client) => addKnownClient(client, false));
+
+            return Array.from(clientsByKey.values()).map((client) => buildLegacyClientSummary(client, siteId));
         }
 
         async function fetchLegacyDevices(siteId) {
@@ -705,6 +849,10 @@ module.exports = function(RED) {
                 clientId: id,
                 siteId,
                 macAddress,
+                isOnline: item.__unifiUltimateOnline === true,
+                online: item.__unifiUltimateOnline === true,
+                offline: item.__unifiUltimateOnline === false,
+                state: item.__unifiUltimateOnline === false ? "offline" : "online",
                 name: firstNonEmptyString([
                     item.name,
                     item.hostname,
@@ -1151,36 +1299,78 @@ module.exports = function(RED) {
             });
 
             const legacyClients = [];
+            const legacyDevices = [];
             await Promise.all(Array.from(siteIds).map(async (siteId) => {
                 try {
-                    const siteClients = await fetchLegacyClients(siteId);
+                    const [siteClients, siteDevices] = await Promise.all([
+                        fetchLegacyKnownClients(siteId),
+                        fetchLegacyDevices(siteId)
+                    ]);
                     legacyClients.push(...siteClients);
+                    legacyDevices.push(...siteDevices);
                 } catch (error) {
                 }
             }));
 
-            const seenClientIds = new Set(attachedClients.map((client) => normalizeString(client.id)));
+            const legacyClientsByKey = new Map();
             legacyClients.forEach((legacyClient) => {
-                const siteId = normalizeString(legacyClient && legacyClient.siteId);
-                const attachment = resolveLegacyClientAttachment(legacyClient, siteId);
-                if (!attachment) {
-                    return;
-                }
+                [
+                    legacyClient && legacyClient.macAddress,
+                    legacyClient && legacyClient.mac,
+                    legacyClient && legacyClient.id,
+                    legacyClient && legacyClient.clientId
+                ].forEach((value) => {
+                    const compactKey = normalizeIdentifierKey(value);
+                    if (compactKey && !legacyClientsByKey.has(compactKey)) {
+                        legacyClientsByKey.set(compactKey, legacyClient);
+                    }
+                });
+            });
 
+            const seenClientIds = new Set();
+            attachedClients.forEach((client) => {
+                [
+                    client && client.id,
+                    client && client.resourceId,
+                    client && client.macAddress,
+                    client && client.raw && client.raw.macAddress,
+                    client && client.raw && client.raw.mac
+                ].forEach((value) => {
+                    const rawKey = normalizeString(value);
+                    const compactKey = normalizeIdentifierKey(value);
+                    if (rawKey) {
+                        seenClientIds.add(rawKey);
+                    }
+                    if (compactKey) {
+                        seenClientIds.add(compactKey);
+                    }
+                });
+            });
+
+            function addLegacyAttachedClient(legacyClient, attachment) {
                 const attachedDeviceId = resolveAttachedDeviceId(attachment);
                 if (!attachedDeviceId) {
                     return;
                 }
 
+                const siteId = normalizeString(legacyClient && legacyClient.siteId || attachment && attachment.siteId);
                 const normalizedClient = buildLegacyClientSummary(legacyClient, siteId);
                 const clientSummary = summarizeDevice("client", normalizedClient);
-                const clientKey = normalizeString(clientSummary.id || normalizedClient.macAddress || normalizedClient.id);
-                if (clientKey && seenClientIds.has(clientKey)) {
+                const clientKeys = [
+                    clientSummary.id,
+                    clientSummary.resourceId,
+                    normalizedClient.macAddress,
+                    normalizedClient.mac,
+                    normalizedClient.id
+                ].flatMap((value) => {
+                    const rawKey = normalizeString(value);
+                    const compactKey = normalizeIdentifierKey(value);
+                    return [rawKey, compactKey].filter(Boolean);
+                });
+                if (clientKeys.some((key) => seenClientIds.has(key))) {
                     return;
                 }
-                if (clientKey) {
-                    seenClientIds.add(clientKey);
-                }
+                clientKeys.forEach((key) => seenClientIds.add(key));
 
                 attachedClients.push({
                     ...clientSummary,
@@ -1189,6 +1379,61 @@ module.exports = function(RED) {
                         portIdx: attachment.portIdx,
                         deviceName: resolveAttachedDeviceName(attachment, attachedDeviceId)
                     }
+                });
+            }
+
+            legacyClients.forEach((legacyClient) => {
+                const siteId = normalizeString(legacyClient && legacyClient.siteId);
+                const attachment = resolveLegacyClientAttachment(legacyClient, siteId);
+                if (!attachment) {
+                    return;
+                }
+
+                addLegacyAttachedClient(legacyClient, attachment);
+            });
+
+            legacyDevices.forEach((legacyDevice) => {
+                const siteId = normalizeString(legacyDevice && legacyDevice.siteId);
+                const deviceResourceId = firstNonEmptyString([
+                    legacyDevice && legacyDevice.mac,
+                    legacyDevice && legacyDevice.device_id,
+                    legacyDevice && legacyDevice.id,
+                    legacyDevice && legacyDevice._id
+                ]);
+                const ports = Array.isArray(legacyDevice && legacyDevice.port_table)
+                    ? legacyDevice.port_table
+                    : [];
+
+                ports.forEach((port) => {
+                    const lastConnection = port && port.last_connection && typeof port.last_connection === "object"
+                        ? port.last_connection
+                        : null;
+                    const clientMac = firstNonEmptyString([
+                        lastConnection && lastConnection.mac,
+                        lastConnection && lastConnection.macAddress,
+                        lastConnection && lastConnection.mac_address
+                    ]);
+                    const portIdx = parsePortIndex(port && port.port_idx);
+                    if (!siteId || !deviceResourceId || !clientMac || !Number.isInteger(portIdx)) {
+                        return;
+                    }
+
+                    const clientKey = normalizeIdentifierKey(clientMac);
+                    const knownClient = legacyClientsByKey.get(clientKey) || {};
+                    const legacyClient = {
+                        ...knownClient,
+                        mac: knownClient.mac || knownClient.macAddress || clientMac,
+                        ip: knownClient.ip || knownClient.ipAddress || lastConnection.ip,
+                        ipAddress: knownClient.ipAddress || knownClient.ip || lastConnection.ip,
+                        __unifiUltimateOnline: lastConnection.connected === true,
+                        siteId
+                    };
+                    const attachment = {
+                        siteId,
+                        resourceId: deviceResourceId,
+                        portIdx
+                    };
+                    addLegacyAttachedClient(legacyClient, attachment);
                 });
             });
 

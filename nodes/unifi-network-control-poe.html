@@ -1,11 +1,57 @@
 <style>
+    .unifi-ultimate-hero {
+        margin: 0 0 14px 0;
+    }
+
+    .unifi-ultimate-hero-panel {
+        padding: 14px 16px;
+        border: 1px solid #d9e7f5;
+        border-radius: 14px;
+        background: linear-gradient(135deg, #eef7ff 0%, #f8fbff 58%, #f7fafc 100%);
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+        color: #334155;
+    }
+
+    .unifi-ultimate-eyebrow {
+        margin-bottom: 4px;
+        color: #2563eb;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+    }
+
+    .unifi-ultimate-hero-panel strong {
+        display: block;
+        color: #0f172a;
+        font-size: 15px;
+        line-height: 1.35;
+    }
+
+    .unifi-ultimate-hero-panel span {
+        display: block;
+        margin-top: 4px;
+        line-height: 1.45;
+    }
+
+    .unifi-ultimate-section-title {
+        margin: 14px 0 8px 150px;
+        color: #64748b;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+    }
+
     .unifi-ultimate-card {
         margin-left: 150px;
-        padding: 12px 14px;
-        border-radius: 12px;
-        background: #f5f7fa;
+        padding: 13px 15px;
+        border: 1px solid #e2e8f0;
+        border-radius: 14px;
+        background: #f8fafc;
         color: #334155;
         line-height: 1.45;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
     }
 
     .unifi-ultimate-card strong {
@@ -16,9 +62,23 @@
     }
 
     .unifi-ultimate-advanced {
-        margin-top: 4px;
-        padding-top: 4px;
+        margin-top: 14px;
+        padding-top: 10px;
         border-top: 1px solid #e5e7eb;
+    }
+
+    .unifi-ultimate-offline-option {
+        color: #94a3b8 !important;
+    }
+
+    .unifi-ultimate-warning {
+        border-color: #fed7aa;
+        background: #fff7ed;
+        color: #7c2d12;
+    }
+
+    .unifi-ultimate-warning strong {
+        color: #9a3412;
     }
 
 </style>
@@ -181,6 +241,7 @@
                     return {
                         value: optionValue,
                         text: optionText,
+                        isOffline: $option.attr("data-offline") === "true",
                         isPlaceholder: optionValue === "",
                         searchable: [
                             optionText,
@@ -241,7 +302,8 @@
                                 return {
                                     label: option.text,
                                     value: option.text,
-                                    optionValue: option.value
+                                    optionValue: option.value,
+                                    offline: option.isOffline
                                 };
                             });
 
@@ -292,6 +354,18 @@
                     }
                 });
 
+                const autocompleteInstance = $searchInput.autocomplete("instance");
+                if (autocompleteInstance) {
+                    autocompleteInstance._renderItem = function (ul, item) {
+                        const $entry = $("<li>");
+                        const $content = $("<div>").text(item.label);
+                        if (item.offline) {
+                            $content.addClass("unifi-ultimate-offline-option");
+                        }
+                        return $entry.append($content).appendTo(ul);
+                    };
+                }
+
                 $searchInput.on("keyup.unifiSearchable", function () {
                     filterOnKeyUpOnly = true;
                     $(this).autocomplete("search", $(this).val());
@@ -305,6 +379,7 @@
                 });
 
                 syncInputFromSelect();
+                $searchInput.prop("disabled", false);
                 $select.data("unifi-searchable", true);
                 $select.data("unifi-options-count", options.length);
             }
@@ -452,7 +527,13 @@
                     $clientLookupId.append($("<option></option>").val("").text("Choose a client target"));
 
                     (items || []).forEach(function (item) {
-                        const stateSuffix = item.state ? " [" + item.state + "]" : "";
+                        const isOffline = item.offline === true
+                            || item.isOnline === false
+                            || item.online === false
+                            || String(item.state || "").toLowerCase() === "offline";
+                        const stateSuffix = isOffline
+                            ? (/\(offline\)/i.test(String(item.name || item.id || "")) ? "" : " (OffLine)")
+                            : (item.state ? " [" + item.state + "]" : "");
                         const attachment = item.attachment && typeof item.attachment === "object" ? item.attachment : {};
                         const attachedDeviceName = String(attachment.deviceName || "Switch").trim();
                         const attachedPortIdx = String(attachment.portIdx !== undefined ? attachment.portIdx : "").trim();
@@ -461,15 +542,18 @@
                             return;
                         }
                         const attachmentSuffix = " -> " + attachedDeviceName + " p" + attachedPortIdx;
-                        $clientLookupId.append(
-                            $("<option></option>")
-                                .val(item.id)
-                                .text((item.name || item.id) + stateSuffix + attachmentSuffix)
-                                .attr("data-client-name", item.name || item.id)
-                                .attr("data-attached-device-id", attachedDeviceId)
-                                .attr("data-attached-port-idx", attachedPortIdx)
-                                .attr("data-attached-device-name", attachedDeviceName)
-                        );
+                        const $option = $("<option></option>")
+                            .val(item.id)
+                            .text((item.name || item.id) + stateSuffix + attachmentSuffix)
+                            .attr("data-client-name", item.name || item.id)
+                            .attr("data-attached-device-id", attachedDeviceId)
+                            .attr("data-attached-port-idx", attachedPortIdx)
+                            .attr("data-attached-device-name", attachedDeviceName)
+                            .attr("data-offline", isOffline ? "true" : "false");
+                        if (isOffline) {
+                            $option.css("color", "#94a3b8");
+                        }
+                        $clientLookupId.append($option);
                     });
 
                     if (currentValue && $clientLookupId.find("option[value='" + currentValue + "']").length > 0) {
@@ -483,6 +567,28 @@
 
                 makeSelectSearchable($clientLookupId, "Search clients");
                 refreshSummary();
+            }
+
+            function renderClientsLoading() {
+                suspendChangeHandling = true;
+                try {
+                    $clientLookupId.empty();
+                    $clientLookupId.append(
+                        $("<option></option>")
+                            .val("")
+                            .text("Loading clients, please wait...")
+                    );
+                    $clientLookupId.val("");
+                } finally {
+                    suspendChangeHandling = false;
+                }
+
+                makeSelectSearchable($clientLookupId, "Loading clients, please wait...");
+                $("#node-input-clientLookupId-search")
+                    .val("Loading clients, please wait...")
+                    .prop("disabled", true);
+                $selectionSummary.text("Loading client targets...");
+                $selectionDetail.text("Please wait while UniFi returns clients and switch-port attachments.");
             }
 
             function hasOptionValue($select, value) {
@@ -521,12 +627,13 @@
                 if (!serverId || serverId === "_ADD_") {
                     renderDevices([]);
                     renderPorts([]);
+                    $refreshDevices.find("i").removeClass("fa-spin");
                     return Promise.resolve();
                 }
 
                 // Ports depend on the selected switch, so refresh both lists in
                 // one flow whenever the connection changes.
-                $refreshDevices.addClass("fa-spin");
+                $refreshDevices.find("i").addClass("fa-spin");
                 return requestJson("unifiNetwork/devices?serverId=" + encodeURIComponent(serverId) + "&deviceType=device")
                     .then(function (data) {
                         renderDevices(Array.isArray(data) ? data : []);
@@ -539,7 +646,7 @@
                         RED.notify(errorText, "error");
                     })
                     .finally(function () {
-                        $refreshDevices.removeClass("fa-spin");
+                        $refreshDevices.find("i").removeClass("fa-spin");
                     });
             }
 
@@ -547,10 +654,12 @@
                 const serverId = String($server.val() || "").trim();
                 if (!serverId || serverId === "_ADD_") {
                     renderClients([]);
+                    $refreshClients.find("i").removeClass("fa-spin");
                     return Promise.resolve();
                 }
 
-                $refreshClients.addClass("fa-spin");
+                $refreshClients.find("i").addClass("fa-spin");
+                renderClientsLoading();
                 return requestJson("unifiNetwork/clients-with-attachment?serverId=" + encodeURIComponent(serverId))
                     .then(function (data) {
                         renderClients(Array.isArray(data) ? data : []);
@@ -561,7 +670,7 @@
                         RED.notify(errorText, "error");
                     })
                     .finally(function () {
-                        $refreshClients.removeClass("fa-spin");
+                        $refreshClients.find("i").removeClass("fa-spin");
                     });
             }
 
@@ -690,16 +799,27 @@
             makeSelectSearchable($deviceId, "Search switches");
             makeSelectSearchable($clientLookupId, "Search clients");
             refreshSelectionModeUi();
+            $refreshDevices.find("i").addClass("fa-spin");
+            $refreshClients.find("i").addClass("fa-spin");
             loadEditorData();
         }
     });
 </script>
 
 <script type="text/html" data-template-name="unifi-network-control-poe">
+    <div class="form-row unifi-ultimate-hero">
+        <div class="unifi-ultimate-hero-panel">
+            <div class="unifi-ultimate-eyebrow">UniFi Network PoE</div>
+            <strong>Control power on a switch port.</strong>
+            <span>Target a switch and port directly, or pick a client and let UniFi resolve the connected port.</span>
+        </div>
+    </div>
+    <div class="unifi-ultimate-section-title">Connection</div>
     <div class="form-row">
         <label for="node-input-server"><i class="fa fa-cog"></i> Connection</label>
         <input type="text" id="node-input-server">
     </div>
+    <div class="unifi-ultimate-section-title">Target</div>
     <div class="form-row">
         <label for="node-input-selectionMode"><i class="fa fa-crosshairs"></i> Search by</label>
         <select id="node-input-selectionMode">
@@ -725,6 +845,7 @@
         <label for="node-input-portIdx"><i class="fa fa-plug"></i> Port</label>
         <select id="node-input-portIdx"></select>
     </div>
+    <div class="unifi-ultimate-section-title">Action</div>
     <div class="form-row">
         <label for="node-input-action"><i class="fa fa-power-off"></i> Action</label>
         <select id="node-input-action">
@@ -737,6 +858,12 @@
         <div class="unifi-ultimate-card">
             <strong id="node-input-selectionSummary">Choose a switch and a port.</strong>
             <div id="node-input-selectionDetail">This node sends a port action request to UniFi Network.</div>
+        </div>
+    </div>
+    <div class="form-row">
+        <div class="unifi-ultimate-card unifi-ultimate-warning">
+            <strong>Power actions can disconnect devices.</strong>
+            <div>Use Disable or Power Cycle only when you are sure the selected port is correct.</div>
         </div>
     </div>
     <div id="node-row-advanced" class="unifi-ultimate-advanced">

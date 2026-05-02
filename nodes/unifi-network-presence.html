@@ -1,11 +1,57 @@
 <style>
+    .unifi-ultimate-hero {
+        margin: 0 0 14px 0;
+    }
+
+    .unifi-ultimate-hero-panel {
+        padding: 14px 16px;
+        border: 1px solid #d9e7f5;
+        border-radius: 14px;
+        background: linear-gradient(135deg, #eef7ff 0%, #f8fbff 58%, #f7fafc 100%);
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+        color: #334155;
+    }
+
+    .unifi-ultimate-eyebrow {
+        margin-bottom: 4px;
+        color: #2563eb;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+    }
+
+    .unifi-ultimate-hero-panel strong {
+        display: block;
+        color: #0f172a;
+        font-size: 15px;
+        line-height: 1.35;
+    }
+
+    .unifi-ultimate-hero-panel span {
+        display: block;
+        margin-top: 4px;
+        line-height: 1.45;
+    }
+
+    .unifi-ultimate-section-title {
+        margin: 14px 0 8px 150px;
+        color: #64748b;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+    }
+
     .unifi-ultimate-card {
         margin-left: 150px;
-        padding: 12px 14px;
-        border-radius: 12px;
-        background: #f5f7fa;
+        padding: 13px 15px;
+        border: 1px solid #e2e8f0;
+        border-radius: 14px;
+        background: #f8fafc;
         color: #334155;
         line-height: 1.45;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
     }
 
     .unifi-ultimate-card strong {
@@ -16,9 +62,13 @@
     }
 
     .unifi-ultimate-advanced {
-        margin-top: 4px;
-        padding-top: 4px;
+        margin-top: 14px;
+        padding-top: 10px;
         border-top: 1px solid #e5e7eb;
+    }
+
+    .unifi-ultimate-offline-option {
+        color: #94a3b8 !important;
     }
 
 </style>
@@ -172,6 +222,7 @@
                     return {
                         value: optionValue,
                         text: optionText,
+                        isOffline: $option.attr("data-offline") === "true",
                         isPlaceholder: optionValue === "",
                         searchable: [
                             optionText,
@@ -232,7 +283,8 @@
                                 return {
                                     label: option.text,
                                     value: option.text,
-                                    optionValue: option.value
+                                    optionValue: option.value,
+                                    offline: option.isOffline
                                 };
                             });
 
@@ -283,6 +335,18 @@
                     }
                 });
 
+                const autocompleteInstance = $searchInput.autocomplete("instance");
+                if (autocompleteInstance) {
+                    autocompleteInstance._renderItem = function (ul, item) {
+                        const $entry = $("<li>");
+                        const $content = $("<div>").text(item.label);
+                        if (item.offline) {
+                            $content.addClass("unifi-ultimate-offline-option");
+                        }
+                        return $entry.append($content).appendTo(ul);
+                    };
+                }
+
                 $searchInput.on("keyup.unifiSearchable", function () {
                     filterOnKeyUpOnly = true;
                     $(this).autocomplete("search", $(this).val());
@@ -296,6 +360,7 @@
                 });
 
                 syncInputFromSelect();
+                $searchInput.prop("disabled", false);
                 $select.data("unifi-searchable", true);
                 $select.data("unifi-options-count", options.length);
             }
@@ -342,13 +407,22 @@
                     $clientId.append($("<option></option>").val("").text("Choose a client"));
 
                     (items || []).forEach(function (item) {
-                        const stateSuffix = item.state ? " [" + item.state + "]" : "";
-                        $clientId.append(
-                            $("<option></option>")
-                                .val(item.id)
-                                .text((item.name || item.id) + stateSuffix)
-                                .attr("data-client-name", item.name || item.id)
-                        );
+                        const isOffline = item.offline === true
+                            || item.isOnline === false
+                            || item.online === false
+                            || String(item.state || "").toLowerCase() === "offline";
+                        const stateSuffix = isOffline
+                            ? (/\(offline\)/i.test(String(item.name || item.id || "")) ? "" : " (OffLine)")
+                            : (item.state ? " [" + item.state + "]" : "");
+                        const $option = $("<option></option>")
+                            .val(item.id)
+                            .text((item.name || item.id) + stateSuffix)
+                            .attr("data-client-name", item.name || item.id)
+                            .attr("data-offline", isOffline ? "true" : "false");
+                        if (isOffline) {
+                            $option.css("color", "#94a3b8");
+                        }
+                        $clientId.append($option);
                     });
 
                     if (currentValue && $clientId.find("option[value='" + currentValue + "']").length > 0) {
@@ -365,16 +439,40 @@
                 refreshSummary();
             }
 
+            function renderClientsLoading() {
+                suspendChangeHandling = true;
+                try {
+                    $clientId.empty();
+                    $clientId.append(
+                        $("<option></option>")
+                            .val("")
+                            .text("Loading clients, please wait...")
+                    );
+                    $clientId.val("");
+                } finally {
+                    suspendChangeHandling = false;
+                }
+
+                makeSelectSearchable($clientId, "Loading clients, please wait...");
+                $("#node-input-clientId-search")
+                    .val("Loading clients, please wait...")
+                    .prop("disabled", true);
+                $selectionSummary.text("Loading clients...");
+                $selectionDetail.text("Please wait while UniFi returns the client list.");
+            }
+
             function loadClients() {
                 const serverId = String($server.val() || "").trim();
                 if (!serverId || serverId === "_ADD_") {
                     renderClients([]);
+                    $refresh.find("i").removeClass("fa-spin");
                     return Promise.resolve();
                 }
 
                 // Client availability depends on the selected controller, so
                 // reload the list whenever the connection changes.
-                $refresh.addClass("fa-spin");
+                $refresh.find("i").addClass("fa-spin");
+                renderClientsLoading();
                 return requestJson("unifiNetwork/devices?serverId=" + encodeURIComponent(serverId) + "&deviceType=client")
                     .then(function (data) {
                         renderClients(Array.isArray(data) ? data : []);
@@ -385,7 +483,7 @@
                         RED.notify(errorText, "error");
                     })
                     .finally(function () {
-                        $refresh.removeClass("fa-spin");
+                        $refresh.find("i").removeClass("fa-spin");
                     });
             }
 
@@ -417,16 +515,26 @@
             ensureDefaultServerSelection();
             makeSelectSearchable($clientId, "Search clients");
             refreshSummary();
+            $refresh.find("i").addClass("fa-spin");
             loadClients();
         }
     });
 </script>
 
 <script type="text/html" data-template-name="unifi-network-presence">
+    <div class="form-row unifi-ultimate-hero">
+        <div class="unifi-ultimate-hero-panel">
+            <div class="unifi-ultimate-eyebrow">UniFi Network Presence</div>
+            <strong>Track one client with stable true/false output.</strong>
+            <span>Hysteresis avoids noisy online/offline transitions when Wi-Fi clients roam.</span>
+        </div>
+    </div>
+    <div class="unifi-ultimate-section-title">Connection</div>
     <div class="form-row">
         <label for="node-input-server"><i class="fa fa-cog"></i> Connection</label>
         <input type="text" id="node-input-server">
     </div>
+    <div class="unifi-ultimate-section-title">Client</div>
     <div class="form-row">
         <label for="node-input-clientId"><i class="fa fa-wifi"></i> Client</label>
         <select id="node-input-clientId" style="width:70%;"></select>

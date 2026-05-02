@@ -532,13 +532,33 @@ function summarizeDevice(deviceType, device) {
         };
     }
 
+    const isOffline = item.offline === true
+        || item.isOnline === false
+        || item.online === false
+        || item.connected === false
+        || item.isConnected === false
+        || item.connectionState === "DISCONNECTED"
+        || item.connectionState === "disconnected"
+        || item.status === "OFFLINE"
+        || item.status === "offline"
+        || String(item.state || "").trim().toLowerCase() === "offline";
+    const clientName = String(item.hostname || item.name || item.displayName || item.macAddress || resourceId || "Client");
+    const displayName = isOffline && !/\(offline\)/i.test(clientName)
+        ? `${clientName} (OffLine)`
+        : clientName;
+
     return {
         id: scopedId,
-        name: String(item.hostname || item.name || item.displayName || item.macAddress || resourceId || "Client"),
-        state: String(item.ipAddress || item.network || item.type || "").trim(),
+        name: displayName,
+        state: isOffline
+            ? "offline"
+            : String(item.ipAddress || item.network || item.type || item.state || "").trim(),
         siteId,
         siteName,
         resourceId,
+        isOnline: !isOffline,
+        online: !isOffline,
+        offline: isOffline,
         raw: item
     };
 }

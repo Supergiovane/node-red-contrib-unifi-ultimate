@@ -1,11 +1,57 @@
 <style>
+    .unifi-ultimate-hero {
+        margin: 0 0 14px 0;
+    }
+
+    .unifi-ultimate-hero-panel {
+        padding: 14px 16px;
+        border: 1px solid #d9e7f5;
+        border-radius: 14px;
+        background: linear-gradient(135deg, #eef7ff 0%, #f8fbff 58%, #f7fafc 100%);
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+        color: #334155;
+    }
+
+    .unifi-ultimate-eyebrow {
+        margin-bottom: 4px;
+        color: #2563eb;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+    }
+
+    .unifi-ultimate-hero-panel strong {
+        display: block;
+        color: #0f172a;
+        font-size: 15px;
+        line-height: 1.35;
+    }
+
+    .unifi-ultimate-hero-panel span {
+        display: block;
+        margin-top: 4px;
+        line-height: 1.45;
+    }
+
+    .unifi-ultimate-section-title {
+        margin: 14px 0 8px 150px;
+        color: #64748b;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+    }
+
     .unifi-ultimate-card {
         margin-left: 150px;
-        padding: 12px 14px;
-        border-radius: 12px;
-        background: #f5f7fa;
+        padding: 13px 15px;
+        border: 1px solid #e2e8f0;
+        border-radius: 14px;
+        background: #f8fafc;
         color: #334155;
         line-height: 1.45;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
     }
 
     .unifi-ultimate-card strong {
@@ -16,9 +62,13 @@
     }
 
     .unifi-ultimate-advanced {
-        margin-top: 4px;
-        padding-top: 4px;
+        margin-top: 14px;
+        padding-top: 10px;
         border-top: 1px solid #e5e7eb;
+    }
+
+    .unifi-ultimate-offline-option {
+        color: #94a3b8 !important;
     }
 
 </style>
@@ -271,6 +321,7 @@
                     return {
                         value: optionValue,
                         text: optionText,
+                        isOffline: $option.attr("data-offline") === "true",
                         isPlaceholder: optionValue === "",
                         searchable: [
                             optionText,
@@ -331,7 +382,8 @@
                                 return {
                                     label: option.text,
                                     value: option.text,
-                                    optionValue: option.value
+                                    optionValue: option.value,
+                                    offline: option.isOffline
                                 };
                             });
 
@@ -382,6 +434,18 @@
                     }
                 });
 
+                const autocompleteInstance = $searchInput.autocomplete("instance");
+                if (autocompleteInstance) {
+                    autocompleteInstance._renderItem = function (ul, item) {
+                        const $entry = $("<li>");
+                        const $content = $("<div>").text(item.label);
+                        if (item.offline) {
+                            $content.addClass("unifi-ultimate-offline-option");
+                        }
+                        return $entry.append($content).appendTo(ul);
+                    };
+                }
+
                 $searchInput.on("keyup.unifiSearchable", function () {
                     filterOnKeyUpOnly = true;
                     $(this).autocomplete("search", $(this).val());
@@ -395,6 +459,7 @@
                 });
 
                 syncInputFromSelect();
+                $searchInput.prop("disabled", false);
                 $select.data("unifi-searchable", true);
                 $select.data("unifi-options-count", options.length);
             }
@@ -797,15 +862,24 @@
 
                     items.forEach(function (item) {
                         const labelParts = [item.name || item.id];
-                        if (item.state) {
+                        const isOffline = item.offline === true
+                            || item.isOnline === false
+                            || item.online === false
+                            || String(item.state || "").toLowerCase() === "offline";
+                        if (isOffline && !/\(offline\)/i.test(String(labelParts[0] || ""))) {
+                            labelParts.push("(OffLine)");
+                        } else if (item.state) {
                             labelParts.push("[" + item.state + "]");
                         }
-                        $deviceId.append(
-                            $("<option></option>")
-                                .val(item.id)
-                                .text(labelParts.join(" "))
-                                .attr("data-device-name", item.name || item.id)
-                        );
+                        const $option = $("<option></option>")
+                            .val(item.id)
+                            .text(labelParts.join(" "))
+                            .attr("data-device-name", item.name || item.id)
+                            .attr("data-offline", isOffline ? "true" : "false");
+                        if (isOffline) {
+                            $option.css("color", "#94a3b8");
+                        }
+                        $deviceId.append($option);
                     });
 
                     if (currentValue && $deviceId.find("option[value='" + currentValue + "']").length > 0) {
@@ -818,6 +892,25 @@
                 makeSelectSearchable($deviceId, "Search items");
                 syncNameFromSelection();
                 refreshSelectionSummary();
+            }
+
+            function renderDevicesLoading(label) {
+                withSuppressedChanges(function () {
+                    $deviceId.empty();
+                    $deviceId.append(
+                        $("<option></option>")
+                            .val("")
+                            .text(label)
+                    );
+                    $deviceId.val("");
+                });
+
+                makeSelectSearchable($deviceId, label);
+                $("#node-input-deviceId-search")
+                    .val(label)
+                    .prop("disabled", true);
+                $selectionSummary.text(label);
+                $selectionDetail.text("Please wait while UniFi returns the list.");
             }
 
             function loadCapabilities() {
@@ -892,10 +985,14 @@
                 if (!serverId || serverId === "_ADD_" || !selectedType) {
                     renderDevices([]);
                     renderCapabilityOptions({ fields: [] }, { clearStoredConfig: false });
+                    $refresh.find("i").removeClass("fa-spin");
                     return Promise.resolve();
                 }
 
-                $refresh.addClass("fa-spin");
+                $refresh.find("i").addClass("fa-spin");
+                if (selectedType === "client") {
+                    renderDevicesLoading("Loading clients, please wait...");
+                }
                 return requestJson(
                     "unifiNetwork/devices?serverId=" + encodeURIComponent(serverId) + "&deviceType=" + encodeURIComponent(selectedType)
                 ).then(function (data) {
@@ -906,7 +1003,7 @@
                     const errorText = xhr && xhr.responseJSON && xhr.responseJSON.error ? xhr.responseJSON.error : "Unable to load devices";
                     RED.notify(errorText, "error");
                 }).finally(function () {
-                    $refresh.removeClass("fa-spin");
+                    $refresh.find("i").removeClass("fa-spin");
                 });
             }
 
@@ -943,6 +1040,7 @@
                     })
                     .finally(function () {
                         isInitializingEditor = false;
+                        $refresh.find("i").removeClass("fa-spin");
                     });
             }
 
@@ -1024,16 +1122,26 @@
 
             refreshSelectionSummary();
             ensureDefaultServerSelection();
+            $refresh.find("i").addClass("fa-spin");
             refreshEditor();
         }
     });
 </script>
 
 <script type="text/html" data-template-name="unifi-network-device">
+    <div class="form-row unifi-ultimate-hero">
+        <div class="unifi-ultimate-hero-panel">
+            <div class="unifi-ultimate-eyebrow">UniFi Network</div>
+            <strong>Choose a site, UniFi device, or client.</strong>
+            <span>The node shows only actions that make sense for the selected item.</span>
+        </div>
+    </div>
+    <div class="unifi-ultimate-section-title">Connection</div>
     <div class="form-row">
         <label for="node-input-server"><i class="fa fa-cog"></i> Connection</label>
         <input type="text" id="node-input-server">
     </div>
+    <div class="unifi-ultimate-section-title">Target</div>
     <div class="form-row">
         <label for="node-input-deviceType"><i class="fa fa-cubes"></i> Resource</label>
         <select id="node-input-deviceType"></select>
@@ -1045,6 +1153,7 @@
             <i class="fa fa-refresh"></i>
         </a>
     </div>
+    <div class="unifi-ultimate-section-title">Action</div>
     <div class="form-row">
         <label for="node-input-capability"><i class="fa fa-tasks"></i> Action</label>
         <select id="node-input-capability"></select>
