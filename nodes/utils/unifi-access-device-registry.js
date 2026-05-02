@@ -38,7 +38,7 @@ const TYPE_CAPABILITIES = {
         {
             id: "unlockDoor",
             label: "Unlock Door",
-            description: "Trigger a remote door unlock. You can still send msg.payload for actor_id, actor_name, or extra.",
+            description: "Trigger a remote door unlock.",
             method: "PUT",
             path: "/api/v1/developer/doors/:id/unlock",
             mode: "request"
@@ -164,7 +164,7 @@ const TYPE_CAPABILITIES = {
         {
             id: "updateAccessMethods",
             label: "Update Access Methods",
-            description: "Update access method settings using msg.payload.",
+            description: "Update access method settings using the configured node action.",
             method: "PUT",
             path: "/api/v1/developer/devices/:id/settings",
             mode: "request"
@@ -345,33 +345,25 @@ function buildCapabilityRequest(deviceType, capabilityId, deviceId, device) {
     };
 }
 
-function composeCapabilityExecution(deviceType, capabilityId, capabilityConfig, msg, device) {
+function composeCapabilityExecution(deviceType, capabilityId, capabilityConfig, device) {
     const capability = getCapabilityDefinition(deviceType, capabilityId, device);
     if (!capability) {
         throw new Error(`Unsupported capability '${capabilityId}' for device type '${deviceType}'.`);
     }
 
-    // requestComposer provides capability defaults; msg.query/msg.headers still
-    // merge in so advanced flows can customize individual requests.
+    // Input messages are triggers only. Execution data comes from the editor
+    // configuration and capability defaults.
     const normalizedConfig = normalizeObject(capabilityConfig);
     const composedRequest = typeof capability.requestComposer === "function"
         ? capability.requestComposer({
-            capabilityConfig: normalizedConfig,
-            msg
+            capabilityConfig: normalizedConfig
         }) || {}
         : {};
 
-    let payload = composedRequest.payload;
-    if (capability.useConfiguredPayload) {
-        payload = composedRequest.payload;
-    } else if (!capability.ignoreInputPayload) {
-        payload = msg.payload;
-    }
-
     return {
-        query: Object.assign({}, composedRequest.query, normalizeObject(msg.query)),
-        headers: normalizeObject(msg.headers),
-        payload
+        query: normalizeObject(composedRequest.query),
+        headers: normalizeObject(composedRequest.headers),
+        payload: composedRequest.payload
     };
 }
 

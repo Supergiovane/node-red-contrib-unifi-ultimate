@@ -9,21 +9,19 @@ const {
     resolveObservableEventValue
 } = require("./utils/unifi-protect-device-registry");
 
-function resolveDeviceType(configuredDeviceType, msg) {
-    return String(msg.deviceType || configuredDeviceType || "").trim();
+function resolveDeviceType(configuredDeviceType) {
+    return String(configuredDeviceType || "").trim();
 }
 
-function resolveDeviceId(configuredDeviceId, msg) {
-    return String(msg.deviceId || msg.resourceId || configuredDeviceId || "").trim();
+function resolveDeviceId(configuredDeviceId) {
+    return String(configuredDeviceId || "").trim();
 }
 
-function resolveCapabilityId(configuredCapabilityId, msg) {
-    return String(msg.capability || configuredCapabilityId || "observe").trim();
+function resolveCapabilityId(configuredCapabilityId) {
+    return String(configuredCapabilityId || "observe").trim();
 }
 
 function parseCapabilityConfig(value) {
-    // Capability options are persisted as JSON in the editor, but runtime
-    // messages may already provide a parsed object.
     if (value && typeof value === "object" && !Array.isArray(value)) {
         return value;
     }
@@ -42,11 +40,7 @@ function parseCapabilityConfig(value) {
     }
 }
 
-function resolveCapabilityConfig(configuredCapabilityConfig, msg) {
-    if (msg && msg.capabilityConfig && typeof msg.capabilityConfig === "object" && !Array.isArray(msg.capabilityConfig)) {
-        return msg.capabilityConfig;
-    }
-
+function resolveCapabilityConfig(configuredCapabilityConfig) {
     return parseCapabilityConfig(configuredCapabilityConfig);
 }
 
@@ -142,17 +136,17 @@ module.exports = function(RED) {
             sendOutputs(send, stateMsg, null);
         }
 
-        async function invokeCapability(msg, send) {
+        async function invokeCapability(send) {
             if (!node.server) {
                 throw new Error("Unifi Protect configuration is missing.");
             }
 
-            // Merge editor configuration with runtime overrides so one node can
-            // drive multiple devices when required by the flow.
-            const deviceType = resolveDeviceType(node.deviceType, msg);
-            const deviceId = resolveDeviceId(node.deviceId, msg);
-            const capabilityId = resolveCapabilityId(node.capability, msg);
-            const capabilityConfig = resolveCapabilityConfig(node.capabilityConfig, msg);
+            // The incoming message is only a trigger. The node always uses the
+            // device, capability and options configured in the editor.
+            const deviceType = resolveDeviceType(node.deviceType);
+            const deviceId = resolveDeviceId(node.deviceId);
+            const capabilityId = resolveCapabilityId(node.capability);
+            const capabilityConfig = resolveCapabilityConfig(node.capabilityConfig);
             let selectedDevice = node.currentDevice;
             if (!getDeviceTypeDefinition(deviceType)) {
                 throw new Error(`Unsupported device type: ${deviceType || "(empty)"}`);
@@ -176,7 +170,7 @@ module.exports = function(RED) {
                 return;
             }
 
-            const execution = composeCapabilityExecution(deviceType, capabilityId, capabilityConfig, msg, selectedDevice);
+            const execution = composeCapabilityExecution(deviceType, capabilityId, capabilityConfig, selectedDevice);
             const request = buildCapabilityRequest(deviceType, capabilityId, deviceId, execution.params, selectedDevice);
 
             node.status({ fill: "blue", shape: "dot", text: `${capability.label}` });
@@ -199,7 +193,7 @@ module.exports = function(RED) {
                 node.currentDevice = response.payload;
             }
 
-            const stateMsg = RED.util.cloneMessage(msg);
+            const stateMsg = {};
             stateMsg.payload = response.payload;
             stateMsg.statusCode = response.statusCode;
             stateMsg.headers = response.headers;
@@ -238,13 +232,13 @@ module.exports = function(RED) {
             });
         }
 
-        node.on("input", async function(msg, send, done) {
+        node.on("input", async function(_msg, send, done) {
             send = send || function() {
                 node.send.apply(node, arguments);
             };
 
             try {
-                await invokeCapability(msg, send);
+                await invokeCapability(send);
                 if (typeof done === "function") {
                     done();
                 }
@@ -253,7 +247,7 @@ module.exports = function(RED) {
                 if (typeof done === "function") {
                     done(error);
                 } else {
-                    node.error(error, msg);
+                    node.error(error);
                 }
             }
         });

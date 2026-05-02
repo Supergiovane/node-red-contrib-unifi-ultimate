@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.5
+
+- BREAKING CHANGE: runtime nodes no longer read or apply input message properties to override the configured target, action, payload, query, headers, parameters, or capability options. Incoming messages now only trigger the action configured in the node editor.
+- improved editor usability with searchable device/client selectors and automatic node `Name` updates when selecting an item
+- updated UniFi Network PoE handling, including client-based targeting and switch/port resolution where UniFi exposes attachment data
+- enriched UniFi Network port selectors with connected client names when available
+- added registry discovery scripts and report suggestions for maintainers
+- refreshed README and node help text to reflect the current user-facing behavior
+
 ## 0.1.4
 
 - fixed ring handling for UniFi Access doorbell trigger/cancel

@@ -21,22 +21,7 @@ function parseNonNegativeSeconds(value, fallbackValue) {
     return Math.max(0, Math.trunc(numeric));
 }
 
-function resolveClientId(configuredClientId, msg) {
-    // Accept both explicit clientId and the generic device/site/resource
-    // overrides used by the other Network nodes.
-    if (msg && (msg.clientId || msg.deviceId || msg.resourceId || msg.siteId)) {
-        const direct = String(msg.clientId || msg.deviceId || "").trim();
-        if (direct) {
-            return direct;
-        }
-
-        const siteId = String(msg.siteId || "").trim();
-        const resourceId = String(msg.resourceId || "").trim();
-        if (siteId && resourceId) {
-            return `${siteId}::${resourceId}`;
-        }
-    }
-
+function resolveClientId(configuredClientId) {
     return String(configuredClientId || "").trim();
 }
 
@@ -107,7 +92,7 @@ module.exports = function(RED) {
         function emitPresence(present, clientId, source, reason, raw) {
             // Emit a normalized boolean payload while still exposing the last
             // known UniFi client object for richer downstream logic.
-            const msg = {
+            const outputMsg = {
                 payload: present,
                 present,
                 client: node.lastKnownClient,
@@ -117,10 +102,10 @@ module.exports = function(RED) {
             };
 
             if (raw !== undefined) {
-                msg.raw = raw;
+                outputMsg.raw = raw;
             }
 
-            node.send(msg);
+            node.send(outputMsg);
         }
 
         function setPresent(clientId, source, raw) {
@@ -196,14 +181,14 @@ module.exports = function(RED) {
             setPresent(clientId, source, raw);
         }
 
-        async function checkPresence(source, inputMsg) {
+        async function checkPresence(source) {
             if (!node.server) {
                 throw new Error("Unifi Network configuration is missing.");
             }
 
-            // Manual input can override the configured client, which makes the
-            // node reusable in advanced flows if needed.
-            const clientId = resolveClientId(node.clientId, inputMsg || {});
+            // The incoming message is only a trigger. Presence is always checked
+            // for the client configured in the editor.
+            const clientId = resolveClientId(node.clientId);
             if (!clientId) {
                 node.status({ fill: "red", shape: "ring", text: "set client" });
                 return;
@@ -280,13 +265,13 @@ module.exports = function(RED) {
             }, node.pollIntervalSeconds * 1000);
         }
 
-        node.on("input", async function(msg, send, done) {
+        node.on("input", async function(_msg, send, done) {
             send = send || function() {
                 node.send.apply(node, arguments);
             };
 
             try {
-                await checkPresence("manual-input", msg);
+                await checkPresence("manual-input");
                 if (typeof done === "function") {
                     done();
                 }
@@ -294,7 +279,7 @@ module.exports = function(RED) {
                 if (typeof done === "function") {
                     done(error);
                 } else {
-                    node.error(error, msg);
+                    node.error(error);
                 }
             }
         });

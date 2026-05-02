@@ -85,7 +85,7 @@ const COMMON_CAPABILITIES = [
     {
         id: "patchSettings",
         label: "Send Raw Update",
-        description: "PATCH the selected device using msg.payload.",
+        description: "PATCH the selected device using the configured node action.",
         method: "PATCH",
         pathKind: "detail",
         mode: "request"
@@ -272,7 +272,7 @@ const TYPE_CAPABILITIES = {
         {
             id: "createRtspsStreams",
             label: "Create RTSPS Stream",
-            description: "Create RTSPS streams using msg.payload.",
+            description: "Create RTSPS streams using the configured node action.",
             method: "POST",
             path: "/v1/cameras/:id/rtsps-stream",
             mode: "request"
@@ -280,7 +280,7 @@ const TYPE_CAPABILITIES = {
         {
             id: "deleteRtspsStreams",
             label: "Delete RTSPS Stream",
-            description: "Delete RTSPS streams using msg.payload or msg.query.",
+            description: "Delete RTSPS streams using the configured node action.",
             method: "DELETE",
             path: "/v1/cameras/:id/rtsps-stream",
             mode: "request"
@@ -288,7 +288,7 @@ const TYPE_CAPABILITIES = {
         {
             id: "createTalkbackSession",
             label: "Start Talkback Session",
-            description: "Create a talkback session using msg.payload.",
+            description: "Create a talkback session using the configured node action.",
             method: "POST",
             path: "/v1/cameras/:id/talkback-session",
             mode: "request"
@@ -552,39 +552,35 @@ function buildCapabilityRequest(deviceType, capabilityId, deviceId, params, devi
     };
 }
 
-function composeCapabilityExecution(deviceType, capabilityId, capabilityConfig, msg, device) {
+function composeCapabilityExecution(deviceType, capabilityId, capabilityConfig, device) {
     const capability = getCapabilityDefinition(deviceType, capabilityId, device);
     if (!capability) {
         throw new Error(`Unsupported capability '${capabilityId}' for device type '${deviceType}'.`);
     }
 
-    // If a capability has no custom composer, the runtime forwards msg params,
-    // query, headers and payload as-is.
+    // Input messages are triggers only. Execution data comes from the editor
+    // configuration and capability defaults.
     if (typeof capability.requestComposer !== "function") {
         return {
-            params: normalizeObject(msg && msg.params),
-            query: normalizeObject(msg && msg.query),
-            headers: normalizeObject(msg && msg.headers),
-            payload: msg ? msg.payload : undefined
+            params: {},
+            query: {},
+            headers: {},
+            payload: undefined
         };
     }
 
     const composedRequest = capability.requestComposer({
-        capabilityConfig: normalizeObject(capabilityConfig),
-        msg: msg || {}
+        capabilityConfig: normalizeObject(capabilityConfig)
     }) || {};
 
     const params = {
-        ...normalizeObject(composedRequest.params),
-        ...normalizeObject(msg && msg.params)
+        ...normalizeObject(composedRequest.params)
     };
     const query = {
-        ...normalizeObject(composedRequest.query),
-        ...normalizeObject(msg && msg.query)
+        ...normalizeObject(composedRequest.query)
     };
     const headers = {
-        ...normalizeObject(composedRequest.headers),
-        ...normalizeObject(msg && msg.headers)
+        ...normalizeObject(composedRequest.headers)
     };
 
     let payload;
@@ -596,8 +592,6 @@ function composeCapabilityExecution(deviceType, capabilityId, capabilityConfig, 
         payload = Object.prototype.hasOwnProperty.call(composedRequest, "payload")
             ? composedRequest.payload
             : undefined;
-    } else if (Object.prototype.hasOwnProperty.call(msg || {}, "payload")) {
-        payload = msg.payload;
     } else if (Object.prototype.hasOwnProperty.call(composedRequest, "payload")) {
         payload = composedRequest.payload;
     }

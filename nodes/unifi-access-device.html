@@ -101,7 +101,6 @@
             const $refresh = $("#node-input-refreshDevices");
             const $selectionSummary = $("#node-input-selectionSummary");
             const $selectionDetail = $("#node-input-selectionDetail");
-            let lastAutoName = "";
             let capabilityConfig = parseCapabilityConfig(node.capabilityConfig);
             let capabilityListRequestId = 0;
             let capabilityOptionsRequestId = 0;
@@ -224,26 +223,179 @@
                 if (!$select || $select.length === 0) {
                     return;
                 }
-                // Searchable selects are disabled now, but this still removes any
-                // cached helper input left by older editor versions.
                 const selectId = String($select.attr("id") || "").trim();
-                if (selectId) {
-                    const $searchInput = $("#" + selectId + "-search");
-                    if ($searchInput.length > 0) {
-                        try {
-                            if ($searchInput.data("ui-autocomplete")) {
-                                $searchInput.autocomplete("destroy");
-                            }
-                        } catch (error) {
-                        }
-                        $searchInput.remove();
-                    }
+                if (!selectId) {
+                    return;
                 }
 
+                const searchId = selectId + "-search";
                 $select.off(".unifiSearchable");
                 $select.removeData("unifi-searchable");
                 $select.removeData("unifi-options-count");
                 $select.show();
+
+                if ($select.is("select[multiple]")) {
+                    return;
+                }
+
+                const $existingSearchInput = $("#" + searchId);
+                if ($existingSearchInput.length > 0) {
+                    try {
+                        if ($existingSearchInput.data("ui-autocomplete")) {
+                            $existingSearchInput.autocomplete("destroy");
+                        }
+                    } catch (error) {
+                    }
+                    $existingSearchInput.off(".unifiSearchable");
+                    $existingSearchInput.remove();
+                }
+
+                const $searchInput = $("<input>")
+                    .attr("id", searchId)
+                    .attr("type", "search")
+                    .attr("autocomplete", "off")
+                    .attr("placeholder", String(placeholder || "Search"))
+                    .addClass("red-ui-input")
+                    .css({
+                        width: $select.css("width") || "100%",
+                        marginBottom: "6px"
+                    });
+                $select.before($searchInput);
+                $select.hide();
+
+                const options = $select.find("option").map(function () {
+                    const $option = $(this);
+                    const optionValue = String($option.val() || "").trim();
+                    const optionText = String($option.text() || "").trim();
+                    return {
+                        value: optionValue,
+                        text: optionText,
+                        isPlaceholder: optionValue === "",
+                        searchable: [
+                            optionText,
+                            String($option.attr("data-device-name") || "").trim(),
+                            String($option.attr("data-client-name") || "").trim(),
+                            optionValue
+                        ].filter(Boolean).join(" ").toLowerCase()
+                    };
+                }).get();
+
+                function findOptionByValue(value) {
+                    return options.find(function (option) {
+                        return String(option.value) === String(value || "").trim();
+                    });
+                }
+
+                function syncInputFromSelect() {
+                    const selectedValue = String($select.val() || "").trim();
+                    const selected = findOptionByValue(selectedValue);
+                    if (selected && !selected.isPlaceholder) {
+                        $searchInput.val(selected.text);
+                    } else {
+                        $searchInput.val("");
+                    }
+                }
+
+                function setSelectedValue(value, triggerChange) {
+                    const selected = findOptionByValue(value);
+                    if (selected) {
+                        $select.val(selected.value);
+                    } else {
+                        $select.val("");
+                    }
+                    syncInputFromSelect();
+                    if (triggerChange) {
+                        $select.trigger("change");
+                    }
+                }
+
+                let filterOnKeyUpOnly = false;
+                $searchInput.autocomplete({
+                    minLength: 0,
+                    source: function (request, response) {
+                        const term = filterOnKeyUpOnly
+                            ? String(request && request.term || "").trim().toLowerCase()
+                            : "";
+                        const items = options
+                            .filter(function (option) {
+                                if (option.isPlaceholder) {
+                                    return false;
+                                }
+                                if (!term) {
+                                    return true;
+                                }
+                                return option.searchable.indexOf(term) !== -1;
+                            })
+                            .map(function (option) {
+                                return {
+                                    label: option.text,
+                                    value: option.text,
+                                    optionValue: option.value
+                                };
+                            });
+
+                        if (items.length === 0) {
+                            response([{
+                                label: "No results",
+                                value: "",
+                                optionValue: "",
+                                noSelection: true
+                            }]);
+                            return;
+                        }
+
+                        response(items);
+                    },
+                    select: function (event, ui) {
+                        if (ui.item && ui.item.noSelection) {
+                            event.preventDefault();
+                            return false;
+                        }
+                        if (ui.item) {
+                            setSelectedValue(ui.item.optionValue, true);
+                        }
+                        return true;
+                    },
+                    change: function (event, ui) {
+                        if (ui.item) {
+                            return;
+                        }
+                        const typed = String($searchInput.val() || "").trim().toLowerCase();
+                        if (!typed) {
+                            setSelectedValue("", true);
+                            return;
+                        }
+
+                        const exactMatch = options.find(function (option) {
+                            if (option.isPlaceholder) {
+                                return false;
+                            }
+                            return option.text.toLowerCase() === typed || option.value.toLowerCase() === typed;
+                        });
+
+                        if (exactMatch) {
+                            setSelectedValue(exactMatch.value, true);
+                        } else {
+                            syncInputFromSelect();
+                        }
+                    }
+                });
+
+                $searchInput.on("keyup.unifiSearchable", function () {
+                    filterOnKeyUpOnly = true;
+                    $(this).autocomplete("search", $(this).val());
+                });
+                $searchInput.on("mouseup.unifiSearchable", function () {
+                    const $input = $(this);
+                    filterOnKeyUpOnly = false;
+                    setTimeout(function () {
+                        $input.autocomplete("search", "");
+                    }, 0);
+                });
+
+                syncInputFromSelect();
+                $select.data("unifi-searchable", true);
+                $select.data("unifi-options-count", options.length);
             }
 
             function syncCapabilityConfigFromInputs() {
@@ -365,15 +517,12 @@
 
             function syncNameFromSelection() {
                 const selectedDeviceName = getSelectedDeviceName();
-                const currentName = String($name.val() || "").trim();
-                const shouldUpdate = currentName === "" || currentName === lastAutoName;
 
-                if (!selectedDeviceName || !shouldUpdate) {
+                if (!selectedDeviceName) {
                     return;
                 }
 
                 $name.val(selectedDeviceName);
-                lastAutoName = selectedDeviceName;
             }
 
             function renderDeviceTypes(items) {
@@ -397,7 +546,6 @@
                         $deviceType.val("");
                     }
                 });
-                makeSelectSearchable($deviceType, "Search controls");
                 refreshSelectionSummary();
             }
 
@@ -421,7 +569,6 @@
                         $capability.val("observe");
                     }
                 });
-                makeSelectSearchable($capability, "Search actions");
                 refreshSelectionSummary();
             }
 
@@ -627,9 +774,6 @@
                     }
 
                     $capabilityConfigContainer.append($wrapper);
-                    if (field.type === "select") {
-                        makeSelectSearchable($input, "Search options");
-                    }
                 });
 
                 writeCapabilityConfig();
@@ -831,9 +975,7 @@
             }
 
             writeCapabilityConfig();
-            makeSelectSearchable($deviceType, "Search controls");
             makeSelectSearchable($deviceId, "Search devices");
-            makeSelectSearchable($capability, "Search actions");
 
             $server.on("change", function () {
                 if (suspendChangeHandling || isInitializingEditor) {
@@ -911,8 +1053,8 @@
     </div>
     <div id="node-row-advanced" class="unifi-ultimate-advanced">
         <div class="form-row">
-            <label for="node-input-name"><i class="fa fa-tag"></i> Label</label>
-            <input type="text" id="node-input-name" placeholder="Optional custom label">
+            <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+            <input type="text" id="node-input-name" placeholder="Node name">
         </div>
         <div class="form-row">
             <label for="node-input-timeout"><i class="fa fa-clock-o"></i> Timeout</label>
@@ -922,28 +1064,28 @@
 </script>
 
 <script type="text/html" data-help-name="unifi-access-device">
-    <p>Use this node to control a UniFi Access item or listen for its live events.</p>
+    <p>Use this node to execute a configured UniFi Access action or listen for live Access events.</p>
 
     <h3>Configuration</h3>
     <p><b>Connection</b> selects the shared UniFi Access config node.</p>
-    <p><b>Control</b> chooses the Access category. <b>Device</b> chooses the specific door or Access device. <b>Action</b> only shows actions supported by that item.</p>
+    <p><b>Control</b> chooses the Access category. <b>Device</b> chooses the specific door or Access device. Device selectors are searchable and open with the complete list before filtering.</p>
+    <p><b>Action</b> only shows actions supported by the selected item.</p>
     <p><b>Action options</b> appears only when the selected action needs extra input, such as a temporary lock rule or a room name for doorbell actions.</p>
     <p>For <code>Set Temporary Lock Rule</code>, choose <code>Custom Duration</code> to reveal the minutes field. Legacy <code>ended_time</code> is still available only as fallback compatibility.</p>
     <p><code>Receive Events</code> fetches the current state once and then listens to the official UniFi Access notifications WebSocket.</p>
     <p><code>Trigger Doorbell</code> and <code>Cancel Doorbell</code> use a manual <code>Room Name</code> field when needed. The node does not currently discover Intercom directory names automatically.</p>
     <p><code>Cancel Doorbell</code> uses a shared safe-cancel guard in the UniFi Access config node with a 3 minute tracking window. Tracking is updated by websocket events and a fallback system-log poller.</p>
-    <p><b>Label</b> is optional and only changes how the node is shown in the editor. <b>Timeout</b> controls the request timeout in milliseconds for direct API calls.</p>
+    <p><b>Name</b> is the node name shown in the editor and is updated automatically when you select a different item. <b>Timeout</b> controls the request timeout in milliseconds for direct API calls.</p>
 
     <h3>Input</h3>
     <ul>
-        <li><code>msg.deviceType</code>, <code>msg.deviceId</code>, and <code>msg.capability</code> for runtime overrides</li>
-        <li><code>msg.capabilityConfig</code> for runtime overrides of the options selected in the editor</li>
-        <li><code>msg.query</code>, <code>msg.headers</code>, and <code>msg.payload</code> for the HTTP request</li>
+        <li>Any incoming message triggers the configured action.</li>
+        <li>Input message properties are ignored by this node.</li>
     </ul>
 
     <h3>Output</h3>
     <ul>
-        <li>Output 1: current state or primary capability response</li>
+        <li>Output 1 emits a new message containing the current state or primary capability response.</li>
         <li>Output 2: Access notification events related to the selected item</li>
         <li><code>msg.unifiAccess</code>: standardized metadata for the device and selected capability</li>
         <li>Safe-cancel skip: <code>msg.payload.skipped = true</code> when <code>Cancel Doorbell</code> is blocked because no active ring is currently tracked</li>

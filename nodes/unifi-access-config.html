@@ -107,16 +107,21 @@
     </div>
     <div id="node-config-row-advanced" class="unifi-ultimate-advanced">
         <div class="form-row">
-            <label for="node-config-input-name"><i class="fa fa-tag"></i> Label</label>
-            <input type="text" id="node-config-input-name" placeholder="Optional custom label">
+            <label for="node-config-input-name"><i class="fa fa-tag"></i> Name</label>
+            <input type="text" id="node-config-input-name" placeholder="Node name">
         </div>
     </div>
 </script>
 
 <script type="text/html" data-help-name="unifi-access-config">
-    <p>Connects the node to your UniFi Access controller.</p>
+    <p>Shared connection for UniFi Access nodes.</p>
+
+    <h3>Configuration</h3>
     <p><b>Controller</b> accepts the UniFi Access host or <code>host:port</code>. If you omit the port, the node uses the default UniFi Access port automatically.</p>
     <p><b>API Token</b> is the bearer token used for authentication.</p>
     <p><b>Security</b> controls certificate verification. Disable it only when your controller uses a self-signed certificate.</p>
-    <p><b>Label</b> is optional and only changes how the config node is shown in the editor.</p>
+    <p><b>Name</b> is the config node name shown in the editor.</p>
+
+    <h3>Usage</h3>
+    <p>This config node is used by UniFi Access Device nodes for API requests and live notification events.</p>
 </script>

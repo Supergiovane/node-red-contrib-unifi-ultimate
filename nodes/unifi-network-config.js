@@ -10,6 +10,7 @@ const {
     normalizeNetworkCollection
 } = require("./utils/unifi-network-utils");
 const {
+    encodeScopedDeviceId,
     getCapabilitiesForType,
     getCapabilityOptions,
     getDeviceTypeDefinition,
@@ -55,6 +56,43 @@ module.exports = function(RED) {
             const queryString = buildQueryString(query);
             const normalizedPath = String(path || "").startsWith("/") ? String(path || "") : `/${String(path || "")}`;
             const requestUrl = new URL(`${node.baseUrl}${normalizedPath}${queryString}`);
+            const requestMethod = String(method || "GET").toUpperCase();
+            const requestHeaders = buildRequestHeaders(API_KEY_HEADER, apiKey, headers);
+            const requestBody = buildRequestBody(requestHeaders, requestMethod, payload);
+
+            return doRequest(
+                requestUrl,
+                {
+                    method: requestMethod,
+                    headers: requestHeaders,
+                    timeout,
+                    rejectUnauthorized: node.rejectUnauthorized
+                },
+                requestBody
+            );
+        };
+
+        node.legacyApiRequest = async ({
+            path,
+            method = "GET",
+            query,
+            headers,
+            payload,
+            timeout = 15000
+        }) => {
+            if (!node.baseUrl) {
+                throw new Error("The configured host is empty or invalid.");
+            }
+
+            const apiKey = node.getApiKey();
+            if (!apiKey) {
+                throw new Error("The UniFi Network API key is missing.");
+            }
+
+            const queryString = buildQueryString(query);
+            const normalizedPath = String(path || "").startsWith("/") ? String(path || "") : `/${String(path || "")}`;
+            const legacyBaseUrl = node.baseUrl.replace(/\/integration\/?$/, "");
+            const requestUrl = new URL(`${legacyBaseUrl}${normalizedPath}${queryString}`);
             const requestMethod = String(method || "GET").toUpperCase();
             const requestHeaders = buildRequestHeaders(API_KEY_HEADER, apiKey, headers);
             const requestBody = buildRequestBody(requestHeaders, requestMethod, payload);
@@ -258,7 +296,8 @@ module.exports = function(RED) {
                 device: selectedDevice,
                 capabilityConfig,
                 fetchDevices: node.fetchDevices,
-                fetchDevice: node.fetchDeviceByTypeAndId
+                fetchDevice: node.fetchDeviceByTypeAndId,
+                fetchDevicePorts: node.fetchDevicePorts
             });
         };
 
@@ -304,16 +343,856 @@ module.exports = function(RED) {
                             ? "on"
                             : poeEnabled === false
                                 ? "off"
-                                : ""
+                                : "",
+                        connectedClientNames: extractPortClientNamesFromRawPort(normalized)
                     };
                 })
                 .filter((port) => Number.isInteger(port.idx) && port.idx >= 0)
                 .sort((a, b) => a.idx - b.idx);
         }
 
+        function normalizeString(value) {
+            return String(value || "").trim();
+        }
+
+        function normalizeIdentifierKey(value) {
+            const normalized = normalizeString(value).toLowerCase();
+            return normalized ? normalized.replace(/[^a-z0-9]/g, "") : "";
+        }
+
+        function addIdentifierKeys(set, value) {
+            const normalized = normalizeString(value).toLowerCase();
+            const compact = normalizeIdentifierKey(value);
+            if (normalized) {
+                set.add(normalized);
+            }
+            if (compact) {
+                set.add(compact);
+            }
+        }
+
+        function firstNonEmptyString(values) {
+            for (const value of values) {
+                const normalized = normalizeString(value);
+                if (normalized) {
+                    return normalized;
+                }
+            }
+            return "";
+        }
+
+        function parsePortIndex(value) {
+            if (value === undefined || value === null || value === "") {
+                return undefined;
+            }
+
+            if (typeof value === "number" && Number.isFinite(value)) {
+                const normalized = Math.trunc(value);
+                return normalized >= 0 ? normalized : undefined;
+            }
+
+            const normalizedText = normalizeString(value);
+            if (!normalizedText) {
+                return undefined;
+            }
+
+            const direct = Number(normalizedText);
+            if (Number.isFinite(direct)) {
+                const parsedDirect = Math.trunc(direct);
+                return parsedDirect >= 0 ? parsedDirect : undefined;
+            }
+
+            const match = normalizedText.match(/(\d+)/);
+            if (!match) {
+                return undefined;
+            }
+
+            const parsed = Number(match[1]);
+            if (!Number.isFinite(parsed)) {
+                return undefined;
+            }
+
+            const normalized = Math.trunc(parsed);
+            return normalized >= 0 ? normalized : undefined;
+        }
+
+        function extractClientNameFromEntry(entry) {
+            if (!entry) {
+                return "";
+            }
+
+            if (typeof entry === "string" || typeof entry === "number") {
+                return normalizeString(entry);
+            }
+
+            if (typeof entry !== "object" || Array.isArray(entry)) {
+                return "";
+            }
+
+            return firstNonEmptyString([
+                entry.name,
+                entry.hostname,
+                entry.displayName,
+                entry.display_name,
+                entry.clientName,
+                entry.client_name,
+                entry.alias,
+                entry.macAddress,
+                entry.mac,
+                entry.ipAddress,
+                entry.ip
+            ]);
+        }
+
+        function extractPortClientNamesFromRawPort(port) {
+            const normalizedPort = port && typeof port === "object" && !Array.isArray(port)
+                ? port
+                : {};
+            const values = [];
+
+            const directCollections = [
+                normalizedPort.clients,
+                normalizedPort.connectedClients,
+                normalizedPort.connected_clients,
+                normalizedPort.users,
+                normalizedPort.user_list,
+                normalizedPort.hosts,
+                normalizedPort.devices,
+                normalizedPort.client_list
+            ];
+
+            directCollections.forEach((collection) => {
+                if (Array.isArray(collection)) {
+                    collection.forEach((entry) => {
+                        values.push(extractClientNameFromEntry(entry));
+                    });
+                }
+            });
+
+            values.push(extractClientNameFromEntry(normalizedPort.client));
+            values.push(extractClientNameFromEntry(normalizedPort.user));
+            values.push(extractClientNameFromEntry(normalizedPort.connectedClient));
+            values.push(extractClientNameFromEntry(normalizedPort.connected_client));
+
+            const dedupe = new Set();
+            return values
+                .map((value) => normalizeString(value))
+                .filter((value) => {
+                    if (!value || dedupe.has(value)) {
+                        return false;
+                    }
+                    dedupe.add(value);
+                    return true;
+                });
+        }
+
+        function resolveClientUplinkAttachment(client, fallbackClientId) {
+            const item = client && typeof client === "object" && !Array.isArray(client)
+                ? client
+                : {};
+            const normalizedClientId = normalizeString(fallbackClientId);
+
+            const uplinkCandidates = [
+                item.uplink,
+                item.connection && item.connection.uplink,
+                item.wiredConnection,
+                item.wired && item.wired.uplink,
+                item.radio && item.radio.uplink
+            ].filter((entry) => entry && typeof entry === "object" && !Array.isArray(entry));
+            const uplink = uplinkCandidates.length > 0 ? uplinkCandidates[0] : {};
+
+            const clientScoped = resolveScopedIdentifiers("client", normalizedClientId, item);
+            const parsedDeviceCandidate = resolveScopedIdentifiers(
+                "device",
+                firstNonEmptyString([
+                    item.uplinkDeviceId,
+                    item.uplink_device_id,
+                    item.connectedDeviceId,
+                    item.connected_device_id,
+                    item.networkDeviceId,
+                    item.network_device_id,
+                    item.switchId,
+                    item.switch_id,
+                    item.accessPointId,
+                    item.access_point_id,
+                    item.apId,
+                    item.ap_id,
+                    uplink.deviceId,
+                    uplink.device_id,
+                    uplink.id,
+                    uplink.remoteDeviceId,
+                    uplink.remote_device_id,
+                    uplink.parentDeviceId,
+                    uplink.parent_device_id,
+                    uplink.device && uplink.device.id,
+                    uplink.remoteDevice && uplink.remoteDevice.id,
+                    uplink.parentDevice && uplink.parentDevice.id
+                ])
+            );
+
+            const siteId = firstNonEmptyString([
+                parsedDeviceCandidate.siteId,
+                item.siteId,
+                item.site_id,
+                clientScoped.siteId
+            ]);
+            const resourceId = firstNonEmptyString([
+                parsedDeviceCandidate.resourceId,
+                item.uplinkDeviceId,
+                item.uplink_device_id,
+                item.connectedDeviceId,
+                item.connected_device_id,
+                item.networkDeviceId,
+                item.network_device_id,
+                item.switchId,
+                item.switch_id,
+                item.accessPointId,
+                item.access_point_id,
+                item.apId,
+                item.ap_id,
+                uplink.deviceId,
+                uplink.device_id,
+                uplink.id,
+                uplink.remoteDeviceId,
+                uplink.remote_device_id,
+                uplink.parentDeviceId,
+                uplink.parent_device_id,
+                uplink.device && uplink.device.id,
+                uplink.remoteDevice && uplink.remoteDevice.id,
+                uplink.parentDevice && uplink.parentDevice.id
+            ]);
+
+            const portIdx = [
+                item.uplinkPortIdx,
+                item.uplink_port_idx,
+                item.uplinkPort,
+                item.uplink_port,
+                item.switchPort,
+                item.switch_port,
+                item.switch_port_idx,
+                item.portIdx,
+                item.port_idx,
+                item.port,
+                item.swPort,
+                item.sw_port,
+                item.wiredPort,
+                item.wired_port,
+                uplink.portIdx,
+                uplink.port_index,
+                uplink.port,
+                uplink.remotePort,
+                uplink.remotePortIdx,
+                uplink.remote_port,
+                uplink.remote_port_idx,
+                uplink.devicePort,
+                uplink.device_port,
+                uplink.localPort,
+                uplink.local_port,
+                uplink.portNumber,
+                uplink.port_number,
+                uplink.port && uplink.port.idx,
+                uplink.port && uplink.port.index
+            ]
+                .map((value) => parsePortIndex(value))
+                .find((value) => Number.isInteger(value) && value >= 0);
+
+            if (!siteId || !resourceId || !Number.isInteger(portIdx)) {
+                return null;
+            }
+
+            return {
+                siteId,
+                resourceId,
+                portIdx
+            };
+        }
+
+        async function fetchLegacySiteName(siteId) {
+            const normalizedSiteId = normalizeString(siteId);
+            if (!normalizedSiteId) {
+                return "";
+            }
+
+            node.legacySiteNameById = node.legacySiteNameById || new Map();
+            if (node.legacySiteNameById.has(normalizedSiteId)) {
+                return node.legacySiteNameById.get(normalizedSiteId);
+            }
+
+            const response = await node.legacyApiRequest({
+                path: "/api/self/sites",
+                method: "GET"
+            });
+
+            if (response.statusCode < 200 || response.statusCode >= 300) {
+                throw new Error(`Failed to load legacy sites (${response.statusCode})`);
+            }
+
+            const sites = normalizeNetworkCollection(response.payload);
+            sites.forEach((site) => {
+                const siteName = normalizeString(site && site.name);
+                [
+                    site && site.external_id,
+                    site && site._id,
+                    site && site.id,
+                    site && site.name,
+                    site && site.desc
+                ].forEach((candidate) => {
+                    const key = normalizeString(candidate);
+                    if (key && siteName) {
+                        node.legacySiteNameById.set(key, siteName);
+                    }
+                });
+            });
+
+            return node.legacySiteNameById.get(normalizedSiteId) || "";
+        }
+
+        async function fetchLegacySiteCollection(siteId, collectionPath) {
+            const legacySiteName = await fetchLegacySiteName(siteId);
+            if (!legacySiteName) {
+                return [];
+            }
+
+            const response = await node.legacyApiRequest({
+                path: `/api/s/${encodeURIComponent(legacySiteName)}${collectionPath}`,
+                method: "GET"
+            });
+
+            if (response.statusCode < 200 || response.statusCode >= 300) {
+                return [];
+            }
+
+            return normalizeNetworkCollection(response.payload);
+        }
+
+        async function fetchLegacyClients(siteId) {
+            const clients = await fetchLegacySiteCollection(siteId, "/stat/sta");
+            return clients.map((client) => ({
+                ...client,
+                siteId
+            }));
+        }
+
+        async function fetchLegacyDevices(siteId) {
+            const devices = await fetchLegacySiteCollection(siteId, "/stat/device");
+            return devices.map((device) => ({
+                ...device,
+                siteId
+            }));
+        }
+
+        function buildLegacyClientSummary(client, siteId) {
+            const item = client && typeof client === "object" && !Array.isArray(client)
+                ? client
+                : {};
+            const macAddress = firstNonEmptyString([
+                item.macAddress,
+                item.mac_address,
+                item.mac
+            ]);
+            const id = firstNonEmptyString([
+                item.id,
+                item.clientId,
+                item.client_id,
+                item.user_id,
+                item._id,
+                macAddress
+            ]);
+
+            return {
+                ...item,
+                id,
+                clientId: id,
+                siteId,
+                macAddress,
+                name: firstNonEmptyString([
+                    item.name,
+                    item.hostname,
+                    item.displayName,
+                    item.display_name,
+                    macAddress,
+                    id
+                ]),
+                ipAddress: firstNonEmptyString([
+                    item.ipAddress,
+                    item.ip_address,
+                    item.ip,
+                    item.last_ip
+                ])
+            };
+        }
+
+        function resolveLegacyClientAttachment(client, siteId) {
+            const item = client && typeof client === "object" && !Array.isArray(client)
+                ? client
+                : {};
+            const resourceId = firstNonEmptyString([
+                item.sw_mac,
+                item.switch_mac,
+                item.uplink_mac,
+                item.uplinkDeviceMac,
+                item.uplink_device_mac,
+                item.uplinkDeviceId,
+                item.uplink_device_id
+            ]);
+            const portIdx = [
+                item.sw_port,
+                item.switch_port,
+                item.switchPort,
+                item.uplink_port,
+                item.uplinkPort,
+                item.port_idx,
+                item.portIdx,
+                item.port
+            ]
+                .map((value) => parsePortIndex(value))
+                .find((value) => Number.isInteger(value) && value >= 0);
+
+            if (!siteId || !resourceId || !Number.isInteger(portIdx)) {
+                return null;
+            }
+
+            return {
+                siteId,
+                resourceId,
+                portIdx
+            };
+        }
+
         node.fetchDevicePorts = async (deviceId) => {
             const device = await node.fetchDeviceByTypeAndId("device", deviceId);
-            return extractDevicePorts(device);
+            const ports = extractDevicePorts(device);
+            if (!Array.isArray(ports) || ports.length === 0) {
+                return [];
+            }
+
+            const scopedDevice = resolveScopedIdentifiers("device", deviceId, device);
+            if (!scopedDevice.siteId || !scopedDevice.resourceId) {
+                return ports;
+            }
+
+            const selectedDevice = device && typeof device === "object" && !Array.isArray(device)
+                ? device
+                : {};
+            const selectedDeviceKeys = new Set();
+            [
+                scopedDevice.resourceId,
+                selectedDevice.id,
+                selectedDevice.deviceId,
+                selectedDevice.device_id,
+                selectedDevice.macAddress,
+                selectedDevice.mac,
+                selectedDevice.mac_address
+            ].forEach((value) => addIdentifierKeys(selectedDeviceKeys, value));
+
+            let clients = [];
+            try {
+                clients = await node.fetchDevices("client");
+            } catch (error) {
+                clients = [];
+            }
+
+            const clientsByPortIdx = new Map();
+            function matchesSelectedDevice(attachment) {
+                if (!attachment || attachment.siteId !== scopedDevice.siteId) {
+                    return false;
+                }
+                const rawKey = normalizeString(attachment.resourceId).toLowerCase();
+                const compactKey = normalizeIdentifierKey(attachment.resourceId);
+                return selectedDeviceKeys.has(rawKey) || selectedDeviceKeys.has(compactKey);
+            }
+
+            function addEndpointToPort(portIdx, endpoint) {
+                if (!Number.isInteger(portIdx) || portIdx < 0) {
+                    return;
+                }
+
+                const list = clientsByPortIdx.get(portIdx) || [];
+                list.push(endpoint);
+                clientsByPortIdx.set(portIdx, list);
+            }
+
+            function addClientToPort(client, fallbackClientId, attachment) {
+                if (!matchesSelectedDevice(attachment)) {
+                    return;
+                }
+
+                const summary = summarizeDevice("client", client);
+                addEndpointToPort(attachment.portIdx, {
+                    id: normalizeString(summary.id || fallbackClientId),
+                    name: normalizeString(summary.name || fallbackClientId || "Client"),
+                    state: normalizeString(summary.state || ""),
+                    siteId: normalizeString(summary.siteId || attachment.siteId),
+                    resourceId: normalizeString(summary.resourceId || "")
+                });
+            }
+
+            await Promise.all(clients.map(async (entry) => {
+                const client = entry && typeof entry === "object" && !Array.isArray(entry) ? entry : null;
+                if (!client) {
+                    return;
+                }
+
+                const clientSiteId = normalizeString(client.siteId || client.site_id);
+                if (clientSiteId && clientSiteId !== scopedDevice.siteId) {
+                    return;
+                }
+
+                const fallbackClientId = firstNonEmptyString([
+                    client.id,
+                    client.clientId,
+                    client.deviceId,
+                    client.resourceId,
+                    client.macAddress,
+                    client.mac
+                ]);
+                const scopedClientId = encodeScopedDeviceId(clientSiteId || scopedDevice.siteId, fallbackClientId) || fallbackClientId;
+                const attachment = resolveClientUplinkAttachment(client, scopedClientId);
+                if (attachment) {
+                    addClientToPort(client, scopedClientId, attachment);
+                    return;
+                }
+
+                if (!scopedClientId) {
+                    return;
+                }
+
+                try {
+                    const detailedClient = await node.fetchDeviceByTypeAndId("client", scopedClientId);
+                    const detailedAttachment = resolveClientUplinkAttachment(detailedClient, scopedClientId);
+                    if (detailedAttachment) {
+                        addClientToPort(detailedClient || client, scopedClientId, detailedAttachment);
+                    }
+                } catch (error) {
+                }
+            }));
+
+            try {
+                const legacyClients = await fetchLegacyClients(scopedDevice.siteId);
+                legacyClients.forEach((legacyClient) => {
+                    const attachment = resolveLegacyClientAttachment(legacyClient, scopedDevice.siteId);
+                    if (!attachment) {
+                        return;
+                    }
+                    const normalizedClient = buildLegacyClientSummary(legacyClient, scopedDevice.siteId);
+                    addClientToPort(normalizedClient, normalizedClient.id, attachment);
+                });
+            } catch (error) {
+            }
+
+            try {
+                const legacyDevices = await fetchLegacyDevices(scopedDevice.siteId);
+                const legacyDeviceNamesByMac = new Map();
+                legacyDevices.forEach((legacyDevice) => {
+                    const mac = normalizeIdentifierKey(legacyDevice && legacyDevice.mac);
+                    const name = firstNonEmptyString([
+                        legacyDevice && legacyDevice.name,
+                        legacyDevice && legacyDevice.displayName,
+                        legacyDevice && legacyDevice.hostname,
+                        legacyDevice && legacyDevice.mac
+                    ]);
+                    if (mac && name) {
+                        legacyDeviceNamesByMac.set(mac, name);
+                    }
+                });
+
+                const selectedLegacyDevice = legacyDevices.find((legacyDevice) => {
+                    return [
+                        legacyDevice && legacyDevice.device_id,
+                        legacyDevice && legacyDevice.id,
+                        legacyDevice && legacyDevice._id,
+                        legacyDevice && legacyDevice.mac
+                    ].some((value) => {
+                        const rawKey = normalizeString(value).toLowerCase();
+                        const compactKey = normalizeIdentifierKey(value);
+                        return selectedDeviceKeys.has(rawKey) || selectedDeviceKeys.has(compactKey);
+                    });
+                });
+
+                const downlinks = Array.isArray(selectedLegacyDevice && selectedLegacyDevice.downlink_table)
+                    ? selectedLegacyDevice.downlink_table
+                    : [];
+                downlinks.forEach((downlink) => {
+                    const portIdx = parsePortIndex(downlink && downlink.port_idx);
+                    const mac = firstNonEmptyString([
+                        downlink && downlink.mac,
+                        downlink && downlink.chassis_id
+                    ]);
+                    const name = legacyDeviceNamesByMac.get(normalizeIdentifierKey(mac)) || mac;
+                    if (!Number.isInteger(portIdx) || !name) {
+                        return;
+                    }
+                    addEndpointToPort(portIdx, {
+                        id: mac,
+                        name,
+                        state: "Device",
+                        siteId: scopedDevice.siteId,
+                        resourceId: mac
+                    });
+                });
+
+                const lldpEntries = Array.isArray(selectedLegacyDevice && selectedLegacyDevice.lldp_table)
+                    ? selectedLegacyDevice.lldp_table
+                    : [];
+                lldpEntries.forEach((entry) => {
+                    const portIdx = parsePortIndex(entry && entry.local_port_idx);
+                    const mac = firstNonEmptyString([
+                        entry && entry.chassis_id,
+                        entry && entry.mac
+                    ]);
+                    const name = firstNonEmptyString([
+                        legacyDeviceNamesByMac.get(normalizeIdentifierKey(mac)),
+                        entry && entry.system_name,
+                        entry && entry.name,
+                        mac
+                    ]);
+                    if (!Number.isInteger(portIdx) || !name) {
+                        return;
+                    }
+                    addEndpointToPort(portIdx, {
+                        id: mac,
+                        name,
+                        state: "Device",
+                        siteId: scopedDevice.siteId,
+                        resourceId: mac
+                    });
+                });
+            } catch (error) {
+            }
+
+            return ports.map((port) => {
+                const connectedClients = clientsByPortIdx.get(port.idx) || [];
+                const directClientNames = Array.isArray(port.connectedClientNames)
+                    ? port.connectedClientNames.map((name) => normalizeString(name)).filter(Boolean)
+                    : [];
+                const inferredClientNames = connectedClients
+                    .map((client) => normalizeString(client.name))
+                    .filter(Boolean);
+                const namesDedupe = new Set();
+                const connectedClientNames = directClientNames
+                    .concat(inferredClientNames)
+                    .filter((name) => {
+                        if (namesDedupe.has(name)) {
+                            return false;
+                        }
+                        namesDedupe.add(name);
+                        return true;
+                    });
+
+                return {
+                    ...port,
+                    connectedClients,
+                    connectedClientNames,
+                    connectedClientCount: connectedClients.length
+                };
+            });
+        };
+
+        node.resolveClientAttachment = async (clientId) => {
+            const normalizedClientId = normalizeString(clientId);
+            if (!normalizedClientId) {
+                throw new Error("Missing client id.");
+            }
+
+            const client = await node.fetchDeviceByTypeAndId("client", normalizedClientId);
+            if (!client || typeof client !== "object" || Array.isArray(client)) {
+                return {
+                    found: false,
+                    reason: "Client details are unavailable."
+                };
+            }
+
+            const item = client;
+            const attachment = resolveClientUplinkAttachment(item, normalizedClientId);
+            if (!attachment) {
+                return {
+                    found: false,
+                    reason: "Unable to infer switch/port from client details.",
+                    client: summarizeDevice("client", item)
+                };
+            }
+
+            return {
+                found: true,
+                clientId: normalizedClientId,
+                client: summarizeDevice("client", item),
+                deviceId: `${attachment.siteId}::${attachment.resourceId}`,
+                portIdx: attachment.portIdx,
+                siteId: attachment.siteId,
+                resourceId: attachment.resourceId
+            };
+        };
+
+        node.fetchClientsWithAttachment = async () => {
+            let clients = [];
+            let devices = [];
+            try {
+                clients = await node.fetchDevices("client");
+            } catch (error) {
+                clients = [];
+            }
+            try {
+                devices = await node.fetchDevices("device");
+            } catch (error) {
+                devices = [];
+            }
+
+            const deviceNameByScopedId = new Map();
+            const deviceNameByKey = new Map();
+            const deviceScopedIdByKey = new Map();
+            devices.forEach((entry) => {
+                const item = entry && typeof entry === "object" && !Array.isArray(entry)
+                    ? entry
+                    : null;
+                if (!item) {
+                    return;
+                }
+                const siteId = normalizeString(item.siteId || item.site_id);
+                const resourceId = normalizeString(item.id || item.deviceId);
+                const scopedId = encodeScopedDeviceId(siteId, resourceId);
+                if (!scopedId) {
+                    return;
+                }
+                const summary = summarizeDevice("device", item);
+                const deviceName = normalizeString(summary.name || resourceId || scopedId);
+                deviceNameByScopedId.set(scopedId, deviceName);
+                [
+                    item.id,
+                    item.deviceId,
+                    item.device_id,
+                    item.macAddress,
+                    item.mac_address,
+                    item.mac,
+                    resourceId
+                ].forEach((value) => {
+                    const rawKey = normalizeString(value).toLowerCase();
+                    const compactKey = normalizeIdentifierKey(value);
+                    if (rawKey) {
+                        deviceNameByKey.set(rawKey, deviceName);
+                        deviceScopedIdByKey.set(rawKey, scopedId);
+                    }
+                    if (compactKey) {
+                        deviceNameByKey.set(compactKey, deviceName);
+                        deviceScopedIdByKey.set(compactKey, scopedId);
+                    }
+                });
+            });
+
+            function resolveAttachedDeviceId(attachment) {
+                const rawKey = normalizeString(attachment && attachment.resourceId).toLowerCase();
+                const compactKey = normalizeIdentifierKey(attachment && attachment.resourceId);
+                return deviceScopedIdByKey.get(rawKey)
+                    || deviceScopedIdByKey.get(compactKey)
+                    || encodeScopedDeviceId(attachment && attachment.siteId, attachment && attachment.resourceId);
+            }
+
+            function resolveAttachedDeviceName(attachment, attachedDeviceId) {
+                const rawKey = normalizeString(attachment && attachment.resourceId).toLowerCase();
+                const compactKey = normalizeIdentifierKey(attachment && attachment.resourceId);
+                return firstNonEmptyString([
+                    deviceNameByScopedId.get(attachedDeviceId),
+                    deviceNameByKey.get(rawKey),
+                    deviceNameByKey.get(compactKey),
+                    attachment && attachment.resourceId
+                ]);
+            }
+
+            const attachedClients = clients
+                .map((entry) => {
+                    const item = entry && typeof entry === "object" && !Array.isArray(entry)
+                        ? entry
+                        : null;
+                    if (!item) {
+                        return null;
+                    }
+
+                    const fallbackClientId = firstNonEmptyString([
+                        item.id,
+                        item.clientId,
+                        item.deviceId,
+                        item.macAddress
+                    ]);
+                    const attachment = resolveClientUplinkAttachment(item, fallbackClientId);
+                    if (!attachment) {
+                        return null;
+                    }
+
+                    const clientSummary = summarizeDevice("client", item);
+                    const attachedDeviceId = resolveAttachedDeviceId(attachment);
+                    if (!attachedDeviceId) {
+                        return null;
+                    }
+
+                    const attachedDeviceName = resolveAttachedDeviceName(attachment, attachedDeviceId);
+
+                    return {
+                        ...clientSummary,
+                        attachment: {
+                            deviceId: attachedDeviceId,
+                            portIdx: attachment.portIdx,
+                            deviceName: attachedDeviceName
+                        }
+                    };
+                })
+                .filter(Boolean);
+
+            const siteIds = new Set();
+            clients.forEach((client) => {
+                const siteId = normalizeString(client && (client.siteId || client.site_id));
+                if (siteId) {
+                    siteIds.add(siteId);
+                }
+            });
+            devices.forEach((device) => {
+                const siteId = normalizeString(device && (device.siteId || device.site_id));
+                if (siteId) {
+                    siteIds.add(siteId);
+                }
+            });
+
+            const legacyClients = [];
+            await Promise.all(Array.from(siteIds).map(async (siteId) => {
+                try {
+                    const siteClients = await fetchLegacyClients(siteId);
+                    legacyClients.push(...siteClients);
+                } catch (error) {
+                }
+            }));
+
+            const seenClientIds = new Set(attachedClients.map((client) => normalizeString(client.id)));
+            legacyClients.forEach((legacyClient) => {
+                const siteId = normalizeString(legacyClient && legacyClient.siteId);
+                const attachment = resolveLegacyClientAttachment(legacyClient, siteId);
+                if (!attachment) {
+                    return;
+                }
+
+                const attachedDeviceId = resolveAttachedDeviceId(attachment);
+                if (!attachedDeviceId) {
+                    return;
+                }
+
+                const normalizedClient = buildLegacyClientSummary(legacyClient, siteId);
+                const clientSummary = summarizeDevice("client", normalizedClient);
+                const clientKey = normalizeString(clientSummary.id || normalizedClient.macAddress || normalizedClient.id);
+                if (clientKey && seenClientIds.has(clientKey)) {
+                    return;
+                }
+                if (clientKey) {
+                    seenClientIds.add(clientKey);
+                }
+
+                attachedClients.push({
+                    ...clientSummary,
+                    attachment: {
+                        deviceId: attachedDeviceId,
+                        portIdx: attachment.portIdx,
+                        deviceName: resolveAttachedDeviceName(attachment, attachedDeviceId)
+                    }
+                });
+            });
+
+            return attachedClients;
         };
 
         node.addClient = (client) => {
@@ -474,6 +1353,51 @@ module.exports = function(RED) {
             }
 
             res.json(await server.fetchDevicePorts(deviceId));
+        } catch (error) {
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    RED.httpAdmin.get("/unifiNetwork/client-attachment", RED.auth.needsPermission("unifi-network-config.read"), async (req, res) => {
+        try {
+            const serverId = String(req.query.serverId || "").trim();
+            const clientId = String(req.query.clientId || "").trim();
+            if (!serverId) {
+                res.status(400).json({ error: "Missing serverId" });
+                return;
+            }
+            if (!clientId) {
+                res.status(400).json({ error: "Missing clientId" });
+                return;
+            }
+
+            const server = RED.nodes.getNode(serverId);
+            if (!server || typeof server.resolveClientAttachment !== "function") {
+                res.status(404).json({ error: "Configuration node not found" });
+                return;
+            }
+
+            res.json(await server.resolveClientAttachment(clientId));
+        } catch (error) {
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    RED.httpAdmin.get("/unifiNetwork/clients-with-attachment", RED.auth.needsPermission("unifi-network-config.read"), async (req, res) => {
+        try {
+            const serverId = String(req.query.serverId || "").trim();
+            if (!serverId) {
+                res.status(400).json({ error: "Missing serverId" });
+                return;
+            }
+
+            const server = RED.nodes.getNode(serverId);
+            if (!server || typeof server.fetchClientsWithAttachment !== "function") {
+                res.status(404).json({ error: "Configuration node not found" });
+                return;
+            }
+
+            res.json(await server.fetchClientsWithAttachment());
         } catch (error) {
             res.status(500).json({ error: error.message });
         }

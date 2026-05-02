@@ -103,16 +103,22 @@
     </div>
     <div id="node-config-row-advanced" class="unifi-ultimate-advanced">
         <div class="form-row">
-            <label for="node-config-input-name"><i class="fa fa-tag"></i> Label</label>
-            <input type="text" id="node-config-input-name" placeholder="Optional custom label">
+            <label for="node-config-input-name"><i class="fa fa-tag"></i> Name</label>
+            <input type="text" id="node-config-input-name" placeholder="Node name">
         </div>
     </div>
 </script>
 
 <script type="text/html" data-help-name="unifi-network-config">
-    <p>Connects the node to your UniFi Network controller.</p>
-    <p><b>Controller</b> accepts the UniFi OS host or IP address. The node builds the local UniFi Network integration URL automatically.</p>
-    <p><b>API Key</b> is required for authentication.</p>
+    <p>Shared connection for UniFi Network nodes.</p>
+
+    <h3>Configuration</h3>
+    <p><b>Controller</b> accepts the UniFi OS host or IP address. The node builds the local UniFi Network proxy URL automatically.</p>
+    <p><b>API Key</b> is required for authentication and is sent as <code>X-API-Key</code>.</p>
     <p><b>Security</b> controls certificate verification. Disable it only when your controller uses a self-signed certificate.</p>
-    <p><b>Label</b> is optional and only changes how the config node is shown in the editor.</p>
+    <p><b>Name</b> is the config node name shown in the editor.</p>
+
+    <h3>Usage</h3>
+    <p>This config node is used by Network Device, Network Presence, and Control POE nodes.</p>
+    <p>The node uses the official Network integration API where available. For switch port/client mapping and PoE enable/disable, it also uses the local Network legacy API endpoints exposed through the UniFi OS proxy.</p>
 </script>

@@ -52,7 +52,6 @@
             const $refresh = $("#node-input-refreshClients");
             const $selectionSummary = $("#node-input-selectionSummary");
             const $selectionDetail = $("#node-input-selectionDetail");
-            let lastAutoName = "";
             let suspendChangeHandling = false;
 
             function requestJson(url) {
@@ -126,26 +125,179 @@
                 if (!$select || $select.length === 0) {
                     return;
                 }
-                // Presence now uses normal selects, but this removes old helper
-                // inputs if a cached editor instance created them before.
                 const selectId = String($select.attr("id") || "").trim();
-                if (selectId) {
-                    const $searchInput = $("#" + selectId + "-search");
-                    if ($searchInput.length > 0) {
-                        try {
-                            if ($searchInput.data("ui-autocomplete")) {
-                                $searchInput.autocomplete("destroy");
-                            }
-                        } catch (error) {
-                        }
-                        $searchInput.remove();
-                    }
+                if (!selectId) {
+                    return;
                 }
 
+                const searchId = selectId + "-search";
                 $select.off(".unifiSearchable");
                 $select.removeData("unifi-searchable");
                 $select.removeData("unifi-options-count");
                 $select.show();
+
+                if ($select.is("select[multiple]")) {
+                    return;
+                }
+
+                const $existingSearchInput = $("#" + searchId);
+                if ($existingSearchInput.length > 0) {
+                    try {
+                        if ($existingSearchInput.data("ui-autocomplete")) {
+                            $existingSearchInput.autocomplete("destroy");
+                        }
+                    } catch (error) {
+                    }
+                    $existingSearchInput.off(".unifiSearchable");
+                    $existingSearchInput.remove();
+                }
+
+                const $searchInput = $("<input>")
+                    .attr("id", searchId)
+                    .attr("type", "search")
+                    .attr("autocomplete", "off")
+                    .attr("placeholder", String(placeholder || "Search"))
+                    .addClass("red-ui-input")
+                    .css({
+                        width: $select.css("width") || "100%",
+                        marginBottom: "6px"
+                    });
+                $select.before($searchInput);
+                $select.hide();
+
+                const options = $select.find("option").map(function () {
+                    const $option = $(this);
+                    const optionValue = String($option.val() || "").trim();
+                    const optionText = String($option.text() || "").trim();
+                    return {
+                        value: optionValue,
+                        text: optionText,
+                        isPlaceholder: optionValue === "",
+                        searchable: [
+                            optionText,
+                            String($option.attr("data-device-name") || "").trim(),
+                            String($option.attr("data-client-name") || "").trim(),
+                            optionValue
+                        ].filter(Boolean).join(" ").toLowerCase()
+                    };
+                }).get();
+
+                function findOptionByValue(value) {
+                    return options.find(function (option) {
+                        return String(option.value) === String(value || "").trim();
+                    });
+                }
+
+                function syncInputFromSelect() {
+                    const selectedValue = String($select.val() || "").trim();
+                    const selected = findOptionByValue(selectedValue);
+                    if (selected && !selected.isPlaceholder) {
+                        $searchInput.val(selected.text);
+                    } else {
+                        $searchInput.val("");
+                    }
+                }
+
+                function setSelectedValue(value, triggerChange) {
+                    const selected = findOptionByValue(value);
+                    if (selected) {
+                        $select.val(selected.value);
+                    } else {
+                        $select.val("");
+                    }
+                    syncInputFromSelect();
+                    if (triggerChange) {
+                        $select.trigger("change");
+                    }
+                }
+
+                let filterOnKeyUpOnly = false;
+                $searchInput.autocomplete({
+                    minLength: 0,
+                    source: function (request, response) {
+                        const term = filterOnKeyUpOnly
+                            ? String(request && request.term || "").trim().toLowerCase()
+                            : "";
+                        const items = options
+                            .filter(function (option) {
+                                if (option.isPlaceholder) {
+                                    return false;
+                                }
+                                if (!term) {
+                                    return true;
+                                }
+                                return option.searchable.indexOf(term) !== -1;
+                            })
+                            .map(function (option) {
+                                return {
+                                    label: option.text,
+                                    value: option.text,
+                                    optionValue: option.value
+                                };
+                            });
+
+                        if (items.length === 0) {
+                            response([{
+                                label: "No results",
+                                value: "",
+                                optionValue: "",
+                                noSelection: true
+                            }]);
+                            return;
+                        }
+
+                        response(items);
+                    },
+                    select: function (event, ui) {
+                        if (ui.item && ui.item.noSelection) {
+                            event.preventDefault();
+                            return false;
+                        }
+                        if (ui.item) {
+                            setSelectedValue(ui.item.optionValue, true);
+                        }
+                        return true;
+                    },
+                    change: function (event, ui) {
+                        if (ui.item) {
+                            return;
+                        }
+                        const typed = String($searchInput.val() || "").trim().toLowerCase();
+                        if (!typed) {
+                            setSelectedValue("", true);
+                            return;
+                        }
+
+                        const exactMatch = options.find(function (option) {
+                            if (option.isPlaceholder) {
+                                return false;
+                            }
+                            return option.text.toLowerCase() === typed || option.value.toLowerCase() === typed;
+                        });
+
+                        if (exactMatch) {
+                            setSelectedValue(exactMatch.value, true);
+                        } else {
+                            syncInputFromSelect();
+                        }
+                    }
+                });
+
+                $searchInput.on("keyup.unifiSearchable", function () {
+                    filterOnKeyUpOnly = true;
+                    $(this).autocomplete("search", $(this).val());
+                });
+                $searchInput.on("mouseup.unifiSearchable", function () {
+                    const $input = $(this);
+                    filterOnKeyUpOnly = false;
+                    setTimeout(function () {
+                        $input.autocomplete("search", "");
+                    }, 0);
+                });
+
+                syncInputFromSelect();
+                $select.data("unifi-searchable", true);
+                $select.data("unifi-options-count", options.length);
             }
 
             function getSelectedClientName() {
@@ -175,14 +327,11 @@
 
             function syncNameFromSelection() {
                 const clientName = getSelectedClientName();
-                const currentName = String($name.val() || "").trim();
-                const shouldUpdate = currentName === "" || currentName === lastAutoName;
-                if (!clientName || !shouldUpdate) {
+                if (!clientName) {
                     return;
                 }
 
                 $name.val(clientName);
-                lastAutoName = clientName;
             }
 
             function renderClients(items) {
@@ -293,8 +442,8 @@
     </div>
     <div id="node-row-advanced" class="unifi-ultimate-advanced">
         <div class="form-row">
-            <label for="node-input-name"><i class="fa fa-tag"></i> Label</label>
-            <input type="text" id="node-input-name" placeholder="Optional custom label">
+            <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+            <input type="text" id="node-input-name" placeholder="Node name">
         </div>
         <div class="form-row">
             <label for="node-input-pollInterval"><i class="fa fa-repeat"></i> Poll (s)</label>
@@ -316,24 +465,26 @@
 </script>
 
 <script type="text/html" data-help-name="unifi-network-presence">
-    <p>Detects if a selected UniFi client is currently present on your UniFi WiFi network.</p>
+    <p>Detects whether a selected UniFi Network client is currently connected.</p>
 
     <h3>Configuration</h3>
     <p><b>Connection</b> selects the shared UniFi Network config node.</p>
-    <p><b>Client</b> selects the device to track.</p>
+    <p><b>Client</b> selects the client to track. The selector is searchable and opens with the complete list before filtering.</p>
     <p><b>Poll (s)</b> is how often the node checks presence.</p>
     <p><b>Connect Hysteresis (s)</b> delays the <code>true</code> output so brief reconnects do not flap.</p>
     <p><b>Hysteresis (s)</b> delays the <code>false</code> output to avoid flapping when the client disconnects briefly.</p>
+    <p><b>Name</b> is the node name shown in the editor and is updated automatically when you select a different client.</p>
     <p><b>Timeout</b> is the HTTP timeout for each check.</p>
 
     <h3>Input</h3>
     <ul>
         <li>Any input triggers an immediate presence check.</li>
-        <li>Optional runtime overrides: <code>msg.clientId</code> or <code>msg.siteId</code> + <code>msg.resourceId</code>.</li>
+        <li>Input message properties are ignored by this node.</li>
     </ul>
 
     <h3>Output</h3>
     <ul>
+        <li>The node emits a new message when the debounced presence state changes.</li>
         <li><code>msg.payload</code>: <code>true</code> when present, <code>false</code> when absent.</li>
         <li><code>msg.present</code>: same boolean presence value.</li>
         <li><code>msg.client</code>: last known client object when available.</li>

@@ -107,15 +107,17 @@ const TYPE_CAPABILITIES = {
                     {
                         id: "portIdx",
                         label: "Port Index",
-                        type: "number",
-                        placeholder: "Example: 1",
-                        helpText: "Physical port index on the selected UniFi device."
+                        type: "select",
+                        placeholder: "Select a port",
+                        allowEmpty: false,
+                        options: [],
+                        helpText: "Physical switch port. Connected clients are shown when available."
                     }
                 ]
             },
-            requestComposer: ({ capabilityConfig, msg }) => {
+            requestComposer: ({ capabilityConfig }) => {
                 const portIdx = resolveIntegerValue(
-                    msg && msg.portIdx,
+                    undefined,
                     capabilityConfig && capabilityConfig.portIdx,
                     0
                 );
@@ -173,8 +175,8 @@ const TYPE_CAPABILITIES = {
                     }
                 ]
             },
-            requestComposer: ({ capabilityConfig, msg }) => {
-                const payloadOverrides = normalizeObject(msg && msg.payload);
+            requestComposer: ({ capabilityConfig }) => {
+                const payloadOverrides = {};
                 const payload = {
                     action: "AUTHORIZE_GUEST_ACCESS"
                 };
@@ -261,7 +263,7 @@ function getCapabilityDefinition(deviceType, capabilityId) {
     return getCapabilitiesForType(deviceType).find((capability) => capability.id === capabilityId) || null;
 }
 
-async function getCapabilityOptions(deviceType, capabilityId) {
+async function getCapabilityOptions(deviceType, capabilityId, context) {
     const capability = getCapabilityDefinition(deviceType, capabilityId);
     if (!capability || !capability.editor || !Array.isArray(capability.editor.fields)) {
         return {
@@ -270,9 +272,74 @@ async function getCapabilityOptions(deviceType, capabilityId) {
         };
     }
 
+    if (capabilityId === "powerCyclePort") {
+        return buildPowerCyclePortCapabilityOptions(capabilityId, capability, context);
+    }
+
     return {
         capabilityId,
         fields: capability.editor.fields.map((field) => ({ ...field }))
+    };
+}
+
+async function buildPowerCyclePortCapabilityOptions(capabilityId, capability, context) {
+    const safeContext = context && typeof context === "object" ? context : {};
+    const scopedDeviceId = String(safeContext.deviceId || "").trim();
+    const baseFields = capability.editor.fields.map((field) => ({ ...field }));
+
+    if (!scopedDeviceId || typeof safeContext.fetchDevicePorts !== "function") {
+        return {
+            capabilityId,
+            fields: baseFields
+        };
+    }
+
+    let ports = [];
+    try {
+        ports = await safeContext.fetchDevicePorts(scopedDeviceId);
+    } catch (error) {
+        ports = [];
+    }
+
+    const options = Array.isArray(ports)
+        ? ports
+            .map((port) => {
+                const idx = Number(port && port.idx);
+                if (!Number.isFinite(idx) || idx < 0) {
+                    return null;
+                }
+
+                const portName = String(port && port.name || `Port ${Math.trunc(idx)}`).trim();
+                const clientNames = Array.isArray(port && port.connectedClientNames)
+                    ? port.connectedClientNames.map((name) => String(name || "").trim()).filter(Boolean)
+                    : [];
+                const clientSuffix = clientNames.length > 0
+                    ? ` -> ${clientNames.join(", ")}`
+                    : "";
+                const stateSuffix = String(port && port.state || "").trim()
+                    ? ` [${String(port.state || "").trim()}]`
+                    : "";
+
+                return {
+                    value: String(Math.trunc(idx)),
+                    label: `${portName}${stateSuffix}${clientSuffix}`
+                };
+            })
+            .filter(Boolean)
+        : [];
+
+    return {
+        capabilityId,
+        fields: baseFields.map((field) => {
+            if (field.id !== "portIdx") {
+                return field;
+            }
+            return {
+                ...field,
+                options,
+                placeholder: options.length > 0 ? "Select a port" : "No ports found"
+            };
+        })
     };
 }
 
@@ -405,34 +472,26 @@ function buildCapabilityRequest(deviceType, capabilityId, deviceId, params, devi
     };
 }
 
-function composeCapabilityExecution(deviceType, capabilityId, capabilityConfig, msg) {
+function composeCapabilityExecution(deviceType, capabilityId, capabilityConfig) {
     const capability = getCapabilityDefinition(deviceType, capabilityId);
     if (!capability) {
         throw new Error(`Unsupported capability '${capabilityId}' for device type '${deviceType}'.`);
     }
 
-    // requestComposer provides the capability defaults, while msg.query and
-    // msg.headers still win so advanced flows can override request details.
+    // Input messages are triggers only. Execution data comes from the editor
+    // configuration and capability defaults.
     const normalizedConfig = normalizeObject(capabilityConfig);
     const composedRequest = typeof capability.requestComposer === "function"
         ? capability.requestComposer({
-            capabilityConfig: normalizedConfig,
-            msg
+            capabilityConfig: normalizedConfig
         }) || {}
         : {};
 
-    let payload = composedRequest.payload;
-    if (capability.useConfiguredPayload) {
-        payload = composedRequest.payload;
-    } else if (!capability.ignoreInputPayload) {
-        payload = msg.payload;
-    }
-
     return {
         params: normalizeObject(composedRequest.params),
-        query: Object.assign({}, composedRequest.query, normalizeObject(msg.query)),
-        headers: normalizeObject(msg.headers),
-        payload
+        query: normalizeObject(composedRequest.query),
+        headers: normalizeObject(composedRequest.headers),
+        payload: composedRequest.payload
     };
 }
 
@@ -512,8 +571,8 @@ function resolveIntegerValue(primaryValue, fallbackValue, minimum) {
 }
 
 function assignOptionalBoundedInteger(target, key, primaryValue, fallbackValue, minimum, maximum) {
-    // Apply the first valid integer found between runtime overrides and editor
-    // config, but only when the value respects the API contract bounds.
+    // Apply the first valid configured integer, but only when the value respects
+    // the API contract bounds.
     const primary = parseOptionalInteger(primaryValue);
     if (Number.isInteger(primary) && primary >= minimum && primary <= maximum) {
         target[key] = primary;

@@ -9,21 +9,19 @@ const {
 } = require("./utils/unifi-access-device-registry");
 const { extractAccessData } = require("./utils/unifi-access-utils");
 
-function resolveDeviceType(configuredDeviceType, msg) {
-    return String(msg.deviceType || configuredDeviceType || "").trim();
+function resolveDeviceType(configuredDeviceType) {
+    return String(configuredDeviceType || "").trim();
 }
 
-function resolveDeviceId(configuredDeviceId, msg) {
-    return String(msg.deviceId || msg.resourceId || configuredDeviceId || "").trim();
+function resolveDeviceId(configuredDeviceId) {
+    return String(configuredDeviceId || "").trim();
 }
 
-function resolveCapabilityId(configuredCapabilityId, msg) {
-    return String(msg.capability || configuredCapabilityId || "observe").trim();
+function resolveCapabilityId(configuredCapabilityId) {
+    return String(configuredCapabilityId || "observe").trim();
 }
 
 function parseCapabilityConfig(value) {
-    // Access action options are stored as JSON by the editor, but runtime
-    // overrides may pass an already parsed object.
     if (value && typeof value === "object" && !Array.isArray(value)) {
         return value;
     }
@@ -42,11 +40,7 @@ function parseCapabilityConfig(value) {
     }
 }
 
-function resolveCapabilityConfig(configuredCapabilityConfig, msg) {
-    if (msg && msg.capabilityConfig && typeof msg.capabilityConfig === "object" && !Array.isArray(msg.capabilityConfig)) {
-        return msg.capabilityConfig;
-    }
-
+function resolveCapabilityConfig(configuredCapabilityConfig) {
     return parseCapabilityConfig(configuredCapabilityConfig);
 }
 
@@ -116,17 +110,17 @@ module.exports = function(RED) {
             sendOutputs(send, stateMsg, null);
         }
 
-        async function invokeCapability(msg, send) {
+        async function invokeCapability(send) {
             if (!node.server) {
                 throw new Error("Unifi Access configuration is missing.");
             }
 
-            // Resolve the final execution target by combining editor values with
-            // any runtime overrides coming from the input message.
-            const deviceType = resolveDeviceType(node.deviceType, msg);
-            const deviceId = resolveDeviceId(node.deviceId, msg);
-            const capabilityId = resolveCapabilityId(node.capability, msg);
-            const capabilityConfig = resolveCapabilityConfig(node.capabilityConfig, msg);
+            // The incoming message is only a trigger. The node always uses the
+            // device, capability and options configured in the editor.
+            const deviceType = resolveDeviceType(node.deviceType);
+            const deviceId = resolveDeviceId(node.deviceId);
+            const capabilityId = resolveCapabilityId(node.capability);
+            const capabilityConfig = resolveCapabilityConfig(node.capabilityConfig);
             let selectedDevice = node.currentDevice;
 
             if (!getDeviceTypeDefinition(deviceType)) {
@@ -172,7 +166,7 @@ module.exports = function(RED) {
                 }
 
                 if (!hasActiveDoorbell) {
-                    const skippedMsg = RED.util.cloneMessage(msg);
+                    const skippedMsg = {};
                     skippedMsg.payload = {
                         skipped: true,
                         reason: "No active doorbell ring is currently tracked by the UniFi Access configuration node."
@@ -203,7 +197,7 @@ module.exports = function(RED) {
                 return;
             }
 
-            const execution = composeCapabilityExecution(deviceType, capabilityId, capabilityConfig, msg, selectedDevice);
+            const execution = composeCapabilityExecution(deviceType, capabilityId, capabilityConfig, selectedDevice);
             const request = buildCapabilityRequest(deviceType, capabilityId, deviceId, selectedDevice);
 
             node.status({ fill: "blue", shape: "dot", text: `${capability.label}` });
@@ -244,7 +238,7 @@ module.exports = function(RED) {
                 node.server.markDoorbellCanceled(deviceId);
             }
 
-            const stateMsg = RED.util.cloneMessage(msg);
+            const stateMsg = {};
             stateMsg.payload = responseData;
             stateMsg.statusCode = response.statusCode;
             stateMsg.headers = response.headers;
@@ -277,13 +271,13 @@ module.exports = function(RED) {
             });
         }
 
-        node.on("input", async function(msg, send, done) {
+        node.on("input", async function(_msg, send, done) {
             send = send || function() {
                 node.send.apply(node, arguments);
             };
 
             try {
-                await invokeCapability(msg, send);
+                await invokeCapability(send);
                 if (typeof done === "function") {
                     done();
                 }
@@ -292,7 +286,7 @@ module.exports = function(RED) {
                 if (typeof done === "function") {
                     done(error);
                 } else {
-                    node.error(error, msg);
+                    node.error(error);
                 }
             }
         });

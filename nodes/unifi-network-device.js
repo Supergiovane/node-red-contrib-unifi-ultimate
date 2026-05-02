@@ -3,50 +3,25 @@
 const {
     buildCapabilityRequest,
     composeCapabilityExecution,
-    encodeScopedDeviceId,
     getCapabilityDefinition,
     getDeviceTypeDefinition,
     resolveScopedIdentifiers
 } = require("./utils/unifi-network-device-registry");
 const { extractNetworkData } = require("./utils/unifi-network-utils");
 
-function resolveDeviceType(configuredDeviceType, msg) {
-    return String(msg.deviceType || configuredDeviceType || "").trim();
+function resolveDeviceType(configuredDeviceType) {
+    return String(configuredDeviceType || "").trim();
 }
 
-function resolveDeviceId(configuredDeviceId, msg, deviceType) {
-    // Runtime overrides win over the editor selection so flows can reuse one node
-    // against different resources without duplicating configuration.
-    if (msg && (msg.deviceId || msg.resourceId || msg.siteId)) {
-        const explicitDeviceId = String(msg.deviceId || "").trim();
-        if (explicitDeviceId) {
-            return explicitDeviceId;
-        }
-
-        const explicitSiteId = String(msg.siteId || "").trim();
-        const explicitResourceId = String(msg.resourceId || "").trim();
-        if (String(deviceType || "").trim() === "site") {
-            return explicitSiteId || explicitResourceId || String(configuredDeviceId || "").trim();
-        }
-
-        if (explicitSiteId && explicitResourceId) {
-            const scoped = encodeScopedDeviceId(explicitSiteId, explicitResourceId);
-            if (scoped) {
-                return scoped;
-            }
-        }
-    }
-
+function resolveDeviceId(configuredDeviceId) {
     return String(configuredDeviceId || "").trim();
 }
 
-function resolveCapabilityId(configuredCapabilityId, msg) {
-    return String(msg.capability || configuredCapabilityId || "observe").trim();
+function resolveCapabilityId(configuredCapabilityId) {
+    return String(configuredCapabilityId || "observe").trim();
 }
 
 function parseCapabilityConfig(value) {
-    // The editor stores capability options as JSON, but runtime overrides can
-    // already provide a ready-to-use object.
     if (value && typeof value === "object" && !Array.isArray(value)) {
         return value;
     }
@@ -65,11 +40,7 @@ function parseCapabilityConfig(value) {
     }
 }
 
-function resolveCapabilityConfig(configuredCapabilityConfig, msg) {
-    if (msg && msg.capabilityConfig && typeof msg.capabilityConfig === "object" && !Array.isArray(msg.capabilityConfig)) {
-        return msg.capabilityConfig;
-    }
-
+function resolveCapabilityConfig(configuredCapabilityConfig) {
     return parseCapabilityConfig(configuredCapabilityConfig);
 }
 
@@ -120,13 +91,13 @@ module.exports = function(RED) {
             };
         }
 
-        async function fetchDeviceState(deviceType, deviceId, capabilityId, send, source, msg) {
+        async function fetchDeviceState(deviceType, deviceId, capabilityId, send, source) {
             // Keep a local copy of the latest payload so action execution can
             // reuse it when composing follow-up requests.
             const payload = await node.server.fetchDeviceByTypeAndId(deviceType, deviceId);
             node.currentDevice = payload;
 
-            const outputMsg = msg ? RED.util.cloneMessage(msg) : {};
+            const outputMsg = {};
             outputMsg.payload = payload;
             outputMsg.device = payload;
             outputMsg.unifiNetwork = buildBaseMetadata(deviceType, deviceId, capabilityId, {
@@ -137,17 +108,17 @@ module.exports = function(RED) {
             send(outputMsg);
         }
 
-        async function invokeCapability(msg, send) {
+        async function invokeCapability(send) {
             if (!node.server) {
                 throw new Error("Unifi Network configuration is missing.");
             }
 
-            // Resolve the final execution context by combining editor values and
-            // any runtime overrides coming from the input message.
-            const deviceType = resolveDeviceType(node.deviceType, msg);
-            const deviceId = resolveDeviceId(node.deviceId, msg, deviceType);
-            const capabilityId = resolveCapabilityId(node.capability, msg);
-            const capabilityConfig = resolveCapabilityConfig(node.capabilityConfig, msg);
+            // The incoming message is only a trigger. The node always uses the
+            // device, capability and options configured in the editor.
+            const deviceType = resolveDeviceType(node.deviceType);
+            const deviceId = resolveDeviceId(node.deviceId);
+            const capabilityId = resolveCapabilityId(node.capability);
+            const capabilityConfig = resolveCapabilityConfig(node.capabilityConfig);
 
             if (!getDeviceTypeDefinition(deviceType)) {
                 throw new Error(`Unsupported device type: ${deviceType || "(empty)"}`);
@@ -166,13 +137,12 @@ module.exports = function(RED) {
                     deviceId,
                     capabilityId,
                     send,
-                    capability.mode === "fetch" ? "fetch" : "manual-refresh",
-                    msg
+                    capability.mode === "fetch" ? "fetch" : "manual-refresh"
                 );
                 return;
             }
 
-            const execution = composeCapabilityExecution(deviceType, capabilityId, capabilityConfig, msg, node.currentDevice);
+            const execution = composeCapabilityExecution(deviceType, capabilityId, capabilityConfig);
             const request = buildCapabilityRequest(deviceType, capabilityId, deviceId, execution.params, node.currentDevice);
 
             node.status({ fill: "blue", shape: "dot", text: `${capability.label}` });
@@ -196,7 +166,7 @@ module.exports = function(RED) {
                 node.currentDevice = responseData;
             }
 
-            const outputMsg = RED.util.cloneMessage(msg);
+            const outputMsg = {};
             outputMsg.payload = responseData;
             outputMsg.statusCode = response.statusCode;
             outputMsg.headers = response.headers;
@@ -229,13 +199,13 @@ module.exports = function(RED) {
             });
         }
 
-        node.on("input", async function(msg, send, done) {
+        node.on("input", async function(_msg, send, done) {
             send = send || function() {
                 node.send.apply(node, arguments);
             };
 
             try {
-                await invokeCapability(msg, send);
+                await invokeCapability(send);
                 if (typeof done === "function") {
                     done();
                 }
@@ -244,7 +214,7 @@ module.exports = function(RED) {
                 if (typeof done === "function") {
                     done(error);
                 } else {
-                    node.error(error, msg);
+                    node.error(error);
                 }
             }
         });

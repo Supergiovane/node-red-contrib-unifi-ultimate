@@ -101,7 +101,6 @@
             const $refresh = $("#node-input-refreshDevices");
             const $selectionSummary = $("#node-input-selectionSummary");
             const $selectionDetail = $("#node-input-selectionDetail");
-            let lastAutoName = "";
             let capabilityConfig = parseCapabilityConfig(node.capabilityConfig);
             let capabilityListRequestId = 0;
             let capabilityOptionsRequestId = 0;
@@ -225,26 +224,179 @@
                 if (!$select || $select.length === 0) {
                     return;
                 }
-                // Searchable comboboxes were removed, but this guard cleans up
-                // stale helper inputs if the browser had cached older editor code.
                 const selectId = String($select.attr("id") || "").trim();
-                if (selectId) {
-                    const $searchInput = $("#" + selectId + "-search");
-                    if ($searchInput.length > 0) {
-                        try {
-                            if ($searchInput.data("ui-autocomplete")) {
-                                $searchInput.autocomplete("destroy");
-                            }
-                        } catch (error) {
-                        }
-                        $searchInput.remove();
-                    }
+                if (!selectId) {
+                    return;
                 }
 
+                const searchId = selectId + "-search";
                 $select.off(".unifiSearchable");
                 $select.removeData("unifi-searchable");
                 $select.removeData("unifi-options-count");
                 $select.show();
+
+                if ($select.is("select[multiple]")) {
+                    return;
+                }
+
+                const $existingSearchInput = $("#" + searchId);
+                if ($existingSearchInput.length > 0) {
+                    try {
+                        if ($existingSearchInput.data("ui-autocomplete")) {
+                            $existingSearchInput.autocomplete("destroy");
+                        }
+                    } catch (error) {
+                    }
+                    $existingSearchInput.off(".unifiSearchable");
+                    $existingSearchInput.remove();
+                }
+
+                const $searchInput = $("<input>")
+                    .attr("id", searchId)
+                    .attr("type", "search")
+                    .attr("autocomplete", "off")
+                    .attr("placeholder", String(placeholder || "Search"))
+                    .addClass("red-ui-input")
+                    .css({
+                        width: $select.css("width") || "100%",
+                        marginBottom: "6px"
+                    });
+                $select.before($searchInput);
+                $select.hide();
+
+                const options = $select.find("option").map(function () {
+                    const $option = $(this);
+                    const optionValue = String($option.val() || "").trim();
+                    const optionText = String($option.text() || "").trim();
+                    return {
+                        value: optionValue,
+                        text: optionText,
+                        isPlaceholder: optionValue === "",
+                        searchable: [
+                            optionText,
+                            String($option.attr("data-device-name") || "").trim(),
+                            String($option.attr("data-client-name") || "").trim(),
+                            optionValue
+                        ].filter(Boolean).join(" ").toLowerCase()
+                    };
+                }).get();
+
+                function findOptionByValue(value) {
+                    return options.find(function (option) {
+                        return String(option.value) === String(value || "").trim();
+                    });
+                }
+
+                function syncInputFromSelect() {
+                    const selectedValue = String($select.val() || "").trim();
+                    const selected = findOptionByValue(selectedValue);
+                    if (selected && !selected.isPlaceholder) {
+                        $searchInput.val(selected.text);
+                    } else {
+                        $searchInput.val("");
+                    }
+                }
+
+                function setSelectedValue(value, triggerChange) {
+                    const selected = findOptionByValue(value);
+                    if (selected) {
+                        $select.val(selected.value);
+                    } else {
+                        $select.val("");
+                    }
+                    syncInputFromSelect();
+                    if (triggerChange) {
+                        $select.trigger("change");
+                    }
+                }
+
+                let filterOnKeyUpOnly = false;
+                $searchInput.autocomplete({
+                    minLength: 0,
+                    source: function (request, response) {
+                        const term = filterOnKeyUpOnly
+                            ? String(request && request.term || "").trim().toLowerCase()
+                            : "";
+                        const items = options
+                            .filter(function (option) {
+                                if (option.isPlaceholder) {
+                                    return false;
+                                }
+                                if (!term) {
+                                    return true;
+                                }
+                                return option.searchable.indexOf(term) !== -1;
+                            })
+                            .map(function (option) {
+                                return {
+                                    label: option.text,
+                                    value: option.text,
+                                    optionValue: option.value
+                                };
+                            });
+
+                        if (items.length === 0) {
+                            response([{
+                                label: "No results",
+                                value: "",
+                                optionValue: "",
+                                noSelection: true
+                            }]);
+                            return;
+                        }
+
+                        response(items);
+                    },
+                    select: function (event, ui) {
+                        if (ui.item && ui.item.noSelection) {
+                            event.preventDefault();
+                            return false;
+                        }
+                        if (ui.item) {
+                            setSelectedValue(ui.item.optionValue, true);
+                        }
+                        return true;
+                    },
+                    change: function (event, ui) {
+                        if (ui.item) {
+                            return;
+                        }
+                        const typed = String($searchInput.val() || "").trim().toLowerCase();
+                        if (!typed) {
+                            setSelectedValue("", true);
+                            return;
+                        }
+
+                        const exactMatch = options.find(function (option) {
+                            if (option.isPlaceholder) {
+                                return false;
+                            }
+                            return option.text.toLowerCase() === typed || option.value.toLowerCase() === typed;
+                        });
+
+                        if (exactMatch) {
+                            setSelectedValue(exactMatch.value, true);
+                        } else {
+                            syncInputFromSelect();
+                        }
+                    }
+                });
+
+                $searchInput.on("keyup.unifiSearchable", function () {
+                    filterOnKeyUpOnly = true;
+                    $(this).autocomplete("search", $(this).val());
+                });
+                $searchInput.on("mouseup.unifiSearchable", function () {
+                    const $input = $(this);
+                    filterOnKeyUpOnly = false;
+                    setTimeout(function () {
+                        $input.autocomplete("search", "");
+                    }, 0);
+                });
+
+                syncInputFromSelect();
+                $select.data("unifi-searchable", true);
+                $select.data("unifi-options-count", options.length);
             }
 
             function syncCapabilityConfigFromInputs() {
@@ -354,15 +506,12 @@
 
             function syncNameFromSelection() {
                 const selectedDeviceName = getSelectedDeviceName();
-                const currentName = String($name.val() || "").trim();
-                const shouldUpdate = currentName === "" || currentName === lastAutoName;
 
-                if (!selectedDeviceName || !shouldUpdate) {
+                if (!selectedDeviceName) {
                     return;
                 }
 
                 $name.val(selectedDeviceName);
-                lastAutoName = selectedDeviceName;
             }
 
             function renderDeviceTypes(items) {
@@ -386,7 +535,6 @@
                         $deviceType.val("");
                     }
                 });
-                makeSelectSearchable($deviceType, "Search controls");
                 refreshSelectionSummary();
             }
 
@@ -410,7 +558,6 @@
                         $capability.val("observe");
                     }
                 });
-                makeSelectSearchable($capability, "Search actions");
                 refreshSelectionSummary();
             }
 
@@ -635,9 +782,6 @@
                     }
 
                     $capabilityConfigContainer.append($wrapper);
-                    if (field.type === "select") {
-                        makeSelectSearchable($input, "Search options");
-                    }
                 });
 
                 writeCapabilityConfig();
@@ -839,9 +983,7 @@
             }
 
             writeCapabilityConfig();
-            makeSelectSearchable($deviceType, "Search controls");
             makeSelectSearchable($deviceId, "Search devices");
-            makeSelectSearchable($capability, "Search actions");
 
             $server.on("change", function () {
                 if (suspendChangeHandling || isInitializingEditor) {
@@ -919,8 +1061,8 @@
     </div>
     <div id="node-row-advanced" class="unifi-ultimate-advanced">
         <div class="form-row">
-            <label for="node-input-name"><i class="fa fa-tag"></i> Label</label>
-            <input type="text" id="node-input-name" placeholder="Optional custom label">
+            <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+            <input type="text" id="node-input-name" placeholder="Node name">
         </div>
         <div class="form-row">
             <label for="node-input-timeout"><i class="fa fa-clock-o"></i> Timeout</label>
@@ -930,28 +1072,27 @@
 </script>
 
 <script type="text/html" data-help-name="unifi-protect-device">
-    <p>Use this node to control a UniFi Protect device or listen for its live events.</p>
+    <p>Use this node to execute a configured UniFi Protect action or listen for live Protect events.</p>
 
     <h3>Configuration</h3>
     <p><b>Connection</b> selects the shared UniFi Protect config node.</p>
-    <p><b>Control</b> chooses the Protect device category. <b>Device</b> chooses the specific item. <b>Action</b> only shows actions supported by that device.</p>
+    <p><b>Control</b> chooses the Protect device category. <b>Device</b> chooses the specific item. Device selectors are searchable and open with the complete list before filtering.</p>
+    <p><b>Action</b> only shows actions supported by the selected device.</p>
     <p><b>Action options</b> appears only when the selected action needs extra input. For example, observables, PTZ presets, live views, or discovered properties.</p>
     <p>Action highlights: <code>Receive Events</code>, <code>Read Device State</code>, <code>Take Snapshot</code>, <code>Show Doorbell Message</code>, and <code>Read Application Info</code> on <code>NVR</code>.</p>
     <p><code>Receive Events</code> performs an initial fetch and then stays connected to the Protect streams.</p>
     <p>For <code>Sensor</code>, <code>Camera</code>, and <code>Light</code> observables, the node can normalize the main output to <code>true</code> or <code>false</code> and keep the original context in <code>msg.RAW</code>. Sensor observables include <code>Extreme Values</code>.</p>
-    <p><b>Label</b> is optional and only changes how the node is shown in the editor. <b>Timeout</b> controls the request timeout in milliseconds for direct API calls.</p>
+    <p><b>Name</b> is the node name shown in the editor and is updated automatically when you select a different item. <b>Timeout</b> controls the request timeout in milliseconds for direct API calls.</p>
 
     <h3>Input</h3>
     <ul>
-        <li><code>msg.deviceType</code>, <code>msg.deviceId</code>, and <code>msg.capability</code> for runtime request overrides</li>
-        <li><code>msg.capabilityConfig</code> for runtime overrides of the options selected in the editor</li>
-        <li><code>msg.params</code> for targeted path parameter overrides when needed</li>
-        <li><code>msg.query</code>, <code>msg.headers</code>, and <code>msg.payload</code> for the HTTP request</li>
+        <li>Any incoming message triggers the configured action.</li>
+        <li>Input message properties are ignored by this node.</li>
     </ul>
 
     <h3>Output</h3>
     <ul>
-        <li>Output 1: device state or primary capability response</li>
+        <li>Output 1 emits a new message containing the device state or primary capability response.</li>
         <li>Output 2: Protect events related to the selected device</li>
         <li><code>msg.unifiProtect</code>: standardized metadata for the device and the selected capability</li>
         <li><code>msg.RAW</code>: full raw context when an observable is used</li>

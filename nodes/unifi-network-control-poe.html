@@ -30,9 +30,11 @@
         defaults: {
             name: { value: "" },
             server: { value: "", type: "unifi-network-config", required: true },
+            selectionMode: { value: "switchPort", required: true },
+            clientLookupId: { value: "" },
             deviceId: { value: "", required: true },
             portIdx: { value: 1, required: true, validate: RED.validators.number() },
-            action: { value: "enable", required: true },
+            action: { value: "cycle", required: true },
             timeout: { value: 15000, required: true, validate: RED.validators.number() }
         },
         inputs: 1,
@@ -47,13 +49,18 @@
             const node = this;
             const $name = $("#node-input-name");
             const $server = $("#node-input-server");
+            const $selectionMode = $("#node-input-selectionMode");
             const $deviceId = $("#node-input-deviceId");
+            const $clientLookupId = $("#node-input-clientLookupId");
             const $portIdx = $("#node-input-portIdx");
             const $action = $("#node-input-action");
             const $refreshDevices = $("#node-input-refreshDevices");
+            const $refreshClients = $("#node-input-refreshClients");
+            const $rowSwitch = $("#node-row-deviceId");
+            const $rowClient = $("#node-row-clientLookupId");
+            const $rowPort = $("#node-row-portIdx");
             const $selectionSummary = $("#node-input-selectionSummary");
             const $selectionDetail = $("#node-input-selectionDetail");
-            let lastAutoName = "";
             let suspendChangeHandling = false;
 
             function requestJson(url) {
@@ -127,26 +134,179 @@
                 if (!$select || $select.length === 0) {
                     return;
                 }
-                // Searchable selects were removed; this just strips any old
-                // helper input that might still exist in a cached browser session.
                 const selectId = String($select.attr("id") || "").trim();
-                if (selectId) {
-                    const $searchInput = $("#" + selectId + "-search");
-                    if ($searchInput.length > 0) {
-                        try {
-                            if ($searchInput.data("ui-autocomplete")) {
-                                $searchInput.autocomplete("destroy");
-                            }
-                        } catch (error) {
-                        }
-                        $searchInput.remove();
-                    }
+                if (!selectId) {
+                    return;
                 }
 
+                const searchId = selectId + "-search";
                 $select.off(".unifiSearchable");
                 $select.removeData("unifi-searchable");
                 $select.removeData("unifi-options-count");
                 $select.show();
+
+                if ($select.is("select[multiple]")) {
+                    return;
+                }
+
+                const $existingSearchInput = $("#" + searchId);
+                if ($existingSearchInput.length > 0) {
+                    try {
+                        if ($existingSearchInput.data("ui-autocomplete")) {
+                            $existingSearchInput.autocomplete("destroy");
+                        }
+                    } catch (error) {
+                    }
+                    $existingSearchInput.off(".unifiSearchable");
+                    $existingSearchInput.remove();
+                }
+
+                const $searchInput = $("<input>")
+                    .attr("id", searchId)
+                    .attr("type", "search")
+                    .attr("autocomplete", "off")
+                    .attr("placeholder", String(placeholder || "Search"))
+                    .addClass("red-ui-input")
+                    .css({
+                        width: $select.css("width") || "100%",
+                        marginBottom: "6px"
+                    });
+                $select.before($searchInput);
+                $select.hide();
+
+                const options = $select.find("option").map(function () {
+                    const $option = $(this);
+                    const optionValue = String($option.val() || "").trim();
+                    const optionText = String($option.text() || "").trim();
+                    return {
+                        value: optionValue,
+                        text: optionText,
+                        isPlaceholder: optionValue === "",
+                        searchable: [
+                            optionText,
+                            String($option.attr("data-device-name") || "").trim(),
+                            String($option.attr("data-client-name") || "").trim(),
+                            optionValue
+                        ].filter(Boolean).join(" ").toLowerCase()
+                    };
+                }).get();
+
+                function findOptionByValue(value) {
+                    return options.find(function (option) {
+                        return String(option.value) === String(value || "").trim();
+                    });
+                }
+
+                function syncInputFromSelect() {
+                    const selectedValue = String($select.val() || "").trim();
+                    const selected = findOptionByValue(selectedValue);
+                    if (selected && !selected.isPlaceholder) {
+                        $searchInput.val(selected.text);
+                    } else {
+                        $searchInput.val("");
+                    }
+                }
+
+                function setSelectedValue(value, triggerChange) {
+                    const selected = findOptionByValue(value);
+                    if (selected) {
+                        $select.val(selected.value);
+                    } else {
+                        $select.val("");
+                    }
+                    syncInputFromSelect();
+                    if (triggerChange) {
+                        $select.trigger("change");
+                    }
+                }
+
+                let filterOnKeyUpOnly = false;
+                $searchInput.autocomplete({
+                    minLength: 0,
+                    source: function (request, response) {
+                        const term = filterOnKeyUpOnly
+                            ? String(request && request.term || "").trim().toLowerCase()
+                            : "";
+                        const items = options
+                            .filter(function (option) {
+                                if (option.isPlaceholder) {
+                                    return false;
+                                }
+                                if (!term) {
+                                    return true;
+                                }
+                                return option.searchable.indexOf(term) !== -1;
+                            })
+                            .map(function (option) {
+                                return {
+                                    label: option.text,
+                                    value: option.text,
+                                    optionValue: option.value
+                                };
+                            });
+
+                        if (items.length === 0) {
+                            response([{
+                                label: "No results",
+                                value: "",
+                                optionValue: "",
+                                noSelection: true
+                            }]);
+                            return;
+                        }
+
+                        response(items);
+                    },
+                    select: function (event, ui) {
+                        if (ui.item && ui.item.noSelection) {
+                            event.preventDefault();
+                            return false;
+                        }
+                        if (ui.item) {
+                            setSelectedValue(ui.item.optionValue, true);
+                        }
+                        return true;
+                    },
+                    change: function (event, ui) {
+                        if (ui.item) {
+                            return;
+                        }
+                        const typed = String($searchInput.val() || "").trim().toLowerCase();
+                        if (!typed) {
+                            setSelectedValue("", true);
+                            return;
+                        }
+
+                        const exactMatch = options.find(function (option) {
+                            if (option.isPlaceholder) {
+                                return false;
+                            }
+                            return option.text.toLowerCase() === typed || option.value.toLowerCase() === typed;
+                        });
+
+                        if (exactMatch) {
+                            setSelectedValue(exactMatch.value, true);
+                        } else {
+                            syncInputFromSelect();
+                        }
+                    }
+                });
+
+                $searchInput.on("keyup.unifiSearchable", function () {
+                    filterOnKeyUpOnly = true;
+                    $(this).autocomplete("search", $(this).val());
+                });
+                $searchInput.on("mouseup.unifiSearchable", function () {
+                    const $input = $(this);
+                    filterOnKeyUpOnly = false;
+                    setTimeout(function () {
+                        $input.autocomplete("search", "");
+                    }, 0);
+                });
+
+                syncInputFromSelect();
+                $select.data("unifi-searchable", true);
+                $select.data("unifi-options-count", options.length);
             }
 
             function getSelectedDeviceName() {
@@ -154,9 +314,34 @@
                 return String($selected.data("deviceName") || "").trim();
             }
 
+            function getSelectedClientName() {
+                const $selected = $clientLookupId.find("option:selected");
+                return String($selected.data("clientName") || "").trim();
+            }
+
+            function getSelectionMode() {
+                const mode = String($selectionMode.val() || node.selectionMode || "switchPort").trim();
+                return mode === "client" ? "client" : "switchPort";
+            }
+
+            function refreshSelectionModeUi() {
+                const mode = getSelectionMode();
+                if (mode === "client") {
+                    $rowClient.show();
+                    $rowSwitch.hide();
+                    $rowPort.hide();
+                } else {
+                    $rowClient.hide();
+                    $rowSwitch.show();
+                    $rowPort.show();
+                }
+            }
+
             function refreshSummary() {
                 const deviceName = getSelectedDeviceName();
-                const actionLabel = String($action.find("option:selected").text() || "PoE action").trim();
+                const clientName = getSelectedClientName();
+                const mode = getSelectionMode();
+                const actionLabel = String($action.find("option:selected").text() || "Power Cycle Port").trim();
                 const portLabel = String($portIdx.val() || "").trim();
 
                 let summary = "Choose a switch and a port.";
@@ -164,7 +349,14 @@
 
                 if (deviceName) {
                     summary = actionLabel + " on " + deviceName + " (port " + (portLabel || "?") + ").";
-                    detail = "Use msg.action and msg.portIdx if you want runtime overrides.";
+                    detail = "Any incoming message triggers the configured action.";
+                }
+                if (mode === "client") {
+                    summary = "Choose a client target.";
+                    detail = "Selecting a client auto-fills switch and port from the attached uplink.";
+                    if (clientName) {
+                        summary = actionLabel + " on " + clientName + " (derived switch/port).";
+                    }
                 }
 
                 $selectionSummary.text(summary);
@@ -172,16 +364,15 @@
             }
 
             function syncNameFromSelection() {
-                const deviceName = getSelectedDeviceName();
-                const currentName = String($name.val() || "").trim();
-                const shouldUpdate = currentName === "" || currentName === lastAutoName;
-                if (!deviceName || !shouldUpdate) {
+                const targetName = getSelectionMode() === "client"
+                    ? getSelectedClientName()
+                    : getSelectedDeviceName();
+                if (!targetName) {
                     return;
                 }
 
-                const value = "POE " + deviceName;
+                const value = "POE " + targetName;
                 $name.val(value);
-                lastAutoName = value;
             }
 
             function renderDevices(items) {
@@ -225,10 +416,16 @@
                         const idx = String(port.idx);
                         const poe = port.poeEnabled ? " PoE:" + port.poeEnabled : "";
                         const state = port.state ? " [" + port.state + "]" : "";
+                        const clients = Array.isArray(port.connectedClientNames)
+                            ? port.connectedClientNames.filter(Boolean)
+                            : [];
+                        const clientSuffix = clients.length > 0
+                            ? " -> " + clients.join(", ")
+                            : "";
                         $portIdx.append(
                             $("<option></option>")
                                 .val(idx)
-                                .text((port.name || ("Port " + idx)) + state + poe)
+                                .text((port.name || ("Port " + idx)) + state + poe + clientSuffix)
                         );
                     });
 
@@ -244,8 +441,59 @@
                     suspendChangeHandling = false;
                 }
 
-                makeSelectSearchable($portIdx, "Search ports");
                 refreshSummary();
+            }
+
+            function renderClients(items) {
+                const currentValue = String($clientLookupId.val() || node.clientLookupId || "").trim();
+                suspendChangeHandling = true;
+                try {
+                    $clientLookupId.empty();
+                    $clientLookupId.append($("<option></option>").val("").text("Choose a client target"));
+
+                    (items || []).forEach(function (item) {
+                        const stateSuffix = item.state ? " [" + item.state + "]" : "";
+                        const attachment = item.attachment && typeof item.attachment === "object" ? item.attachment : {};
+                        const attachedDeviceName = String(attachment.deviceName || "Switch").trim();
+                        const attachedPortIdx = String(attachment.portIdx !== undefined ? attachment.portIdx : "").trim();
+                        const attachedDeviceId = String(attachment.deviceId || "").trim();
+                        if (!attachedDeviceId || attachedPortIdx === "") {
+                            return;
+                        }
+                        const attachmentSuffix = " -> " + attachedDeviceName + " p" + attachedPortIdx;
+                        $clientLookupId.append(
+                            $("<option></option>")
+                                .val(item.id)
+                                .text((item.name || item.id) + stateSuffix + attachmentSuffix)
+                                .attr("data-client-name", item.name || item.id)
+                                .attr("data-attached-device-id", attachedDeviceId)
+                                .attr("data-attached-port-idx", attachedPortIdx)
+                                .attr("data-attached-device-name", attachedDeviceName)
+                        );
+                    });
+
+                    if (currentValue && $clientLookupId.find("option[value='" + currentValue + "']").length > 0) {
+                        $clientLookupId.val(currentValue);
+                    } else {
+                        $clientLookupId.val("");
+                    }
+                } finally {
+                    suspendChangeHandling = false;
+                }
+
+                makeSelectSearchable($clientLookupId, "Search clients");
+                refreshSummary();
+            }
+
+            function hasOptionValue($select, value) {
+                const normalizedTarget = String(value || "").trim();
+                if (!normalizedTarget) {
+                    return false;
+                }
+
+                return $select.find("option").toArray().some(function (option) {
+                    return String(option.value || "").trim() === normalizedTarget;
+                });
             }
 
             function loadPorts() {
@@ -295,6 +543,83 @@
                     });
             }
 
+            function loadClients() {
+                const serverId = String($server.val() || "").trim();
+                if (!serverId || serverId === "_ADD_") {
+                    renderClients([]);
+                    return Promise.resolve();
+                }
+
+                $refreshClients.addClass("fa-spin");
+                return requestJson("unifiNetwork/clients-with-attachment?serverId=" + encodeURIComponent(serverId))
+                    .then(function (data) {
+                        renderClients(Array.isArray(data) ? data : []);
+                    })
+                    .catch(function (xhr) {
+                        renderClients([]);
+                        const errorText = xhr && xhr.responseJSON && xhr.responseJSON.error ? xhr.responseJSON.error : "Unable to load clients";
+                        RED.notify(errorText, "error");
+                    })
+                    .finally(function () {
+                        $refreshClients.removeClass("fa-spin");
+                    });
+            }
+
+            function applySelectedClientTarget() {
+                const $selected = $clientLookupId.find("option:selected");
+                const targetDeviceId = String($selected.attr("data-attached-device-id") || "").trim();
+                const targetPortIdx = String($selected.attr("data-attached-port-idx") || "").trim();
+                if (!targetDeviceId || targetPortIdx === "") {
+                    refreshSummary();
+                    return Promise.resolve();
+                }
+
+                const ensureDevicePresent = hasOptionValue($deviceId, targetDeviceId)
+                    ? Promise.resolve()
+                    : loadDevices();
+
+                return ensureDevicePresent.then(function () {
+                    if (!hasOptionValue($deviceId, targetDeviceId)) {
+                        refreshSummary();
+                        return;
+                    }
+
+                    suspendChangeHandling = true;
+                    try {
+                        $deviceId.val(targetDeviceId);
+                    } finally {
+                        suspendChangeHandling = false;
+                    }
+                    makeSelectSearchable($deviceId, "Search switches");
+                    syncNameFromSelection();
+
+                    return loadPorts().then(function () {
+                        if (hasOptionValue($portIdx, targetPortIdx)) {
+                            suspendChangeHandling = true;
+                            try {
+                                $portIdx.val(targetPortIdx);
+                            } finally {
+                                suspendChangeHandling = false;
+                            }
+                        }
+
+                        refreshSummary();
+                    });
+                });
+            }
+
+            function loadEditorData() {
+                return loadDevices().then(function () {
+                    return loadClients();
+                }).then(function () {
+                    if (getSelectionMode() === "client") {
+                        return applySelectedClientTarget();
+                    }
+                }).finally(function () {
+                    refreshSummary();
+                });
+            }
+
             try {
                 RED.sidebar.show("help");
             } catch (error) {
@@ -304,7 +629,7 @@
                 if (suspendChangeHandling) {
                     return;
                 }
-                loadDevices();
+                loadEditorData();
             });
 
             $deviceId.on("change", function () {
@@ -317,17 +642,55 @@
 
             $portIdx.on("change", refreshSummary);
             $action.on("change", refreshSummary);
+            $selectionMode.on("change", function () {
+                if (suspendChangeHandling) {
+                    return;
+                }
+                refreshSelectionModeUi();
+                if (getSelectionMode() === "client") {
+                    applySelectedClientTarget();
+                } else {
+                    refreshSummary();
+                }
+            });
+            $clientLookupId.on("change", function () {
+                if (suspendChangeHandling) {
+                    return;
+                }
+                if (getSelectionMode() === "client") {
+                    applySelectedClientTarget();
+                } else {
+                    refreshSummary();
+                }
+            });
 
             $refreshDevices.on("click", function (event) {
                 event.preventDefault();
-                loadDevices();
+                loadDevices().then(function () {
+                    if (getSelectionMode() === "client") {
+                        return applySelectedClientTarget();
+                    }
+                });
+            });
+            $refreshClients.on("click", function (event) {
+                event.preventDefault();
+                loadClients().then(function () {
+                    if (getSelectionMode() === "client") {
+                        return applySelectedClientTarget();
+                    }
+                });
             });
 
             ensureDefaultServerSelection();
+            $selectionMode.val(String(node.selectionMode || "switchPort"));
+            $action.val(String(node.action || "cycle"));
+            if (!$action.val()) {
+                $action.val("cycle");
+            }
             makeSelectSearchable($deviceId, "Search switches");
-            makeSelectSearchable($portIdx, "Search ports");
-            refreshSummary();
-            loadDevices();
+            makeSelectSearchable($clientLookupId, "Search clients");
+            refreshSelectionModeUi();
+            loadEditorData();
         }
     });
 </script>
@@ -338,13 +701,27 @@
         <input type="text" id="node-input-server">
     </div>
     <div class="form-row">
+        <label for="node-input-selectionMode"><i class="fa fa-crosshairs"></i> Search by</label>
+        <select id="node-input-selectionMode">
+            <option value="switchPort">Switch + Port</option>
+            <option value="client">Client</option>
+        </select>
+    </div>
+    <div class="form-row" id="node-row-deviceId">
         <label for="node-input-deviceId"><i class="fa fa-exchange"></i> Switch</label>
         <select id="node-input-deviceId" style="width:70%;"></select>
         <a href="#" id="node-input-refreshDevices" class="editor-button" style="margin-left:6px;">
             <i class="fa fa-refresh"></i>
         </a>
     </div>
-    <div class="form-row">
+    <div class="form-row" id="node-row-clientLookupId">
+        <label for="node-input-clientLookupId"><i class="fa fa-laptop"></i> Client</label>
+        <select id="node-input-clientLookupId" style="width:70%;"></select>
+        <a href="#" id="node-input-refreshClients" class="editor-button" style="margin-left:6px;">
+            <i class="fa fa-refresh"></i>
+        </a>
+    </div>
+    <div class="form-row" id="node-row-portIdx">
         <label for="node-input-portIdx"><i class="fa fa-plug"></i> Port</label>
         <select id="node-input-portIdx"></select>
     </div>
@@ -364,8 +741,8 @@
     </div>
     <div id="node-row-advanced" class="unifi-ultimate-advanced">
         <div class="form-row">
-            <label for="node-input-name"><i class="fa fa-tag"></i> Label</label>
-            <input type="text" id="node-input-name" placeholder="Optional custom label">
+            <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+            <input type="text" id="node-input-name" placeholder="Node name">
         </div>
         <div class="form-row">
             <label for="node-input-timeout"><i class="fa fa-clock-o"></i> Timeout</label>
@@ -375,24 +752,27 @@
 </script>
 
 <script type="text/html" data-help-name="unifi-network-control-poe">
-    <p>Controls PoE on a selected switch port.</p>
+    <p>Controls PoE on a selected UniFi switch port.</p>
 
     <h3>Configuration</h3>
     <p><b>Connection</b> selects the shared UniFi Network config node.</p>
-    <p><b>Switch</b> selects the adopted UniFi device.</p>
-    <p><b>Port</b> selects the physical port index.</p>
-    <p><b>Action</b> sends PoE action requests. The node automatically tries compatible action values for enable/disable and supports power cycle.</p>
+    <p><b>Search by</b> chooses how to target the port: select <code>Switch + Port</code> directly, or select a <code>Client</code> and let the node fill in the connected switch and port.</p>
+    <p><b>Switch</b> selects the adopted UniFi switch. The selector is searchable.</p>
+    <p><b>Client</b> lists clients with known switch and port mapping. The selector is searchable.</p>
+    <p><b>Port</b> selects the physical port index. Port labels include connected clients or downstream UniFi devices when available.</p>
+    <p><b>Action</b> executes the configured PoE operation. Enable and Disable update the UniFi port override (<code>poe_mode</code> auto/off). Power Cycle uses the official Network port action.</p>
+    <p><b>Name</b> is the node name shown in the editor and is updated automatically when you select a different switch or client target.</p>
     <p><b>Timeout</b> controls the request timeout in milliseconds.</p>
 
     <h3>Input</h3>
     <ul>
-        <li>Optional runtime overrides: <code>msg.deviceId</code> or <code>msg.siteId</code> + <code>msg.resourceId</code>.</li>
-        <li><code>msg.portIdx</code> to override the selected port.</li>
-        <li><code>msg.action</code> to override action (<code>enable</code>, <code>disable</code>, <code>cycle</code>, or direct API action value).</li>
+        <li>Any incoming message triggers the configured action.</li>
+        <li>Input message properties are ignored by this node.</li>
     </ul>
 
     <h3>Output</h3>
     <ul>
+        <li>The node emits a new message after the configured action completes.</li>
         <li><code>msg.payload</code>: API response payload.</li>
         <li><code>msg.unifiNetworkPoe</code>: metadata with device/site/action/port.</li>
     </ul>
