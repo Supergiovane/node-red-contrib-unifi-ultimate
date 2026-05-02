@@ -81,12 +81,13 @@
             name: { value: "" },
             server: { value: "", type: "unifi-network-config", required: true },
             clientId: { value: "", required: true },
+            deviceName: { value: "" },
             pollInterval: { value: 10, required: true, validate: RED.validators.number() },
             onlineHysteresis: { value: 15, required: true, validate: RED.validators.number() },
             offlineHysteresis: { value: 30, required: true, validate: RED.validators.number() },
             timeout: { value: 8000, required: true, validate: RED.validators.number() }
         },
-        inputs: 1,
+        inputs: 0,
         outputs: 1,
         icon: "unifi-network-icon.svg",
         paletteLabel: "Presence Detection",
@@ -99,6 +100,7 @@
             const $name = $("#node-input-name");
             const $server = $("#node-input-server");
             const $clientId = $("#node-input-clientId");
+            const $deviceName = $("#node-input-deviceName");
             const $refresh = $("#node-input-refreshClients");
             const $selectionSummary = $("#node-input-selectionSummary");
             const $selectionDetail = $("#node-input-selectionDetail");
@@ -306,6 +308,7 @@
                             return false;
                         }
                         if (ui.item) {
+                            $select.data("unifi-user-selection", true);
                             setSelectedValue(ui.item.optionValue, true);
                         }
                         return true;
@@ -399,6 +402,15 @@
                 $name.val(clientName);
             }
 
+            function rememberSelectedClientName() {
+                const clientName = getSelectedClientName();
+                if (!clientName) {
+                    return;
+                }
+
+                $deviceName.val(clientName);
+            }
+
             function renderClients(items) {
                 const currentValue = String($clientId.val() || node.clientId || "").trim();
                 suspendChangeHandling = true;
@@ -412,7 +424,7 @@
                             || item.online === false
                             || String(item.state || "").toLowerCase() === "offline";
                         const stateSuffix = isOffline
-                            ? (/\(offline\)/i.test(String(item.name || item.id || "")) ? "" : " (OffLine)")
+                            ? ""
                             : (item.state ? " [" + item.state + "]" : "");
                         const $option = $("<option></option>")
                             .val(item.id)
@@ -435,7 +447,7 @@
                 }
 
                 makeSelectSearchable($clientId, "Search clients");
-                syncNameFromSelection();
+                rememberSelectedClientName();
                 refreshSummary();
             }
 
@@ -503,7 +515,12 @@
                 if (suspendChangeHandling) {
                     return;
                 }
-                syncNameFromSelection();
+                rememberSelectedClientName();
+                const isUserSelection = $clientId.data("unifi-user-selection") === true;
+                $clientId.removeData("unifi-user-selection");
+                if (isUserSelection) {
+                    syncNameFromSelection();
+                }
                 refreshSummary();
             });
 
@@ -569,6 +586,7 @@
             <label for="node-input-timeout"><i class="fa fa-clock-o"></i> Timeout</label>
             <input type="text" id="node-input-timeout" placeholder="8000">
         </div>
+        <input type="hidden" id="node-input-deviceName">
     </div>
 </script>
 
@@ -581,13 +599,12 @@
     <p><b>Poll (s)</b> is how often the node checks presence.</p>
     <p><b>Connect Hysteresis (s)</b> delays the <code>true</code> output so brief reconnects do not flap.</p>
     <p><b>Hysteresis (s)</b> delays the <code>false</code> output to avoid flapping when the client disconnects briefly.</p>
-    <p><b>Name</b> is the node name shown in the editor and is updated automatically when you select a different client.</p>
+    <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different client from the list.</p>
     <p><b>Timeout</b> is the HTTP timeout for each check.</p>
 
     <h3>Input</h3>
     <ul>
-        <li>Any input triggers an immediate presence check.</li>
-        <li>Input message properties are ignored by this node.</li>
+        <li>No input pin in this mode: checks run automatically at startup and on every poll interval.</li>
     </ul>
 
     <h3>Output</h3>
@@ -595,7 +612,25 @@
         <li>The node emits a new message when the debounced presence state changes.</li>
         <li><code>msg.payload</code>: <code>true</code> when present, <code>false</code> when absent.</li>
         <li><code>msg.present</code>: same boolean presence value.</li>
-        <li><code>msg.client</code>: last known client object when available.</li>
-        <li><code>msg.unifiNetworkPresence</code>: metadata including site/client ids and hysteresis settings.</li>
+        <li><code>msg.topic</code>: node name from the editor.</li>
+        <li><code>msg.deviceName</code>: remembered selected client name.</li>
+        <li><code>msg.eventName</code>: reason/source that produced the message.</li>
+        <li><code>msg.details.client</code>: last known client object when available.</li>
+        <li><code>msg.details.unifiNetworkPresence</code>: metadata including site/client ids and hysteresis settings.</li>
     </ul>
+    <p>Example output:</p>
+    <pre><code>{
+  "topic": "iPhone Massimo Presence",
+  "deviceName": "iPhone-Massimo",
+  "eventName": "connected",
+  "payload": true,
+  "present": true,
+  "details": {
+    "unifiNetworkPresence": {
+      "nodeType": "presence",
+      "source": "poll",
+      "reason": "connected"
+    }
+  }
+}</code></pre>
 </script>

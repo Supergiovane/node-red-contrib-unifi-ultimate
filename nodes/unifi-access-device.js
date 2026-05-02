@@ -63,6 +63,58 @@ function requiresDeviceSpecificCapabilityValidation(deviceType, capabilityId) {
     return String(deviceType || "").trim() === "device" && ["triggerDoorbell", "cancelDoorbell"].includes(String(capabilityId || "").trim());
 }
 
+function resolveNodeName(value) {
+    return String(value || "").trim();
+}
+
+function resolveDeviceName(value) {
+    return String(value || "").trim();
+}
+
+function extractDeviceNameFromPayload(payload) {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        return "";
+    }
+
+    return resolveDeviceName(
+        payload.name
+        || payload.displayName
+        || payload.alias
+        || payload.full_name
+        || payload.id
+    );
+}
+
+function attachDeviceNameToPayload(payload, deviceName) {
+    if (!deviceName) {
+        return payload;
+    }
+
+    if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+        return {
+            ...payload,
+            deviceName
+        };
+    }
+
+    return payload;
+}
+
+function attachDetails(outputMsg, details) {
+    if (!details || typeof details !== "object" || Array.isArray(details)) {
+        return;
+    }
+
+    const currentDetails = outputMsg.details && typeof outputMsg.details === "object" && !Array.isArray(outputMsg.details)
+        ? outputMsg.details
+        : {};
+
+    outputMsg.details = {
+        ...currentDetails,
+        ...details
+    };
+}
+
 module.exports = function(RED) {
     function UnifiAccessDeviceNode(config) {
         RED.nodes.createNode(this, config);
@@ -74,19 +126,52 @@ module.exports = function(RED) {
         node.deviceId = config.deviceId || "";
         node.capability = config.capability || "observe";
         node.capabilityConfig = config.capabilityConfig || "{}";
+        node.deviceName = resolveDeviceName(config.deviceName);
         node.timeout = Number(config.timeout) > 0 ? Number(config.timeout) : 15000;
         node.currentDevice = null;
         node.isObserving = false;
 
+        function resolveOutputDeviceName(payload) {
+            const extracted = extractDeviceNameFromPayload(payload);
+            if (extracted) {
+                node.deviceName = extracted;
+                return extracted;
+            }
+
+            return resolveDeviceName(node.deviceName) || extractDeviceNameFromPayload(node.currentDevice);
+        }
+
+        function decorateOutputMessage(outputMsg, payload, eventName) {
+            const nodeName = resolveNodeName(node.name);
+            const resolvedDeviceName = resolveOutputDeviceName(payload);
+            outputMsg.topic = nodeName;
+            outputMsg.deviceName = resolvedDeviceName || undefined;
+            outputMsg.eventName = String(eventName || "").trim() || undefined;
+            outputMsg.payload = attachDeviceNameToPayload(outputMsg.payload, resolvedDeviceName);
+        }
+
         function sendOutputs(send, stateMsg, eventMsg) {
-            // Keep the state and event channels explicit, mirroring the editor
-            // labels and avoiding shape changes on the output array.
-            send([stateMsg || null, eventMsg || null]);
+            // Access now emits on a single output pin. When both state and
+            // event messages are available, forward them in sequence.
+            try {
+                if (stateMsg) {
+                    send(stateMsg);
+                }
+                if (eventMsg) {
+                    send(eventMsg);
+                }
+            } catch (error) {
+                node.warn(`Access output send failed: ${error && error.message ? error.message : error}`);
+            }
         }
 
         function buildBaseMetadata(deviceType, deviceId, capabilityId, extra) {
+            const nodeName = resolveNodeName(node.name);
+            const resolvedDeviceName = resolveOutputDeviceName(node.currentDevice);
             return {
                 nodeType: "device",
+                name: nodeName || undefined,
+                deviceName: resolvedDeviceName || undefined,
                 deviceType,
                 deviceId,
                 capability: capabilityId,
@@ -99,12 +184,15 @@ module.exports = function(RED) {
             node.currentDevice = payload;
 
             const stateMsg = {
-                payload,
+                payload
+            };
+            decorateOutputMessage(stateMsg, payload, source || "observe");
+            attachDetails(stateMsg, {
                 device: payload,
                 unifiAccess: buildBaseMetadata(deviceType, deviceId, capabilityId, {
                     source: source || "observe"
                 })
-            };
+            });
 
             node.status({ fill: "green", shape: "dot", text: buildNodeStatus(deviceType, payload) });
             sendOutputs(send, stateMsg, null);
@@ -171,11 +259,14 @@ module.exports = function(RED) {
                         skipped: true,
                         reason: "No active doorbell ring is currently tracked by the UniFi Access configuration node."
                     };
-                    skippedMsg.device = node.currentDevice;
-                    skippedMsg.unifiAccess = buildBaseMetadata(deviceType, deviceId, capabilityId, {
-                        source: "request",
-                        skipped: true,
-                        safeCancel: true
+                    decorateOutputMessage(skippedMsg, node.currentDevice, "request:cancelDoorbell:skipped");
+                    attachDetails(skippedMsg, {
+                        device: node.currentDevice,
+                        unifiAccess: buildBaseMetadata(deviceType, deviceId, capabilityId, {
+                            source: "request",
+                            skipped: true,
+                            safeCancel: true
+                        })
                     });
 
                     node.status({ fill: "yellow", shape: "ring", text: "no ring" });
@@ -238,24 +329,47 @@ module.exports = function(RED) {
                 node.server.markDoorbellCanceled(deviceId);
             }
 
-            const stateMsg = {};
-            stateMsg.payload = responseData;
-            stateMsg.statusCode = response.statusCode;
-            stateMsg.headers = response.headers;
-            stateMsg.device = node.currentDevice;
-            stateMsg.unifiAccess = buildBaseMetadata(deviceType, deviceId, capabilityId, {
-                source: "request",
-                method: request.method,
-                path: request.path,
-                capabilityConfig
+            const stateMsg = {
+                payload: responseData
+            };
+            decorateOutputMessage(stateMsg, responseData, `request:${capabilityId}`);
+            attachDetails(stateMsg, {
+                response: {
+                    statusCode: response.statusCode,
+                    headers: response.headers,
+                    method: request.method,
+                    path: request.path
+                },
+                capabilityConfig,
+                device: node.currentDevice,
+                unifiAccess: buildBaseMetadata(deviceType, deviceId, capabilityId, {
+                    source: "request",
+                    method: request.method,
+                    path: request.path,
+                    capabilityConfig
+                })
             });
 
             node.status({ fill: "green", shape: "dot", text: `${capability.label}` });
             sendOutputs(send, stateMsg, null);
         }
 
+        function resolveConfiguredCapabilityDefinition() {
+            const deviceType = resolveDeviceType(node.deviceType);
+            const capabilityId = resolveCapabilityId(node.capability);
+            return getCapabilityDefinition(deviceType, capabilityId, node.currentDevice);
+        }
+
+        function configuredCapabilityOpensEventStream() {
+            const capability = resolveConfiguredCapabilityDefinition();
+            if (capability) {
+                return capability.opensEventStream === true;
+            }
+            return resolveCapabilityId(node.capability) === "observe";
+        }
+
         function shouldObserveConfiguredDevice() {
-            return node.server && node.capability === "observe" && node.deviceType && node.deviceId;
+            return node.server && configuredCapabilityOpensEventStream() && node.deviceType && node.deviceId;
         }
 
         function startObservation() {
@@ -301,22 +415,29 @@ module.exports = function(RED) {
                 const eventName = String(eventPayload.event || "").trim();
 
                 node.status({ fill: "blue", shape: "ring", text: eventName || "event" });
-                sendOutputs(node.send.bind(node), null, {
-                    payload: eventPayload,
+                const resolvedDeviceName = resolveOutputDeviceName(node.currentDevice);
+                const eventMsg = {
+                    payload: attachDeviceNameToPayload(eventPayload, resolvedDeviceName),
+                    topic: resolveNodeName(node.name),
+                    deviceName: resolvedDeviceName || undefined,
+                    eventName: eventName || "event"
+                };
+                attachDetails(eventMsg, {
+                    raw: eventPayload,
                     device: node.currentDevice,
-                    RAW: eventPayload,
                     unifiAccess: buildBaseMetadata(node.deviceType, node.deviceId, "observe", {
                         source: "events",
                         eventType: eventName
                     })
                 });
+                sendOutputs(node.send.bind(node), null, eventMsg);
             } catch (error) {
             }
         };
 
         if (!node.server) {
             node.status({ fill: "red", shape: "ring", text: "config missing" });
-        } else if (node.capability === "observe" && (!node.deviceType || !node.deviceId)) {
+        } else if (configuredCapabilityOpensEventStream() && (!node.deviceType || !node.deviceId)) {
             node.status({ fill: "yellow", shape: "ring", text: "select device" });
         } else {
             if (typeof node.server.addClient === "function") {
@@ -326,12 +447,16 @@ module.exports = function(RED) {
         }
 
         node.on("close", function(done) {
-            if (node.server && typeof node.server.removeClient === "function") {
-                node.server.removeClient(node);
-            }
-            node.isObserving = false;
-            if (typeof done === "function") {
-                done();
+            try {
+                if (node.server && typeof node.server.removeClient === "function") {
+                    node.server.removeClient(node);
+                }
+                node.isObserving = false;
+            } catch (error) {
+            } finally {
+                if (typeof done === "function") {
+                    done();
+                }
             }
         });
     }

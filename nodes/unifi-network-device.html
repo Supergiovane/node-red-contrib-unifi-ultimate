@@ -82,6 +82,8 @@
             server: { value: "", type: "unifi-network-config", required: true },
             deviceType: { value: "", required: true },
             deviceId: { value: "", required: true },
+            deviceName: { value: "" },
+            inputs: { value: 1 },
             capability: { value: "observe", required: true },
             capabilityConfig: { value: "{}" },
             timeout: { value: 15000, required: true, validate: RED.validators.number() }
@@ -95,6 +97,11 @@
             return this.name || this.deviceId || "Unifi Network";
         },
         oneditsave: function () {
+            const selectedCapabilityOpensStream = $("#node-input-capability option:selected").data("opens-stream") === true
+                || $("#node-input-capability option:selected").attr("data-opens-stream") === "true";
+            // Hide the input pin only when the selected action starts an event stream.
+            this.inputs = selectedCapabilityOpensStream ? 0 : 1;
+
             const $capabilityConfig = $("#node-input-capabilityConfig");
             const capabilityConfig = {};
             if ($capabilityConfig.length === 0) {
@@ -144,6 +151,7 @@
             const $server = $("#node-input-server");
             const $deviceType = $("#node-input-deviceType");
             const $deviceId = $("#node-input-deviceId");
+            const $deviceName = $("#node-input-deviceName");
             const $capability = $("#node-input-capability");
             const $capabilityConfig = $("#node-input-capabilityConfig");
             const $capabilityConfigRow = $("#node-row-capabilityConfig");
@@ -405,6 +413,7 @@
                             return false;
                         }
                         if (ui.item) {
+                            $select.data("unifi-user-selection", true);
                             setSelectedValue(ui.item.optionValue, true);
                         }
                         return true;
@@ -524,6 +533,10 @@
                     return "Reading full details of " + normalizedDeviceName + ".";
                 }
 
+                if (normalizedLabel === "Receive Events (Unofficial Stream)") {
+                    return "Listening to the experimental UniFi Network stream. All events will be emitted.";
+                }
+
                 if (normalizedLabel === "List Site Devices") {
                     return "Loading devices from " + normalizedDeviceName + ".";
                 }
@@ -599,6 +612,14 @@
                 $name.val(selectedDeviceName);
             }
 
+            function rememberSelectedDeviceName() {
+                const selectedDeviceName = getSelectedDeviceName();
+                if (!selectedDeviceName) {
+                    return;
+                }
+                $deviceName.val(selectedDeviceName);
+            }
+
             function renderDeviceTypes(items) {
                 deviceTypeDefinitions = Array.isArray(items) ? items.slice() : [];
                 const currentValue = getCurrentOrNodeValue($deviceType, node.deviceType, "");
@@ -633,6 +654,8 @@
                         $capability.append(
                             $("<option></option>")
                                 .val(item.id)
+                                .attr("data-mode", String(item.mode || "").trim())
+                                .attr("data-opens-stream", item.opensEventStream === true ? "true" : "false")
                                 .text(item.label)
                         );
                     });
@@ -866,9 +889,7 @@
                             || item.isOnline === false
                             || item.online === false
                             || String(item.state || "").toLowerCase() === "offline";
-                        if (isOffline && !/\(offline\)/i.test(String(labelParts[0] || ""))) {
-                            labelParts.push("(OffLine)");
-                        } else if (item.state) {
+                        if (!isOffline && item.state) {
                             labelParts.push("[" + item.state + "]");
                         }
                         const $option = $("<option></option>")
@@ -890,7 +911,7 @@
                 });
 
                 makeSelectSearchable($deviceId, "Search items");
-                syncNameFromSelection();
+                rememberSelectedDeviceName();
                 refreshSelectionSummary();
             }
 
@@ -1102,7 +1123,12 @@
                 if (suspendChangeHandling || isInitializingEditor) {
                     return;
                 }
-                syncNameFromSelection();
+                rememberSelectedDeviceName();
+                const isUserSelection = $deviceId.data("unifi-user-selection") === true;
+                $deviceId.removeData("unifi-user-selection");
+                if (isUserSelection) {
+                    syncNameFromSelection();
+                }
                 capabilityConfig = {};
                 writeCapabilityConfig();
                 refreshAfterDeviceChange();
@@ -1168,6 +1194,7 @@
         <label><i class="fa fa-sliders"></i> Action options</label>
         <div id="node-input-capabilityConfigContainer" style="width:70%; display:inline-block;"></div>
         <input type="hidden" id="node-input-capabilityConfig">
+        <input type="hidden" id="node-input-deviceName">
     </div>
     <div id="node-row-advanced" class="unifi-ultimate-advanced">
         <div class="form-row">
@@ -1191,12 +1218,14 @@
     <p><b>Action</b> only shows actions supported by the selected resource. <b>Action options</b> appears only when the selected action needs extra input.</p>
     <p>Action highlights include <code>Read Application Info</code>, <code>Authorize Guest Access</code>, <code>Revoke Guest Access</code>, <code>Restart Device</code>, and <code>Power Cycle Port</code>.</p>
     <p><code>Read Application Info</code> is available on the <code>Site</code> resource type and returns Network application metadata.</p>
+    <p><code>Receive Events (Unofficial Stream)</code> uses a non-official websocket endpoint and is marked experimental. In this mode, <b>Action options</b> exposes <code>All</code> only, and the node emits all received Network events because fine-grained filtering is not currently available.</p>
     <p>When selecting a switch port, the port list shows connected clients or downstream UniFi devices when the controller exposes that information.</p>
-    <p><b>Name</b> is the node name shown in the editor and is updated automatically when you select a different item. <b>Timeout</b> controls the request timeout in milliseconds for direct API calls.</p>
+    <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different item from the list. <b>Timeout</b> controls the request timeout in milliseconds for direct API calls.</p>
 
     <h3>Input</h3>
     <ul>
-        <li>Any incoming message triggers the configured action.</li>
+        <li>When <code>Receive Events (Unofficial Stream)</code> is selected, the input pin is hidden and listening starts automatically after deploy/restart.</li>
+        <li>Any incoming message triggers the configured action, including <code>Read State</code> and <code>Read Details</code>.</li>
         <li>Input message properties are ignored by this node.</li>
     </ul>
 
@@ -1204,6 +1233,29 @@
     <ul>
         <li>Output 1 emits a new message containing the current state or primary capability response.</li>
         <li><code>msg.payload</code> contains the response payload.</li>
-        <li><code>msg.unifiNetwork</code>: standardized metadata for the selected item and capability</li>
+        <li><code>msg.topic</code>: node name from the editor.</li>
+        <li><code>msg.deviceName</code>: remembered/observed selected item name.</li>
+        <li><code>msg.eventName</code>: trigger/event that produced the message.</li>
+        <li><code>msg.details.unifiNetwork</code>: standardized metadata for the selected item and capability.</li>
     </ul>
+    <p>Example output:</p>
+    <pre><code>{
+  "topic": "Switch Soffitta",
+  "deviceName": "Soffitta",
+  "eventName": "request:readState",
+  "payload": {
+    "id": "8c072de0-d71d-37bd-a6f5-eac67c95a314",
+    "name": "Soffitta",
+    "state": "READY",
+    "deviceName": "Soffitta"
+  },
+  "details": {
+    "unifiNetwork": {
+      "nodeType": "device",
+      "deviceType": "device",
+      "capability": "readState",
+      "source": "request"
+    }
+  }
+}</code></pre>
 </script>

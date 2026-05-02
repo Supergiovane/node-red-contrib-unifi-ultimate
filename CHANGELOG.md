@@ -1,5 +1,26 @@
 # Changelog
 
+
+
+## 0.1.6
+
+- added `msg.topic` (node name) across runtime node outputs
+- replaced `msg.friendlyName` with `msg.deviceName` (remembered/observed client or device name)
+- replaced `payload.friendlyName` with `payload.deviceName` when `msg.payload` is an object
+- added `msg.eventName` across runtime node outputs with the trigger/event name that produced each message
+- UniFi Protect: when an observable matches an incoming event, the same event is now also propagated to the events output pin
+- Protect/Access/Network editor: input pin visibility is now driven by registry stream capabilities (hidden only for actions that open event streams)
+- BREAKING CHANGE: Protect and Access device nodes now use a single output pin (state and events share output 1)
+- Presence Detection: input pin removed; polling/listening is always automatic
+- removed the `"(OffLine)"` suffix from Network editor selectors to keep item names clean
+- updated editor auto-name behavior so node `Name` changes only on manual list selection (not during list loading or programmatic value changes)
+- updated README output documentation for `topic`, `deviceName`, and `eventName`
+- stream-based `Receive Events` actions now expose an explicit `All` option so nodes can emit every event for the selected device/client
+- Network Device: added experimental `Receive Events (Unofficial Stream)` capability (non-official websocket endpoint, emits all events with `All` only)
+- Network Control POE: added power-observe actions (`Emit Power Consumption at change` and `Emit Power Consumption at fixed intervals`) with minimum interval 5 seconds and hidden input pin in observe mode
+- Network Control POE: added `msg.payload.portPowerW`, `msg.payload.powerConsumptionSwitchTotal`, and aligned power metadata in `msg.details.unifiNetworkPoe.*`
+- README/Help: added beta notice (< 1.0.0), output payload examples, and guaranteed vs optional power-field documentation
+
 ## 0.1.5
 
 - BREAKING CHANGE: runtime nodes no longer read or apply input message properties to override the configured target, action, payload, query, headers, parameters, or capability options. Incoming messages now only trigger the action configured in the node editor.

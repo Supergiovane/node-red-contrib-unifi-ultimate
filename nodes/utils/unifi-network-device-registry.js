@@ -30,13 +30,39 @@ const COMMON_CAPABILITIES = [
         id: "observe",
         label: "Read State",
         description: "Fetch the selected item state.",
-        mode: "observe"
+        mode: "observe",
+        opensEventStream: false
     },
     {
         id: "getDetails",
         label: "Read Details",
         description: "Fetch full details for the selected item once.",
-        mode: "fetch"
+        mode: "fetch",
+        opensEventStream: false
+    },
+    {
+        id: "observeUnofficialEvents",
+        label: "Receive Events (Unofficial Stream)",
+        description: "Experimental non-official Network websocket stream. Emits all events because granular filtering is not currently available.",
+        mode: "observe",
+        opensEventStream: true,
+        editor: {
+            fields: [
+                {
+                    id: "observable",
+                    label: "Observable",
+                    type: "select",
+                    options: [
+                        {
+                            value: "all",
+                            label: "All"
+                        }
+                    ],
+                    defaultValue: "all",
+                    helpText: "Emit all events received from the unofficial UniFi Network websocket stream."
+                }
+            ]
+        }
     }
 ];
 
@@ -272,6 +298,13 @@ async function getCapabilityOptions(deviceType, capabilityId, context) {
         };
     }
 
+    if (capabilityId === "observeUnofficialEvents") {
+        return {
+            capabilityId,
+            fields: capability.editor.fields.map((field) => ({ ...field }))
+        };
+    }
+
     if (capabilityId === "powerCyclePort") {
         return buildPowerCyclePortCapabilityOptions(capabilityId, capability, context);
     }
@@ -495,6 +528,15 @@ function composeCapabilityExecution(deviceType, capabilityId, capabilityConfig) 
     };
 }
 
+function stripOfflineTag(value) {
+    // Keep the visible label clean. Offline state is already conveyed by
+    // dedicated flags and renderer styling.
+    return String(value || "")
+        .replace(/\s*\(\s*offline\s*\)\s*/ig, " ")
+        .replace(/\s{2,}/g, " ")
+        .trim();
+}
+
 function summarizeDevice(deviceType, device) {
     // The editor uses a normalized summary so different API payload shapes can
     // still be rendered through the same generic dropdown UI.
@@ -542,14 +584,11 @@ function summarizeDevice(deviceType, device) {
         || item.status === "OFFLINE"
         || item.status === "offline"
         || String(item.state || "").trim().toLowerCase() === "offline";
-    const clientName = String(item.hostname || item.name || item.displayName || item.macAddress || resourceId || "Client");
-    const displayName = isOffline && !/\(offline\)/i.test(clientName)
-        ? `${clientName} (OffLine)`
-        : clientName;
+    const clientName = stripOfflineTag(String(item.hostname || item.name || item.displayName || item.macAddress || resourceId || "Client"));
 
     return {
         id: scopedId,
-        name: displayName,
+        name: clientName,
         state: isOffline
             ? "offline"
             : String(item.ipAddress || item.network || item.type || item.state || "").trim(),

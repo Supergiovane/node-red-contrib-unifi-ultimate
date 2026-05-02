@@ -35,6 +35,46 @@ function parseStatusCodeFromError(error) {
     return Number(match[1]);
 }
 
+function resolveNodeName(value) {
+    return String(value || "").trim();
+}
+
+function resolveDeviceName(value) {
+    return String(value || "").trim();
+}
+
+function extractDeviceNameFromClient(client) {
+    if (!client || typeof client !== "object" || Array.isArray(client)) {
+        return "";
+    }
+
+    return resolveDeviceName(
+        client.name
+        || client.displayName
+        || client.hostname
+        || client.alias
+        || client.full_name
+        || client.macAddress
+        || client.id
+    );
+}
+
+function attachDetails(outputMsg, details) {
+    if (!outputMsg || typeof outputMsg !== "object" || Array.isArray(outputMsg)) {
+        return;
+    }
+    if (!details || typeof details !== "object" || Array.isArray(details)) {
+        return;
+    }
+
+    outputMsg.details = {
+        ...(outputMsg.details && typeof outputMsg.details === "object" && !Array.isArray(outputMsg.details)
+            ? outputMsg.details
+            : {}),
+        ...details
+    };
+}
+
 module.exports = function(RED) {
     function UnifiNetworkPresenceNode(config) {
         RED.nodes.createNode(this, config);
@@ -47,6 +87,7 @@ module.exports = function(RED) {
         node.onlineHysteresisSeconds = parseNonNegativeSeconds(config.onlineHysteresis, 15);
         node.offlineHysteresisSeconds = parseNonNegativeSeconds(config.offlineHysteresis, 30);
         node.timeout = Number(config.timeout) > 0 ? Number(config.timeout) : 8000;
+        node.deviceName = resolveDeviceName(config.deviceName);
 
         node.pollTimer = null;
         node.pollInFlight = false;
@@ -72,12 +113,26 @@ module.exports = function(RED) {
             node.status({ fill: "blue", shape: "ring", text: "checking" });
         }
 
+        function resolveOutputDeviceName(payload) {
+            const extracted = extractDeviceNameFromClient(payload) || extractDeviceNameFromClient(node.lastKnownClient);
+            if (extracted) {
+                node.deviceName = extracted;
+                return extracted;
+            }
+
+            return resolveDeviceName(node.deviceName);
+        }
+
         function buildMetadata(clientId, source, extra) {
             // Include hysteresis settings in the emitted metadata so a flow can
             // inspect how the boolean presence value was produced.
             const scoped = decodeScopedDeviceId(clientId);
+            const nodeName = resolveNodeName(node.name);
+            const resolvedDeviceName = resolveOutputDeviceName(node.lastKnownClient);
             return {
                 nodeType: "presence",
+                name: nodeName || undefined,
+                deviceName: resolvedDeviceName || undefined,
                 clientId,
                 siteId: scoped.siteId || undefined,
                 resourceId: scoped.resourceId || undefined,
@@ -92,20 +147,32 @@ module.exports = function(RED) {
         function emitPresence(present, clientId, source, reason, raw) {
             // Emit a normalized boolean payload while still exposing the last
             // known UniFi client object for richer downstream logic.
+            const nodeName = resolveNodeName(node.name);
+            const resolvedDeviceName = resolveOutputDeviceName(node.lastKnownClient);
             const outputMsg = {
                 payload: present,
-                present,
+                topic: nodeName,
+                deviceName: resolvedDeviceName || undefined,
+                eventName: String(reason || source || "").trim() || undefined,
+                present
+            };
+
+            attachDetails(outputMsg, {
                 client: node.lastKnownClient,
                 unifiNetworkPresence: buildMetadata(clientId, source, {
                     reason
                 })
-            };
+            });
 
             if (raw !== undefined) {
-                outputMsg.raw = raw;
+                attachDetails(outputMsg, { raw });
             }
 
-            node.send(outputMsg);
+            try {
+                node.send(outputMsg);
+            } catch (error) {
+                node.warn(`Presence output send failed: ${error && error.message ? error.message : error}`);
+            }
         }
 
         function setPresent(clientId, source, raw) {
@@ -299,12 +366,16 @@ module.exports = function(RED) {
         }
 
         node.on("close", function(done) {
-            if (node.pollTimer) {
-                clearTimeout(node.pollTimer);
-                node.pollTimer = null;
-            }
-            if (typeof done === "function") {
-                done();
+            try {
+                if (node.pollTimer) {
+                    clearTimeout(node.pollTimer);
+                    node.pollTimer = null;
+                }
+            } catch (error) {
+            } finally {
+                if (typeof done === "function") {
+                    done();
+                }
             }
         });
     }

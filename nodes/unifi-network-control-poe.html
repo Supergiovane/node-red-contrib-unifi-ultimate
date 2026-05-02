@@ -93,8 +93,10 @@
             selectionMode: { value: "switchPort", required: true },
             clientLookupId: { value: "" },
             deviceId: { value: "", required: true },
+            deviceName: { value: "" },
             portIdx: { value: 1, required: true, validate: RED.validators.number() },
             action: { value: "cycle", required: true },
+            powerIntervalSeconds: { value: 15, required: true, validate: RED.validators.number() },
             timeout: { value: 15000, required: true, validate: RED.validators.number() }
         },
         inputs: 1,
@@ -105,9 +107,22 @@
         label: function () {
             return this.name || "Control POE";
         },
+        oneditsave: function () {
+            const actionValue = String($("#node-input-action").val() || "").trim().toLowerCase();
+            const opensObservation = ["emitpoweratchange", "emitpoweratinterval"].includes(actionValue);
+            const intervalValue = Number($("#node-input-powerIntervalSeconds").val());
+            const normalizedInterval = Number.isFinite(intervalValue)
+                ? Math.max(5, Math.trunc(intervalValue))
+                : 15;
+
+            $("#node-input-powerIntervalSeconds").val(String(normalizedInterval));
+            this.powerIntervalSeconds = normalizedInterval;
+            this.inputs = opensObservation ? 0 : 1;
+        },
         oneditprepare: function () {
             const node = this;
             const $name = $("#node-input-name");
+            const $deviceName = $("#node-input-deviceName");
             const $server = $("#node-input-server");
             const $selectionMode = $("#node-input-selectionMode");
             const $deviceId = $("#node-input-deviceId");
@@ -119,9 +134,44 @@
             const $rowSwitch = $("#node-row-deviceId");
             const $rowClient = $("#node-row-clientLookupId");
             const $rowPort = $("#node-row-portIdx");
+            const $rowPowerInterval = $("#node-row-powerIntervalSeconds");
+            const $powerIntervalSeconds = $("#node-input-powerIntervalSeconds");
             const $selectionSummary = $("#node-input-selectionSummary");
             const $selectionDetail = $("#node-input-selectionDetail");
             let suspendChangeHandling = false;
+
+            function getSelectedActionValue() {
+                return String($action.val() || node.action || "cycle").trim().toLowerCase();
+            }
+
+            function selectedActionObservesPower() {
+                return ["emitpoweratchange", "emitpoweratinterval"].includes(getSelectedActionValue());
+            }
+
+            function syncEditorInputsFlag() {
+                // Persist dynamic pin visibility: stream-like power observation
+                // modes do not accept input triggers.
+                node.inputs = selectedActionObservesPower() ? 0 : 1;
+            }
+
+            function selectedActionPowerObserveMode() {
+                const value = getSelectedActionValue();
+                if (value === "emitpoweratchange") {
+                    return "change";
+                }
+                if (value === "emitpoweratinterval") {
+                    return "interval";
+                }
+                return "";
+            }
+
+            function normalizeIntervalSeconds(value) {
+                const parsed = Number(value);
+                if (!Number.isFinite(parsed)) {
+                    return 15;
+                }
+                return Math.max(5, Math.trunc(parsed));
+            }
 
             function requestJson(url) {
                 return new Promise(function (resolve, reject) {
@@ -325,6 +375,8 @@
                             return false;
                         }
                         if (ui.item) {
+                            // Mark this as an explicit user selection from the list.
+                            $select.data("unifi-user-selection", true);
                             setSelectedValue(ui.item.optionValue, true);
                         }
                         return true;
@@ -418,6 +470,8 @@
                 const mode = getSelectionMode();
                 const actionLabel = String($action.find("option:selected").text() || "Power Cycle Port").trim();
                 const portLabel = String($portIdx.val() || "").trim();
+                const powerObserveMode = selectedActionPowerObserveMode();
+                const intervalSeconds = normalizeIntervalSeconds($powerIntervalSeconds.val());
 
                 let summary = "Choose a switch and a port.";
                 let detail = "This node sends a port action request to UniFi Network.";
@@ -434,8 +488,30 @@
                     }
                 }
 
+                if (powerObserveMode) {
+                    const targetLabel = mode === "client"
+                        ? (clientName ? (clientName + " (derived switch/port)") : "selected client target")
+                        : (deviceName ? (deviceName + " (port " + (portLabel || "?") + ")") : "selected switch port");
+
+                    if (powerObserveMode === "change") {
+                        summary = "Emit power consumption changes for " + targetLabel + ".";
+                        detail = "After deploy/restart, polling starts automatically and emits only when the selected port power changes.";
+                    } else {
+                        summary = "Emit power consumption every " + intervalSeconds + "s for " + targetLabel + ".";
+                        detail = "After deploy/restart, polling starts automatically and emits at fixed intervals.";
+                    }
+                }
+
                 $selectionSummary.text(summary);
                 $selectionDetail.text(detail);
+            }
+
+            function refreshActionUi() {
+                $rowPowerInterval.toggle(selectedActionObservesPower());
+                if (selectedActionObservesPower()) {
+                    $powerIntervalSeconds.val(String(normalizeIntervalSeconds($powerIntervalSeconds.val())));
+                }
+                syncEditorInputsFlag();
             }
 
             function syncNameFromSelection() {
@@ -448,6 +524,17 @@
 
                 const value = "POE " + targetName;
                 $name.val(value);
+            }
+
+            function rememberSelectedTargetName() {
+                const targetName = getSelectionMode() === "client"
+                    ? getSelectedClientName()
+                    : getSelectedDeviceName();
+                if (!targetName) {
+                    return;
+                }
+
+                $deviceName.val(targetName);
             }
 
             function renderDevices(items) {
@@ -477,7 +564,7 @@
                 }
 
                 makeSelectSearchable($deviceId, "Search switches");
-                syncNameFromSelection();
+                rememberSelectedTargetName();
                 refreshSummary();
             }
 
@@ -490,6 +577,13 @@
                     (ports || []).forEach(function (port) {
                         const idx = String(port.idx);
                         const poe = port.poeEnabled ? " PoE:" + port.poeEnabled : "";
+                        const powerValue = Number(port.poePowerW);
+                        const roundedPower = Number.isFinite(powerValue)
+                            ? Math.round(powerValue * 1000) / 1000
+                            : NaN;
+                        const power = Number.isFinite(powerValue)
+                            ? " Pwr:" + String(roundedPower) + "W"
+                            : "";
                         const state = port.state ? " [" + port.state + "]" : "";
                         const clients = Array.isArray(port.connectedClientNames)
                             ? port.connectedClientNames.filter(Boolean)
@@ -500,7 +594,7 @@
                         $portIdx.append(
                             $("<option></option>")
                                 .val(idx)
-                                .text((port.name || ("Port " + idx)) + state + poe + clientSuffix)
+                                .text((port.name || ("Port " + idx)) + state + poe + power + clientSuffix)
                         );
                     });
 
@@ -532,7 +626,7 @@
                             || item.online === false
                             || String(item.state || "").toLowerCase() === "offline";
                         const stateSuffix = isOffline
-                            ? (/\(offline\)/i.test(String(item.name || item.id || "")) ? "" : " (OffLine)")
+                            ? ""
                             : (item.state ? " [" + item.state + "]" : "");
                         const attachment = item.attachment && typeof item.attachment === "object" ? item.attachment : {};
                         const attachedDeviceName = String(attachment.deviceName || "Switch").trim();
@@ -566,6 +660,7 @@
                 }
 
                 makeSelectSearchable($clientLookupId, "Search clients");
+                rememberSelectedTargetName();
                 refreshSummary();
             }
 
@@ -674,11 +769,17 @@
                     });
             }
 
-            function applySelectedClientTarget() {
+            function applySelectedClientTarget(options) {
+                const settings = options && typeof options === "object" ? options : {};
+                const shouldSyncName = settings.syncName === true;
                 const $selected = $clientLookupId.find("option:selected");
                 const targetDeviceId = String($selected.attr("data-attached-device-id") || "").trim();
                 const targetPortIdx = String($selected.attr("data-attached-port-idx") || "").trim();
                 if (!targetDeviceId || targetPortIdx === "") {
+                    rememberSelectedTargetName();
+                    if (shouldSyncName) {
+                        syncNameFromSelection();
+                    }
                     refreshSummary();
                     return Promise.resolve();
                 }
@@ -700,7 +801,6 @@
                         suspendChangeHandling = false;
                     }
                     makeSelectSearchable($deviceId, "Search switches");
-                    syncNameFromSelection();
 
                     return loadPorts().then(function () {
                         if (hasOptionValue($portIdx, targetPortIdx)) {
@@ -712,6 +812,10 @@
                             }
                         }
 
+                        rememberSelectedTargetName();
+                        if (shouldSyncName) {
+                            syncNameFromSelection();
+                        }
                         refreshSummary();
                     });
                 });
@@ -745,17 +849,30 @@
                 if (suspendChangeHandling) {
                     return;
                 }
-                syncNameFromSelection();
+                rememberSelectedTargetName();
+                const isUserSelection = $deviceId.data("unifi-user-selection") === true;
+                $deviceId.removeData("unifi-user-selection");
+                if (isUserSelection) {
+                    syncNameFromSelection();
+                }
                 loadPorts();
             });
 
             $portIdx.on("change", refreshSummary);
-            $action.on("change", refreshSummary);
+            $action.on("change", function () {
+                refreshActionUi();
+                refreshSummary();
+            });
+            $powerIntervalSeconds.on("change", function () {
+                $powerIntervalSeconds.val(String(normalizeIntervalSeconds($powerIntervalSeconds.val())));
+                refreshSummary();
+            });
             $selectionMode.on("change", function () {
                 if (suspendChangeHandling) {
                     return;
                 }
                 refreshSelectionModeUi();
+                rememberSelectedTargetName();
                 if (getSelectionMode() === "client") {
                     applySelectedClientTarget();
                 } else {
@@ -766,8 +883,11 @@
                 if (suspendChangeHandling) {
                     return;
                 }
+                rememberSelectedTargetName();
+                const isUserSelection = $clientLookupId.data("unifi-user-selection") === true;
+                $clientLookupId.removeData("unifi-user-selection");
                 if (getSelectionMode() === "client") {
-                    applySelectedClientTarget();
+                    applySelectedClientTarget({ syncName: isUserSelection });
                 } else {
                     refreshSummary();
                 }
@@ -796,9 +916,11 @@
             if (!$action.val()) {
                 $action.val("cycle");
             }
+            $powerIntervalSeconds.val(String(normalizeIntervalSeconds(node.powerIntervalSeconds)));
             makeSelectSearchable($deviceId, "Search switches");
             makeSelectSearchable($clientLookupId, "Search clients");
             refreshSelectionModeUi();
+            refreshActionUi();
             $refreshDevices.find("i").addClass("fa-spin");
             $refreshClients.find("i").addClass("fa-spin");
             loadEditorData();
@@ -852,7 +974,13 @@
             <option value="enable">Enable PoE</option>
             <option value="disable">Disable PoE</option>
             <option value="cycle">Power Cycle</option>
+            <option value="emitPowerAtChange">Emit Power Consumption at change</option>
+            <option value="emitPowerAtInterval">Emit Power Consumption at fixed intervals</option>
         </select>
+    </div>
+    <div class="form-row" id="node-row-powerIntervalSeconds" style="display:none;">
+        <label for="node-input-powerIntervalSeconds"><i class="fa fa-repeat"></i> Interval (s)</label>
+        <input type="text" id="node-input-powerIntervalSeconds" placeholder="15">
     </div>
     <div class="form-row">
         <div class="unifi-ultimate-card">
@@ -875,6 +1003,7 @@
             <label for="node-input-timeout"><i class="fa fa-clock-o"></i> Timeout</label>
             <input type="text" id="node-input-timeout" placeholder="15000">
         </div>
+        <input type="hidden" id="node-input-deviceName">
     </div>
 </script>
 
@@ -887,12 +1016,14 @@
     <p><b>Switch</b> selects the adopted UniFi switch. The selector is searchable.</p>
     <p><b>Client</b> lists clients with known switch and port mapping. The selector is searchable.</p>
     <p><b>Port</b> selects the physical port index. Port labels include connected clients or downstream UniFi devices when available.</p>
-    <p><b>Action</b> executes the configured PoE operation. Enable and Disable update the UniFi port override (<code>poe_mode</code> auto/off). Power Cycle uses the official Network port action.</p>
-    <p><b>Name</b> is the node name shown in the editor and is updated automatically when you select a different switch or client target.</p>
+    <p><b>Action</b> executes the configured PoE operation. Enable and Disable update the UniFi port override (<code>poe_mode</code> auto/off). Power Cycle uses the official Network port action. You can also use <code>Emit Power Consumption at change</code> and <code>Emit Power Consumption at fixed intervals</code>.</p>
+    <p><b>Interval (s)</b> is used by power-consumption emit actions and has a minimum of <code>5</code> seconds.</p>
+    <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different switch or client target.</p>
     <p><b>Timeout</b> controls the request timeout in milliseconds.</p>
 
     <h3>Input</h3>
     <ul>
+        <li>When using <code>Emit Power Consumption at change</code> or <code>Emit Power Consumption at fixed intervals</code>, the input pin is hidden and listening starts automatically after deploy/restart.</li>
         <li>Any incoming message triggers the configured action.</li>
         <li>Input message properties are ignored by this node.</li>
     </ul>
@@ -901,6 +1032,67 @@
     <ul>
         <li>The node emits a new message after the configured action completes.</li>
         <li><code>msg.payload</code>: API response payload.</li>
-        <li><code>msg.unifiNetworkPoe</code>: metadata with device/site/action/port.</li>
+        <li><code>msg.topic</code>: node name from the editor.</li>
+        <li><code>msg.deviceName</code>: remembered selected switch/client name.</li>
+        <li><code>msg.eventName</code>: action that produced the message.</li>
+        <li><code>msg.details.unifiNetworkPoe</code>: metadata with device/site/action/port.</li>
+        <li><code>msg.details.unifiNetworkPoe.portPowerW</code>: current PoE power draw (watts) for the selected port when available.</li>
+        <li><code>msg.payload.powerConsumptionSwitchTotal</code>: sum of PoE power draw of all switch ports (watts) when available.</li>
+        <li>Power-consumption emit actions produce <code>msg.payload.portPowerW</code> and include <code>msg.payload.powerChanged</code>.</li>
     </ul>
+    <p><b>Power fields (guaranteed vs optional)</b></p>
+    <table style="width:100%; border-collapse:collapse;">
+        <thead>
+            <tr>
+                <th style="text-align:left; border-bottom:1px solid #ddd; padding:4px 6px;">Field</th>
+                <th style="text-align:left; border-bottom:1px solid #ddd; padding:4px 6px;">Guaranteed</th>
+                <th style="text-align:left; border-bottom:1px solid #ddd; padding:4px 6px;">Notes</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td style="padding:4px 6px;"><code>msg.payload.portIdx</code></td>
+                <td style="padding:4px 6px;">Yes</td>
+                <td style="padding:4px 6px;">Selected port index.</td>
+            </tr>
+            <tr>
+                <td style="padding:4px 6px;"><code>msg.payload.portName</code></td>
+                <td style="padding:4px 6px;">Yes</td>
+                <td style="padding:4px 6px;">Selected port display name.</td>
+            </tr>
+            <tr>
+                <td style="padding:4px 6px;"><code>msg.payload.portPowerW</code></td>
+                <td style="padding:4px 6px;">No</td>
+                <td style="padding:4px 6px;">Current port PoE draw in watts, when UniFi exposes it.</td>
+            </tr>
+            <tr>
+                <td style="padding:4px 6px;"><code>msg.payload.powerConsumptionSwitchTotal</code></td>
+                <td style="padding:4px 6px;">No</td>
+                <td style="padding:4px 6px;">Sum of all switch-port PoE draws in watts, when available.</td>
+            </tr>
+        </tbody>
+    </table>
+    <p>Example output:</p>
+    <pre><code>{
+  "topic": "POE Soffitta Port 2",
+  "deviceName": "Soffitta",
+  "eventName": "request:enable",
+  "payload": {
+    "status": "ok",
+    "deviceName": "Soffitta",
+    "portIdx": 2,
+    "portName": "Port 2",
+    "portPowerW": 2.6,
+    "powerConsumptionSwitchTotal": 36.4
+  },
+  "details": {
+    "unifiNetworkPoe": {
+      "nodeType": "poe-control",
+      "action": "enable",
+      "portIdx": 2,
+      "portPowerW": 2.6,
+      "powerConsumptionSwitchTotal": 36.4
+    }
+  }
+}</code></pre>
 </script>

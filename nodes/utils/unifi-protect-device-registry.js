@@ -72,7 +72,8 @@ const COMMON_CAPABILITIES = [
         description: "Fetch current state and keep listening to Protect streams.",
         method: "GET",
         pathKind: "detail",
-        mode: "observe"
+        mode: "observe",
+        opensEventStream: true
     },
     {
         id: "getDetails",
@@ -185,6 +186,30 @@ const LIGHT_OBSERVABLE_DEFINITIONS = [
         eventTypes: []
     }
 ];
+
+const ALL_OBSERVABLE_VALUE = "all";
+const ALL_OBSERVABLE_OPTION = {
+    value: ALL_OBSERVABLE_VALUE,
+    label: "All"
+};
+const OBSERVABLE_SCOPE_FIELD_ID = "observableScopeId";
+const CAMERA_OBSERVABLE_SCOPE_DEFINITIONS = {
+    smartDetectZone: {
+        kind: "zone",
+        label: "Zone",
+        allLabel: "All zones"
+    },
+    smartDetectLoiterZone: {
+        kind: "zone",
+        label: "Zone",
+        allLabel: "All zones"
+    },
+    smartDetectLine: {
+        kind: "line",
+        label: "Line",
+        allLabel: "All lines"
+    }
+};
 
 function createSetPropertyCapability() {
     // "Update One Property" is built once and reused across multiple device
@@ -608,10 +633,7 @@ async function getCapabilityOptions(deviceType, capabilityId, context) {
     // The editor asks the registry for action options. Some actions are fully
     // static, while others need live API discovery before the fields can exist.
     if (capabilityId === "observe") {
-        const observableDefinitions = getObservableDefinitions(deviceType);
-        if (observableDefinitions.length > 0) {
-            return buildObservableFields(deviceType, context);
-        }
+        return buildObservableFields(deviceType, context);
     }
 
     const capability = getCapabilityDefinition(deviceType, capabilityId, context && context.device);
@@ -925,27 +947,38 @@ function buildAssetFileOptions(files) {
         : [];
 }
 
-function buildObservableFields(deviceType, context) {
+async function buildObservableFields(deviceType, context) {
     // Observables let the generic "Receive Events" capability expose a simple
     // boolean output tailored to the selected Protect device family.
     const capabilityConfig = normalizeObject(context && context.capabilityConfig);
     const observableOptions = getObservableOptions(deviceType);
     const selectedObservable = resolveSelectedObservable(observableOptions, capabilityConfig.observable);
+    const fields = [
+        {
+            id: "observable",
+            label: "Observable",
+            type: "select",
+            reloadOnChange: true,
+            options: observableOptions,
+            defaultValue: selectedObservable,
+            helpText: selectedObservable === ALL_OBSERVABLE_VALUE
+                ? "Emit all events for the selected Protect device."
+                : selectedObservable
+                ? buildObservableHelpText(deviceType, selectedObservable)
+                : "Select which boolean state should be exposed on msg.payload."
+        }
+    ];
+
+    if (deviceType === "camera") {
+        const scopeField = await buildCameraObservableScopeField(context, selectedObservable, capabilityConfig);
+        if (scopeField) {
+            fields.push(scopeField);
+        }
+    }
 
     return {
         capabilityId: "observe",
-        fields: [
-            {
-                id: "observable",
-                label: "Observable",
-                type: "select",
-                options: observableOptions,
-                defaultValue: selectedObservable,
-                helpText: selectedObservable
-                    ? buildObservableHelpText(deviceType, selectedObservable)
-                    : "Select which boolean state should be exposed on msg.payload."
-            }
-        ]
+        fields
     };
 }
 
@@ -1312,16 +1345,22 @@ function getObservableDefinitions(deviceType) {
 }
 
 function getObservableOptions(deviceType) {
-    return getObservableDefinitions(deviceType).map((definition) => ({
+    const specificOptions = getObservableDefinitions(deviceType).map((definition) => ({
         value: definition.id,
         label: formatObservableLabel(deviceType, definition.id, definition.label)
     }));
+
+    return [ALL_OBSERVABLE_OPTION].concat(specificOptions);
 }
 
 function resolveSelectedObservable(options, configuredObservable) {
     const normalized = String(configuredObservable || "").trim();
     if (normalized && options.some((option) => option.value === normalized)) {
         return normalized;
+    }
+
+    if (options.some((option) => option.value === ALL_OBSERVABLE_VALUE)) {
+        return ALL_OBSERVABLE_VALUE;
     }
 
     return options.length > 0 ? options[0].value : "";
@@ -1468,13 +1507,13 @@ function resolveLightObservableState(light, observable, fallbackValue) {
     return normalizeBooleanState(rawValue, fallbackValue);
 }
 
-function resolveObservableEventValue(deviceType, event, observable) {
+function resolveObservableEventValue(deviceType, event, observable, observableScopeId) {
     if (deviceType === "sensor") {
         return resolveSensorObservableEventValue(event, observable);
     }
 
     if (deviceType === "camera") {
-        return resolveCameraObservableEventValue(event, observable);
+        return resolveCameraObservableEventValue(event, observable, observableScopeId);
     }
 
     if (deviceType === "light") {
@@ -1515,7 +1554,7 @@ function resolveSensorObservableEventValue(event, observable) {
     };
 }
 
-function resolveCameraObservableEventValue(event, observable) {
+function resolveCameraObservableEventValue(event, observable, observableScopeId) {
     if (!event || typeof event !== "object") {
         return { matched: false };
     }
@@ -1526,8 +1565,24 @@ function resolveCameraObservableEventValue(event, observable) {
         return { matched: false };
     }
 
+    const scopeDefinition = CAMERA_OBSERVABLE_SCOPE_DEFINITIONS[String(observable || "").trim()];
+    if (scopeDefinition) {
+        const configuredScopeId = normalizeScopeIdentifier(observableScopeId);
+        if (configuredScopeId) {
+            const eventScopeIds = extractObservableScopeIds(event, scopeDefinition.kind);
+            if (eventScopeIds.size === 0 || !eventScopeIds.has(configuredScopeId)) {
+                return {
+                    matched: false,
+                    eventTypeMatched: true,
+                    scopeMatched: false
+                };
+            }
+        }
+    }
+
     return {
         matched: true,
+        eventTypeMatched: true,
         value: event.end === null || event.end === undefined
     };
 }
@@ -1566,6 +1621,233 @@ function normalizeBooleanState(value, fallbackValue) {
     }
 
     return fallbackValue;
+}
+
+async function buildCameraObservableScopeField(context, selectedObservable, capabilityConfig) {
+    const scopeDefinition = CAMERA_OBSERVABLE_SCOPE_DEFINITIONS[String(selectedObservable || "").trim()];
+    if (!scopeDefinition) {
+        return null;
+    }
+
+    let camera = context && context.device && typeof context.device === "object" && !Array.isArray(context.device)
+        ? context.device
+        : null;
+
+    if (!camera && context && context.deviceId && typeof context.fetchDevice === "function") {
+        camera = await context.fetchDevice("camera", context.deviceId);
+    }
+
+    const discoveredOptions = collectCameraObservableScopeOptions(camera, scopeDefinition.kind);
+    const options = [{
+        value: "",
+        label: scopeDefinition.allLabel
+    }].concat(discoveredOptions);
+    const selectedScope = resolveSelectedObservableScope(options, capabilityConfig[OBSERVABLE_SCOPE_FIELD_ID]);
+
+    return {
+        id: OBSERVABLE_SCOPE_FIELD_ID,
+        label: scopeDefinition.label,
+        type: "select",
+        options,
+        defaultValue: selectedScope,
+        helpText: discoveredOptions.length > 0
+            ? `Optional filter: emit only ${scopeDefinition.kind} events for the selected ${scopeDefinition.kind}.`
+            : `No ${scopeDefinition.kind} list was discovered for this camera. Events are emitted for all ${scopeDefinition.kind}s.`
+    };
+}
+
+function resolveSelectedObservableScope(options, configuredScope) {
+    const normalized = normalizeScopeIdentifier(configuredScope);
+    if (!normalized) {
+        return "";
+    }
+
+    return Array.isArray(options) && options.some((option) => String(option.value) === normalized)
+        ? normalized
+        : "";
+}
+
+function collectCameraObservableScopeOptions(camera, scopeKind) {
+    if (!camera || typeof camera !== "object" || Array.isArray(camera)) {
+        return [];
+    }
+
+    const branchPattern = scopeKind === "line"
+        ? /(line|lines|smart.?detect.?line)/i
+        : /(zone|zones|smart.?detect.?zone|loiter)/i;
+    const options = [];
+    const visited = new Set();
+
+    function addOption(idValue, labelValue) {
+        const id = normalizeScopeIdentifier(idValue);
+        if (!id) {
+            return;
+        }
+
+        options.push({
+            value: id,
+            label: resolveScopeOptionLabel(scopeKind, id, labelValue)
+        });
+    }
+
+    function collectFromCandidate(candidate) {
+        if (candidate === undefined || candidate === null) {
+            return;
+        }
+
+        if (typeof candidate === "string" || typeof candidate === "number") {
+            addOption(candidate, "");
+            return;
+        }
+
+        if (Array.isArray(candidate)) {
+            candidate.forEach((entry) => {
+                if (entry && typeof entry === "object") {
+                    const scopeId = firstDefinedValue(entry, scopeKind === "line"
+                        ? ["lineId", "lineID", "line_id", "id", "index"]
+                        : ["zoneId", "zoneID", "zone_id", "id", "index"]);
+                    const scopeName = firstDefinedValue(entry, ["name", "displayName", "label", "title"]);
+                    if (scopeId !== undefined && scopeId !== null && String(scopeId).trim() !== "") {
+                        addOption(scopeId, scopeName);
+                    }
+                } else {
+                    addOption(entry, "");
+                }
+            });
+            return;
+        }
+
+        if (typeof candidate === "object") {
+            const directId = firstDefinedValue(candidate, scopeKind === "line"
+                ? ["lineId", "lineID", "line_id", "id"]
+                : ["zoneId", "zoneID", "zone_id", "id"]);
+            if (directId !== undefined && directId !== null && String(directId).trim() !== "") {
+                addOption(directId, firstDefinedValue(candidate, ["name", "displayName", "label", "title"]));
+            }
+
+            Object.entries(candidate).forEach(([key, value]) => {
+                if (/^-?\d+$/.test(String(key || ""))) {
+                    addOption(key, value && typeof value === "object"
+                        ? firstDefinedValue(value, ["name", "displayName", "label", "title"])
+                        : "");
+                    if (value && typeof value === "object") {
+                        const keyedId = firstDefinedValue(value, scopeKind === "line"
+                            ? ["lineId", "lineID", "line_id", "id"]
+                            : ["zoneId", "zoneID", "zone_id", "id"]);
+                        if (keyedId !== undefined && keyedId !== null && String(keyedId).trim() !== "") {
+                            addOption(keyedId, firstDefinedValue(value, ["name", "displayName", "label", "title"]));
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    function walk(current, depth) {
+        if (!current || typeof current !== "object" || visited.has(current) || depth > 8) {
+            return;
+        }
+        visited.add(current);
+
+        Object.entries(current).forEach(([key, value]) => {
+            if (branchPattern.test(String(key || ""))) {
+                collectFromCandidate(value);
+            }
+            walk(value, depth + 1);
+        });
+    }
+
+    walk(camera, 0);
+
+    return deduplicateOptions(options).sort((left, right) => left.label.localeCompare(right.label));
+}
+
+function resolveScopeOptionLabel(scopeKind, id, labelValue) {
+    const explicitLabel = String(labelValue || "").trim();
+    if (explicitLabel) {
+        return explicitLabel;
+    }
+
+    return scopeKind === "line"
+        ? `Line ${id}`
+        : `Zone ${id}`;
+}
+
+function normalizeScopeIdentifier(value) {
+    if (value === undefined || value === null) {
+        return "";
+    }
+    const normalized = String(value).trim();
+    return normalized;
+}
+
+function extractObservableScopeIds(value, scopeKind) {
+    const ids = new Set();
+    const visited = new Set();
+    const keyPattern = scopeKind === "line"
+        ? /(lineIds?|smart.?detect.?lineIds?)/i
+        : /(zoneIds?|smart.?detect.?zoneIds?|loiterZoneIds?)/i;
+
+    function addIdentifier(entry) {
+        const normalized = normalizeScopeIdentifier(entry);
+        if (normalized) {
+            ids.add(normalized);
+        }
+    }
+
+    function collectIdentifiers(candidate) {
+        if (candidate === undefined || candidate === null) {
+            return;
+        }
+
+        if (typeof candidate === "string" || typeof candidate === "number") {
+            addIdentifier(candidate);
+            return;
+        }
+
+        if (Array.isArray(candidate)) {
+            candidate.forEach((entry) => {
+                if (entry && typeof entry === "object") {
+                    const objectId = firstDefinedValue(entry, scopeKind === "line"
+                        ? ["lineId", "lineID", "line_id", "id"]
+                        : ["zoneId", "zoneID", "zone_id", "id"]);
+                    if (objectId !== undefined) {
+                        addIdentifier(objectId);
+                    }
+                } else {
+                    addIdentifier(entry);
+                }
+            });
+            return;
+        }
+
+        if (typeof candidate === "object") {
+            const objectId = firstDefinedValue(candidate, scopeKind === "line"
+                ? ["lineId", "lineID", "line_id", "id"]
+                : ["zoneId", "zoneID", "zone_id", "id"]);
+            if (objectId !== undefined) {
+                addIdentifier(objectId);
+            }
+        }
+    }
+
+    function walk(current, depth) {
+        if (!current || typeof current !== "object" || visited.has(current) || depth > 8) {
+            return;
+        }
+        visited.add(current);
+
+        Object.entries(current).forEach(([key, nestedValue]) => {
+            if (keyPattern.test(String(key || ""))) {
+                collectIdentifiers(nestedValue);
+            }
+            walk(nestedValue, depth + 1);
+        });
+    }
+
+    walk(value, 0);
+
+    return ids;
 }
 
 function firstDefinedValue(value, paths) {

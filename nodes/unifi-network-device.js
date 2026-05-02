@@ -8,6 +8,8 @@ const {
     resolveScopedIdentifiers
 } = require("./utils/unifi-network-device-registry");
 const { extractNetworkData } = require("./utils/unifi-network-utils");
+const UNOFFICIAL_NETWORK_STREAM_CAPABILITY = "observeUnofficialEvents";
+const UNOFFICIAL_POLL_INTERVAL_MS = 3000;
 
 function resolveDeviceType(configuredDeviceType) {
     return String(configuredDeviceType || "").trim();
@@ -61,6 +63,401 @@ function buildNodeStatus(deviceType, payload) {
     return baseName || normalizedType || "ready";
 }
 
+function resolveNodeName(value) {
+    return String(value || "").trim();
+}
+
+function resolveDeviceName(value) {
+    return String(value || "").trim();
+}
+
+function extractDeviceNameFromPayload(payload) {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        return "";
+    }
+
+    return resolveDeviceName(
+        payload.name
+        || payload.displayName
+        || payload.hostname
+        || payload.alias
+        || payload.full_name
+        || payload.macAddress
+        || payload.id
+    );
+}
+
+function attachDeviceNameToPayload(payload, deviceName) {
+    if (!deviceName) {
+        return payload;
+    }
+
+    if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+        return {
+            ...payload,
+            deviceName
+        };
+    }
+
+    return payload;
+}
+
+function attachDetails(outputMsg, details) {
+    if (!outputMsg || typeof outputMsg !== "object" || Array.isArray(outputMsg)) {
+        return;
+    }
+    if (!details || typeof details !== "object" || Array.isArray(details)) {
+        return;
+    }
+
+    outputMsg.details = {
+        ...(outputMsg.details && typeof outputMsg.details === "object" && !Array.isArray(outputMsg.details)
+            ? outputMsg.details
+            : {}),
+        ...details
+    };
+}
+
+function extractNetworkEventName(payload) {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        return "event";
+    }
+
+    const meta = payload.meta && typeof payload.meta === "object" ? payload.meta : {};
+    return String(
+        payload.event
+        || payload.type
+        || payload.eventType
+        || payload.message
+        || payload.action
+        || meta.message
+        || "event"
+    ).trim() || "event";
+}
+
+function summarizePortForFingerprint(port) {
+    const item = port && typeof port === "object" && !Array.isArray(port)
+        ? port
+        : {};
+    const idxRaw = item.idx ?? item.index ?? item.portIdx ?? item.port_index ?? item.id;
+    const idxNumeric = Number(idxRaw);
+    const idx = Number.isFinite(idxNumeric) ? Math.trunc(idxNumeric) : null;
+    const poe = item.poe && typeof item.poe === "object" ? item.poe : {};
+
+    return {
+        idx,
+        name: String(item.name || item.portName || ""),
+        connector: String(item.connector || item.medium || ""),
+        state: String(item.state || item.status || ""),
+        speedMbps: item.speedMbps !== undefined ? Number(item.speedMbps) : undefined,
+        maxSpeedMbps: item.maxSpeedMbps !== undefined ? Number(item.maxSpeedMbps) : undefined,
+        poeEnabled: poe.enabled === true ? true : poe.enabled === false ? false : undefined,
+        poeState: String(poe.state || ""),
+        poeType: poe.type !== undefined ? Number(poe.type) : undefined
+    };
+}
+
+function resolvePortDisplayName(portSummary) {
+    const item = portSummary && typeof portSummary === "object" ? portSummary : {};
+    const explicitName = String(item.name || "").trim();
+    if (explicitName) {
+        return explicitName;
+    }
+
+    const idx = Number(item.idx);
+    if (Number.isFinite(idx) && idx > 0) {
+        return `Port ${Math.trunc(idx)}`;
+    }
+
+    return "Port";
+}
+
+function summarizePortsFromDevice(payload) {
+    const item = payload && typeof payload === "object" && !Array.isArray(payload)
+        ? payload
+        : {};
+    const ports = Array.isArray(item.interfaces && item.interfaces.ports)
+        ? item.interfaces.ports
+        : Array.isArray(item.ports)
+            ? item.ports
+            : [];
+
+    return ports
+        .map((port) => summarizePortForFingerprint(port))
+        .filter((entry) => Number.isInteger(entry.idx) && entry.idx >= 0)
+        .sort((left, right) => left.idx - right.idx);
+}
+
+function buildDeviceChangeSummary(deviceType, previousPayload, nextPayload) {
+    const normalizedType = String(deviceType || "").trim();
+    if (normalizedType !== "device") {
+        return {
+            kind: "device",
+            changed: true
+        };
+    }
+
+    const previousPorts = summarizePortsFromDevice(previousPayload);
+    const nextPorts = summarizePortsFromDevice(nextPayload);
+    const previousByIndex = new Map(previousPorts.map((port) => [port.idx, port]));
+    const nextByIndex = new Map(nextPorts.map((port) => [port.idx, port]));
+    const allIndexes = Array.from(new Set(previousPorts.concat(nextPorts).map((port) => port.idx))).sort((a, b) => a - b);
+    const changedPorts = [];
+
+    allIndexes.forEach((idx) => {
+        const before = previousByIndex.get(idx);
+        const after = nextByIndex.get(idx);
+        const beforeComparable = before
+            ? {
+                state: before.state,
+                speedMbps: before.speedMbps,
+                maxSpeedMbps: before.maxSpeedMbps,
+                poeEnabled: before.poeEnabled,
+                poeState: before.poeState,
+                poeType: before.poeType
+            }
+            : null;
+        const afterComparable = after
+            ? {
+                state: after.state,
+                speedMbps: after.speedMbps,
+                maxSpeedMbps: after.maxSpeedMbps,
+                poeEnabled: after.poeEnabled,
+                poeState: after.poeState,
+                poeType: after.poeType
+            }
+            : null;
+
+        if (JSON.stringify(beforeComparable) === JSON.stringify(afterComparable)) {
+            return;
+        }
+
+        const reference = after || before || { idx };
+        changedPorts.push({
+            portIdx: idx,
+            portName: resolvePortDisplayName(reference),
+            connector: String(reference.connector || ""),
+            before: beforeComparable,
+            after: afterComparable
+        });
+    });
+
+    return {
+        kind: "device-ports",
+        changed: changedPorts.length > 0,
+        portCount: changedPorts.length,
+        ports: changedPorts
+    };
+}
+
+function extractPortIndexFromEventPayload(payload) {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        return undefined;
+    }
+
+    const candidates = [
+        payload.portIdx,
+        payload.port_idx,
+        payload.port,
+        payload.switchPort,
+        payload.switch_port,
+        payload.switch_port_idx,
+        payload.interface,
+        payload.interfaceIdx,
+        payload.interface_idx
+    ];
+
+    for (const value of candidates) {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed) && parsed >= 0) {
+            return Math.trunc(parsed);
+        }
+    }
+
+    return undefined;
+}
+
+function extractReadableToken(payload, paths) {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload) || !Array.isArray(paths)) {
+        return "";
+    }
+
+    for (const path of paths) {
+        const segments = String(path || "").split(".").filter(Boolean);
+        let current = payload;
+        for (const segment of segments) {
+            if (!current || typeof current !== "object" || Array.isArray(current)) {
+                current = undefined;
+                break;
+            }
+            current = current[segment];
+        }
+
+        const normalized = String(current || "").trim();
+        if (normalized) {
+            return normalized;
+        }
+    }
+
+    return "";
+}
+
+function buildEventTransitionSummary(before, after) {
+    const values = [];
+    if (before && after && before.poeEnabled !== after.poeEnabled) {
+        values.push(`PoE ${before.poeEnabled === true ? "on" : before.poeEnabled === false ? "off" : "n/a"} -> ${after.poeEnabled === true ? "on" : after.poeEnabled === false ? "off" : "n/a"}`);
+    }
+    if (before && after && String(before.state || "") !== String(after.state || "")) {
+        values.push(`state ${String(before.state || "n/a")} -> ${String(after.state || "n/a")}`);
+    }
+    if (before && after && String(before.poeState || "") !== String(after.poeState || "")) {
+        values.push(`PoE state ${String(before.poeState || "n/a")} -> ${String(after.poeState || "n/a")}`);
+    }
+    if (before && after && before.speedMbps !== after.speedMbps) {
+        values.push(`speed ${before.speedMbps !== undefined ? before.speedMbps : "n/a"} -> ${after.speedMbps !== undefined ? after.speedMbps : "n/a"} Mbps`);
+    }
+
+    return values;
+}
+
+function buildReadableEventSummary(eventName, source, readable) {
+    const normalizedName = String(eventName || "event").trim() || "event";
+    const normalizedSource = String(source || "").trim();
+    const details = [];
+
+    if (readable && readable.portName) {
+        details.push(readable.portName);
+    }
+    if (readable && readable.clientName) {
+        details.push(`client ${readable.clientName}`);
+    }
+    if (readable && readable.switchName) {
+        details.push(`switch ${readable.switchName}`);
+    }
+    if (readable && readable.siteName) {
+        details.push(`site ${readable.siteName}`);
+    }
+
+    if (readable && readable.changeSummary && Array.isArray(readable.changeSummary.ports) && readable.changeSummary.ports.length === 1) {
+        const change = readable.changeSummary.ports[0];
+        const transitions = buildEventTransitionSummary(change.before, change.after);
+        if (transitions.length > 0) {
+            details.push(transitions.join(", "));
+        }
+    } else if (readable && readable.changeSummary && Number(readable.changeSummary.portCount) > 1) {
+        details.push(`${readable.changeSummary.portCount} ports changed`);
+    }
+
+    const suffix = details.length > 0 ? `: ${details.join(" | ")}` : "";
+    const sourcePrefix = normalizedSource ? `[${normalizedSource}] ` : "";
+    return `${sourcePrefix}${normalizedName}${suffix}`;
+}
+
+function buildReadableEventPayload(options) {
+    const safeOptions = options && typeof options === "object" ? options : {};
+    const eventPayload = safeOptions.eventPayload && typeof safeOptions.eventPayload === "object" && !Array.isArray(safeOptions.eventPayload)
+        ? safeOptions.eventPayload
+        : {};
+    const source = String(safeOptions.source || "").trim();
+    const eventName = String(safeOptions.eventName || extractNetworkEventName(eventPayload) || "event").trim() || "event";
+    const portIdx = safeOptions.portIdx !== undefined ? Number(safeOptions.portIdx) : extractPortIndexFromEventPayload(eventPayload);
+    const normalizedPortIdx = Number.isFinite(portIdx) && portIdx >= 0 ? Math.trunc(portIdx) : undefined;
+    const portName = String(safeOptions.portName || "").trim() || undefined;
+    const changeSummary = safeOptions.changeSummary && typeof safeOptions.changeSummary === "object"
+        ? safeOptions.changeSummary
+        : undefined;
+    const clientName = extractReadableToken(eventPayload, [
+        "clientName",
+        "client.name",
+        "client.hostname",
+        "hostname",
+        "sta_name",
+        "station.name"
+    ]) || undefined;
+    const switchName = extractReadableToken(eventPayload, [
+        "switchName",
+        "switch.name",
+        "deviceName",
+        "device.name",
+        "ap_name",
+        "sw"
+    ]) || undefined;
+    const siteName = extractReadableToken(eventPayload, [
+        "siteName",
+        "site.name",
+        "site",
+        "network.name"
+    ]) || undefined;
+
+    const readable = {
+        eventType: eventName,
+        source: source || undefined,
+        portIdx: normalizedPortIdx,
+        portName,
+        clientName,
+        switchName,
+        siteName,
+        changeSummary
+    };
+
+    const summary = buildReadableEventSummary(eventName, source, readable);
+    return {
+        ...eventPayload,
+        eventType: eventName,
+        source: source || undefined,
+        summary,
+        portIdx: normalizedPortIdx,
+        portName,
+        clientName,
+        switchName,
+        siteName,
+        changes: changeSummary
+    };
+}
+
+function buildObservationFingerprint(deviceType, payload) {
+    const item = payload && typeof payload === "object" && !Array.isArray(payload)
+        ? payload
+        : {};
+    const normalizedType = String(deviceType || "").trim();
+
+    if (normalizedType === "device") {
+        const ports = Array.isArray(item.interfaces && item.interfaces.ports)
+            ? item.interfaces.ports
+            : Array.isArray(item.ports)
+                ? item.ports
+                : [];
+        const summarizedPorts = ports
+            .map((port) => summarizePortForFingerprint(port))
+            .filter((entry) => Number.isInteger(entry.idx) && entry.idx >= 0)
+            .sort((left, right) => left.idx - right.idx);
+
+        return JSON.stringify({
+            id: item.id,
+            name: item.name || item.displayName || item.hostname || "",
+            state: item.state || item.status || "",
+            ports: summarizedPorts
+        });
+    }
+
+    if (normalizedType === "client") {
+        return JSON.stringify({
+            id: item.id,
+            name: item.name || item.displayName || item.hostname || item.macAddress || "",
+            state: item.state || item.status || "",
+            ipAddress: item.ipAddress || item.ip || "",
+            uplinkDeviceId: item.uplinkDeviceId || item.uplink_device_id || item.switchId || item.switch_id || "",
+            uplinkPortIdx: item.uplinkPortIdx || item.uplink_port_idx || item.switchPort || item.switch_port || ""
+        });
+    }
+
+    return JSON.stringify({
+        id: item.id,
+        name: item.name || item.displayName || "",
+        state: item.state || item.status || ""
+    });
+}
+
 module.exports = function(RED) {
     function UnifiNetworkDeviceNode(config) {
         RED.nodes.createNode(this, config);
@@ -72,16 +469,56 @@ module.exports = function(RED) {
         node.deviceId = config.deviceId || "";
         node.capability = config.capability || "observe";
         node.capabilityConfig = config.capabilityConfig || "{}";
+        node.deviceName = resolveDeviceName(config.deviceName);
         node.timeout = Number(config.timeout) > 0 ? Number(config.timeout) : 15000;
         node.currentDevice = null;
         node.isObserving = false;
+        node.unofficialPollTimer = null;
+        node.unofficialLastFingerprint = "";
+
+        function resolveOutputDeviceName(payload) {
+            const extracted = extractDeviceNameFromPayload(payload);
+            if (extracted) {
+                node.deviceName = extracted;
+                return extracted;
+            }
+
+            return resolveDeviceName(node.deviceName);
+        }
+
+        function decorateOutputMessage(outputMsg, payload, eventName) {
+            const nodeName = resolveNodeName(node.name);
+            const resolvedDeviceName = resolveOutputDeviceName(payload);
+            outputMsg.topic = nodeName;
+            outputMsg.deviceName = resolvedDeviceName || undefined;
+            outputMsg.eventName = String(eventName || "").trim() || undefined;
+            outputMsg.payload = attachDeviceNameToPayload(outputMsg.payload, resolvedDeviceName);
+        }
+
+        function resolvePortNameFromCurrentDevice(portIdx) {
+            const parsed = Number(portIdx);
+            if (!Number.isFinite(parsed) || parsed < 0 || !node.currentDevice) {
+                return undefined;
+            }
+
+            const ports = summarizePortsFromDevice(node.currentDevice);
+            const matched = ports.find((port) => Number(port.idx) === Math.trunc(parsed));
+            if (!matched) {
+                return `Port ${Math.trunc(parsed)}`;
+            }
+            return resolvePortDisplayName(matched);
+        }
 
         function buildBaseMetadata(deviceType, deviceId, capabilityId, extra) {
             // Scoped identifiers let downstream flows work with either plain
             // resource ids or the site/resource pair returned by UniFi Network.
             const scoped = resolveScopedIdentifiers(deviceType, deviceId, node.currentDevice);
+            const nodeName = resolveNodeName(node.name);
+            const resolvedDeviceName = resolveOutputDeviceName(node.currentDevice);
             return {
                 nodeType: "device",
+                name: nodeName || undefined,
+                deviceName: resolvedDeviceName || undefined,
                 deviceType,
                 deviceId,
                 siteId: scoped.siteId || undefined,
@@ -96,13 +533,19 @@ module.exports = function(RED) {
             // reuse it when composing follow-up requests.
             const payload = await node.server.fetchDeviceByTypeAndId(deviceType, deviceId);
             node.currentDevice = payload;
+            if (isUnofficialNetworkStreamCapabilitySelected()) {
+                node.unofficialLastFingerprint = buildObservationFingerprint(deviceType, payload);
+            }
 
             const outputMsg = {};
             outputMsg.payload = payload;
-            outputMsg.device = payload;
-            outputMsg.unifiNetwork = buildBaseMetadata(deviceType, deviceId, capabilityId, {
-                source: source || "observe"
+            attachDetails(outputMsg, {
+                device: payload,
+                unifiNetwork: buildBaseMetadata(deviceType, deviceId, capabilityId, {
+                    source: source || "observe"
+                })
             });
+            decorateOutputMessage(outputMsg, payload, source || "observe");
 
             node.status({ fill: "green", shape: "dot", text: buildNodeStatus(deviceType, payload) });
             send(outputMsg);
@@ -168,35 +611,168 @@ module.exports = function(RED) {
 
             const outputMsg = {};
             outputMsg.payload = responseData;
-            outputMsg.statusCode = response.statusCode;
-            outputMsg.headers = response.headers;
-            outputMsg.device = node.currentDevice;
-            outputMsg.unifiNetwork = buildBaseMetadata(deviceType, deviceId, capabilityId, {
-                source: "request",
-                method: request.method,
-                path: request.path,
-                capabilityConfig
+            attachDetails(outputMsg, {
+                response: {
+                    statusCode: response.statusCode,
+                    headers: response.headers,
+                    method: request.method,
+                    path: request.path
+                },
+                device: node.currentDevice,
+                capabilityConfig,
+                unifiNetwork: buildBaseMetadata(deviceType, deviceId, capabilityId, {
+                    source: "request",
+                    method: request.method,
+                    path: request.path,
+                    capabilityConfig
+                })
             });
+            decorateOutputMessage(outputMsg, responseData, `request:${capabilityId}`);
 
             node.status({ fill: "green", shape: "dot", text: `${capability.label}` });
             send(outputMsg);
         }
 
-        function shouldObserveConfiguredDevice() {
-            return node.server && node.capability === "observe" && node.deviceType && node.deviceId;
+        function resolveConfiguredCapabilityDefinition() {
+            const deviceType = resolveDeviceType(node.deviceType);
+            const capabilityId = resolveCapabilityId(node.capability);
+            return getCapabilityDefinition(deviceType, capabilityId);
         }
 
-        function startObservation() {
-            if (!shouldObserveConfiguredDevice() || node.isObserving) {
+        function configuredCapabilityOpensEventStream() {
+            const capability = resolveConfiguredCapabilityDefinition();
+            return Boolean(capability && capability.opensEventStream === true);
+        }
+
+        function isUnofficialNetworkStreamCapabilitySelected() {
+            return resolveCapabilityId(node.capability) === UNOFFICIAL_NETWORK_STREAM_CAPABILITY;
+        }
+
+        node.shouldReceiveUnofficialNetworkEvents = () => Boolean(node.isObserving && isUnofficialNetworkStreamCapabilitySelected());
+
+        function shouldAutoReceiveConfiguredDevice() {
+            return node.server
+                && configuredCapabilityOpensEventStream()
+                && node.deviceType
+                && node.deviceId;
+        }
+
+        function shouldUseUnofficialPollingFallback() {
+            return Boolean(
+                node.server
+                && node.isObserving
+                && isUnofficialNetworkStreamCapabilitySelected()
+                && node.deviceType
+                && node.deviceId
+            );
+        }
+
+        function stopUnofficialPollingFallback() {
+            if (node.unofficialPollTimer) {
+                clearInterval(node.unofficialPollTimer);
+                node.unofficialPollTimer = null;
+            }
+        }
+
+        function startUnofficialPollingFallback() {
+            if (!shouldUseUnofficialPollingFallback() || node.unofficialPollTimer) {
+                return;
+            }
+
+            node.unofficialPollTimer = setInterval(async () => {
+                try {
+                    if (!shouldUseUnofficialPollingFallback()) {
+                        return;
+                    }
+
+                    if (node.server && typeof node.server.isUnofficialNetworkWebSocketConnected === "function" && node.server.isUnofficialNetworkWebSocketConnected()) {
+                        return;
+                    }
+
+                    const latest = await node.server.fetchDeviceByTypeAndId(node.deviceType, node.deviceId);
+                    const nextFingerprint = buildObservationFingerprint(node.deviceType, latest);
+                    if (!nextFingerprint) {
+                        return;
+                    }
+
+                    if (!node.unofficialLastFingerprint) {
+                        node.currentDevice = latest;
+                        node.unofficialLastFingerprint = nextFingerprint;
+                        return;
+                    }
+
+                    if (node.unofficialLastFingerprint === nextFingerprint) {
+                        return;
+                    }
+
+                    const previousDeviceSnapshot = node.currentDevice;
+                    const changeSummary = buildDeviceChangeSummary(node.deviceType, previousDeviceSnapshot, latest);
+                    node.currentDevice = latest;
+                    node.unofficialLastFingerprint = nextFingerprint;
+                    const primaryPortChange = changeSummary && Array.isArray(changeSummary.ports) && changeSummary.ports.length === 1
+                        ? changeSummary.ports[0]
+                        : null;
+                    const resolvedEventName = primaryPortChange
+                        ? `port-${primaryPortChange.portIdx}-changed`
+                        : "state-changed";
+                    node.status({ fill: "blue", shape: "ring", text: resolvedEventName });
+                    const readablePayload = buildReadableEventPayload({
+                        eventName: resolvedEventName,
+                        source: "poll-fallback",
+                        eventPayload: {},
+                        portIdx: primaryPortChange ? primaryPortChange.portIdx : undefined,
+                        portName: primaryPortChange ? primaryPortChange.portName : undefined,
+                        changeSummary
+                    });
+                    const output = {};
+                    output.payload = attachDeviceNameToPayload({
+                        ...readablePayload,
+                        device: latest,
+                    }, resolveOutputDeviceName(latest));
+                    if (primaryPortChange) {
+                        output.portIdx = primaryPortChange.portIdx;
+                        output.portName = primaryPortChange.portName;
+                    }
+                    attachDetails(output, {
+                        device: latest,
+                        changeSummary,
+                        unifiNetwork: buildBaseMetadata(node.deviceType, node.deviceId, node.capability, {
+                            source: "poll-fallback",
+                            eventType: resolvedEventName,
+                            changeSummary,
+                            portIdx: primaryPortChange ? primaryPortChange.portIdx : undefined,
+                            portName: primaryPortChange ? primaryPortChange.portName : undefined,
+                            unofficialStream: true
+                        })
+                    });
+                    decorateOutputMessage(output, output.payload, resolvedEventName);
+                    node.send(output);
+                } catch (error) {
+                }
+            }, UNOFFICIAL_POLL_INTERVAL_MS);
+        }
+
+        function startAutoReceive() {
+            if (!shouldAutoReceiveConfiguredDevice() || node.isObserving) {
                 return;
             }
 
             node.isObserving = true;
+            // The config node may have registered this client before it became
+            // an active stream subscriber; force websocket bootstrap now.
+            if (node.server && typeof node.server.ensureUnofficialNetworkWebSocket === "function") {
+                try {
+                    node.server.ensureUnofficialNetworkWebSocket();
+                } catch (error) {
+                }
+            }
+            const capabilityId = resolveCapabilityId(node.capability);
 
             // Emit an initial snapshot at startup so the flow has a known state
-            // before any manual input arrives.
-            fetchDeviceState(node.deviceType, node.deviceId, "observe", node.send.bind(node), "startup").catch(() => {
+            // as soon as Node-RED starts.
+            fetchDeviceState(node.deviceType, node.deviceId, capabilityId, node.send.bind(node), "startup").catch(() => {
             });
+            startUnofficialPollingFallback();
         }
 
         node.on("input", async function(_msg, send, done) {
@@ -219,24 +795,71 @@ module.exports = function(RED) {
             }
         });
 
+        node.handleNetworkEventUpdate = (eventPayload) => {
+            try {
+                if (!node.shouldReceiveUnofficialNetworkEvents()) {
+                    return;
+                }
+
+                const eventName = extractNetworkEventName(eventPayload);
+                const eventPortIdx = extractPortIndexFromEventPayload(eventPayload);
+                const resolvedPortName = eventPortIdx !== undefined ? resolvePortNameFromCurrentDevice(eventPortIdx) : undefined;
+                const readablePayload = buildReadableEventPayload({
+                    eventName,
+                    source: "events",
+                    eventPayload,
+                    portIdx: eventPortIdx,
+                    portName: resolvedPortName
+                });
+                node.status({ fill: "blue", shape: "ring", text: String(readablePayload.summary || eventName) });
+                const output = {};
+                output.payload = attachDeviceNameToPayload(readablePayload, resolveOutputDeviceName(node.currentDevice));
+                if (eventPortIdx !== undefined) {
+                    output.portIdx = eventPortIdx;
+                    output.portName = resolvedPortName;
+                    output.payload.portIdx = eventPortIdx;
+                    output.payload.portName = output.portName;
+                }
+                attachDetails(output, {
+                    rawEvent: eventPayload,
+                    device: node.currentDevice,
+                    unifiNetwork: buildBaseMetadata(node.deviceType, node.deviceId, node.capability, {
+                        source: "events",
+                        eventType: eventName,
+                        portIdx: eventPortIdx,
+                        portName: resolvedPortName,
+                        unofficialStream: true
+                    })
+                });
+                decorateOutputMessage(output, output.payload, eventName);
+                node.send(output);
+            } catch (error) {
+            }
+        };
+
         if (node.server && typeof node.server.addClient === "function") {
             node.server.addClient(node);
         }
 
-        if (shouldObserveConfiguredDevice()) {
-            startObservation();
-        } else if (node.capability === "observe" && (!node.deviceType || !node.deviceId)) {
+        if (shouldAutoReceiveConfiguredDevice()) {
+            startAutoReceive();
+        } else if (configuredCapabilityOpensEventStream() && (!node.deviceType || !node.deviceId)) {
             node.status({ fill: "grey", shape: "ring", text: "set device" });
         } else {
             node.status({ fill: "grey", shape: "ring", text: "ready" });
         }
 
         node.on("close", function(done) {
-            if (node.server && typeof node.server.removeClient === "function") {
-                node.server.removeClient(node);
-            }
-            if (typeof done === "function") {
-                done();
+            try {
+                if (node.server && typeof node.server.removeClient === "function") {
+                    node.server.removeClient(node);
+                }
+                stopUnofficialPollingFallback();
+            } catch (error) {
+            } finally {
+                if (typeof done === "function") {
+                    done();
+                }
             }
         });
     }

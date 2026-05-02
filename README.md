@@ -15,6 +15,8 @@
 
 Control and monitor `UniFi Network`, `UniFi Protect`, and `UniFi Access` from Node-RED without building API requests by hand.
 
+> **Beta notice:** until version `1.0.0`, this package should be considered **BETA** and may include **breaking changes** between releases.
+
 [View Changelog](CHANGELOG.md)
 
 ## Install
@@ -38,18 +40,7 @@ In Node-RED:
 
 The incoming message is only a trigger. The node uses the item and action configured in the editor.
 
-## Available Nodes
-
-| Node                        | What it does                                                          |
-| --------------------------- | --------------------------------------------------------------------- |
-| `Unifi Network Config`      | Connection settings for UniFi Network                                 |
-| `Unifi Network Device`      | Read sites, devices, clients, and run supported Network actions       |
-| `Unifi Network Presence`    | Track whether a selected client is present                            |
-| `Unifi Network Control POE` | Enable, disable, or power-cycle PoE on a switch port                  |
-| `Unifi Protect Config`      | Connection settings for UniFi Protect                                 |
-| `Unifi Protect Device`      | Read cameras/sensors/devices, receive events, and run Protect actions |
-| `Unifi Access Config`       | Connection settings for UniFi Access                                  |
-| `Unifi Access Device`       | Read doors/devices, receive events, and run Access actions            |
+           |
 
 ## UniFi Network
 
@@ -141,15 +132,152 @@ Common uses:
 
 Most nodes send the result on output 1.
 
-Protect and Access device nodes can also send live events on output 2 when `Receive Events` is selected.
+Protect and Access device nodes emit both state and live event messages on the same output pin when `Receive Events` is selected.
 
 Useful metadata is attached to the output message, for example:
 
-- `msg.unifiNetwork`
-- `msg.unifiNetworkPresence`
-- `msg.unifiNetworkPoe`
-- `msg.unifiProtect`
-- `msg.unifiAccess`
+- `msg.topic` (node `Name` from the editor)
+- `msg.deviceName` (remembered/observed client or device name)
+- `msg.eventName` (event/trigger that produced the output message)
+- `msg.details.unifiNetwork`
+- `msg.details.unifiNetworkPresence`
+- `msg.details.unifiNetworkPoe`
+- `msg.details.unifiProtect`
+- `msg.details.unifiAccess`
+
+When `msg.payload` is an object, it also includes `payload.deviceName` with the same value.
+
+## Output Examples
+
+### Unifi Network Device
+
+```json
+{
+  "topic": "Switch Soffitta",
+  "deviceName": "Soffitta",
+  "eventName": "request:readState",
+  "payload": {
+    "id": "8c072de0-d71d-37bd-a6f5-eac67c95a314",
+    "name": "Soffitta",
+    "state": "READY",
+    "deviceName": "Soffitta"
+  },
+  "details": {
+    "unifiNetwork": {
+      "nodeType": "device",
+      "deviceType": "device",
+      "capability": "readState",
+      "source": "request"
+    }
+  }
+}
+```
+
+### Unifi Network Presence
+
+```json
+{
+  "topic": "iPhone Massimo Presence",
+  "deviceName": "iPhone-Massimo",
+  "eventName": "connected",
+  "payload": true,
+  "present": true,
+  "details": {
+    "unifiNetworkPresence": {
+      "nodeType": "presence",
+      "source": "poll",
+      "reason": "connected"
+    }
+  }
+}
+```
+
+### Unifi Network Control POE
+
+```json
+{
+  "topic": "POE Soffitta Port 2",
+  "deviceName": "Soffitta",
+  "eventName": "request:enable",
+  "payload": {
+    "status": "ok",
+    "deviceName": "Soffitta",
+    "portIdx": 2,
+    "portName": "Port 2",
+    "portPowerW": 2.6,
+    "powerConsumptionSwitchTotal": 36.4
+  },
+  "details": {
+    "unifiNetworkPoe": {
+      "nodeType": "poe-control",
+      "action": "enable",
+      "portIdx": 2,
+      "portPowerW": 2.6,
+      "powerConsumptionSwitchTotal": 36.4
+    }
+  }
+}
+```
+
+Power fields for `Unifi Network Control POE`:
+
+| Field                                      | Type     | Guaranteed | Notes                                                                 |
+| ------------------------------------------ | -------- | ---------- | --------------------------------------------------------------------- |
+| `msg.payload.portIdx`                      | number   | yes        | Selected port index.                                                  |
+| `msg.payload.portName`                     | string   | yes        | Selected port display name.                                           |
+| `msg.payload.portPowerW`                   | number   | no         | Current PoE power draw for the selected port (W), when UniFi exposes it. |
+| `msg.payload.powerConsumptionSwitchTotal`  | number   | no         | Sum of all port PoE consumptions on the switch (W), when available.  |
+| `msg.details.unifiNetworkPoe.portPowerW`   | number   | no         | Same value as `msg.payload.portPowerW`.                               |
+| `msg.details.unifiNetworkPoe.powerConsumptionSwitchTotal` | number | no | Same value as `msg.payload.powerConsumptionSwitchTotal`.              |
+
+### Unifi Protect Device
+
+```json
+{
+  "topic": "Front Door Camera",
+  "deviceName": "Front Door Camera",
+  "eventName": "smartDetectZone",
+  "payload": {
+    "device": {
+      "id": "camera-id"
+    },
+    "event": {
+      "type": "smartDetectZone"
+    },
+    "deviceName": "Front Door Camera"
+  },
+  "details": {
+    "unifiProtect": {
+      "nodeType": "device",
+      "deviceType": "camera",
+      "capability": "observe",
+      "source": "events"
+    }
+  }
+}
+```
+
+### Unifi Access Device
+
+```json
+{
+  "topic": "Main Door",
+  "deviceName": "Main Door",
+  "eventName": "door.unlock",
+  "payload": {
+    "event": "door.unlock",
+    "deviceName": "Main Door"
+  },
+  "details": {
+    "unifiAccess": {
+      "nodeType": "device",
+      "deviceType": "door",
+      "capability": "observe",
+      "source": "events"
+    }
+  }
+}
+```
 
 ## Example Flows
 

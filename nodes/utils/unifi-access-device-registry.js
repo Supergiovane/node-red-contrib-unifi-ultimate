@@ -21,7 +21,8 @@ const COMMON_CAPABILITIES = [
         id: "observe",
         label: "Receive Events",
         description: "Fetch the current state and subscribe to Access notifications.",
-        mode: "observe"
+        mode: "observe",
+        opensEventStream: true
     },
     {
         id: "getDetails",
@@ -264,6 +265,24 @@ function getCapabilityDefinition(deviceType, capabilityId, device) {
 async function getCapabilityOptions(deviceType, capabilityId, context) {
     // Access capability options are currently static, but keep the async shape
     // consistent with the other registries so the editor can treat them equally.
+    if (capabilityId === "observe") {
+        return {
+            capabilityId,
+            fields: [
+                {
+                    id: "observable",
+                    label: "Observable",
+                    type: "select",
+                    options: [
+                        { value: "all", label: "All" }
+                    ],
+                    defaultValue: "all",
+                    helpText: "Emit all events for the selected Access device or door."
+                }
+            ]
+        };
+    }
+
     const capability = getCapabilityDefinition(deviceType, capabilityId, context && context.device);
     if (!capability || !capability.editor || !Array.isArray(capability.editor.fields)) {
         return {

@@ -31,6 +31,9 @@ module.exports = function(RED) {
         node.baseUrl = buildBaseUrlFromHost(node.host);
         node.rejectUnauthorized = config.rejectUnauthorized !== false && config.rejectUnauthorized !== "false";
         node.nodeClients = [];
+        node.wsNetworkEvents = null;
+        node.reconnectTimer = null;
+        node.isClosing = false;
 
         node.getApiKey = () => node.credentials && node.credentials.apiKey;
 
@@ -388,6 +391,258 @@ module.exports = function(RED) {
             return getCapabilitiesForType(deviceType, selectedDevice);
         };
 
+        node.buildUnofficialNetworkWebSocketUrl = () => {
+            const normalizedHost = String(node.host || "")
+                .trim()
+                .replace(/^https?:\/\//i, "")
+                .replace(/\/.*$/, "");
+            if (!normalizedHost) {
+                throw new Error("The configured host is empty or invalid.");
+            }
+
+            const url = new URL(`https://${normalizedHost}/proxy/network/wss/s/default/events`);
+            url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+            return url.toString();
+        };
+
+        node.hasUnofficialNetworkStreamSubscribers = () => node.nodeClients.some((client) => {
+            try {
+                return client && typeof client.shouldReceiveUnofficialNetworkEvents === "function" && client.shouldReceiveUnofficialNetworkEvents();
+            } catch (error) {
+                return false;
+            }
+        });
+        node.isUnofficialNetworkWebSocketConnected = () => Boolean(
+            node.wsNetworkEvents
+            && typeof node.wsNetworkEvents.readyState === "number"
+            && node.wsNetworkEvents.readyState === 1
+        );
+
+        node.broadcastUnofficialNetworkEvent = (eventPayload) => {
+            node.nodeClients.forEach((client) => {
+                try {
+                    if (client && typeof client.handleNetworkEventUpdate === "function") {
+                        client.handleNetworkEventUpdate(eventPayload);
+                    }
+                } catch (error) {
+                }
+            });
+        };
+
+        node.scheduleNetworkReconnect = () => {
+            if (node.isClosing || node.reconnectTimer || !node.hasUnofficialNetworkStreamSubscribers()) {
+                return;
+            }
+
+            node.reconnectTimer = setTimeout(() => {
+                node.reconnectTimer = null;
+                try {
+                    node.ensureUnofficialNetworkWebSocket();
+                } catch (error) {
+                    node.warn(`Network websocket reconnect failed: ${error && error.message ? error.message : error}`);
+                }
+            }, 5000);
+        };
+
+        node.ensureUnofficialNetworkWebSocket = () => {
+            if (node.isClosing || node.wsNetworkEvents || !node.hasUnofficialNetworkStreamSubscribers()) {
+                return;
+            }
+
+            let WebSocket;
+            const apiKey = String(node.getApiKey() || "").trim();
+            if (!apiKey) {
+                return;
+            }
+
+            try {
+                ({ WebSocket } = require("ws"));
+            } catch (error) {
+                node.warn("The 'ws' dependency is not installed. Experimental UniFi Network event stream is disabled until dependencies are installed.");
+                return;
+            }
+
+            let ws;
+            try {
+                ws = new WebSocket(node.buildUnofficialNetworkWebSocketUrl(), {
+                    headers: {
+                        [API_KEY_HEADER]: apiKey,
+                        Accept: "application/json"
+                    },
+                    rejectUnauthorized: node.rejectUnauthorized
+                });
+            } catch (error) {
+                node.warn(`Unable to open Network websocket: ${error && error.message ? error.message : error}`);
+                node.scheduleNetworkReconnect();
+                return;
+            }
+
+            ws.on("message", (rawData) => {
+                try {
+                    const text = Buffer.isBuffer(rawData) ? rawData.toString("utf8") : String(rawData);
+                    if (!text) {
+                        return;
+                    }
+                    try {
+                        node.broadcastUnofficialNetworkEvent(JSON.parse(text));
+                    } catch (error) {
+                        node.broadcastUnofficialNetworkEvent({ raw: text });
+                    }
+                } catch (error) {
+                }
+            });
+
+            ws.on("close", () => {
+                try {
+                    if (node.wsNetworkEvents === ws) {
+                        node.wsNetworkEvents = null;
+                    }
+                    node.scheduleNetworkReconnect();
+                } catch (error) {
+                }
+            });
+
+            ws.on("error", () => {
+                try {
+                    ws.close();
+                } catch (error) {
+                }
+            });
+
+            node.wsNetworkEvents = ws;
+        };
+
+        node.closeUnofficialNetworkWebSocket = () => {
+            if (node.reconnectTimer) {
+                clearTimeout(node.reconnectTimer);
+                node.reconnectTimer = null;
+            }
+
+            if (node.wsNetworkEvents) {
+                try {
+                    node.wsNetworkEvents.close();
+                } catch (error) {
+                }
+                node.wsNetworkEvents = null;
+            }
+        };
+
+        function parsePowerNumber(value) {
+            if (typeof value === "number" && Number.isFinite(value)) {
+                return value;
+            }
+            if (typeof value === "string") {
+                const parsed = Number.parseFloat(value.replace(",", "."));
+                if (Number.isFinite(parsed)) {
+                    return parsed;
+                }
+            }
+            return undefined;
+        }
+
+        function roundPowerWatts(value) {
+            const parsed = parsePowerNumber(value);
+            if (!Number.isFinite(parsed)) {
+                return undefined;
+            }
+            return Math.round(parsed * 1000) / 1000;
+        }
+
+        function extractPortPoePowerWatts(normalizedPort, poe) {
+            const directWattsCandidates = [
+                poe && poe.powerW,
+                poe && poe.power_w,
+                poe && poe.power,
+                poe && poe.powerConsumption,
+                poe && poe.power_consumption,
+                poe && poe.consumption,
+                poe && poe.currentPowerW,
+                poe && poe.currentPower,
+                poe && poe.outputPower,
+                poe && poe.output_power,
+                normalizedPort && normalizedPort.poePowerW,
+                normalizedPort && normalizedPort.poe_power_w,
+                normalizedPort && normalizedPort.poe_power,
+                normalizedPort && normalizedPort.powerW,
+                normalizedPort && normalizedPort.power_w,
+                normalizedPort && normalizedPort.power,
+                normalizedPort && normalizedPort.powerConsumption,
+                normalizedPort && normalizedPort.power_consumption
+            ];
+            for (const candidate of directWattsCandidates) {
+                const watts = roundPowerWatts(candidate);
+                if (Number.isFinite(watts)) {
+                    return watts;
+                }
+            }
+
+            const milliWattsCandidates = [
+                poe && poe.powerMilliwatts,
+                poe && poe.power_mw,
+                poe && poe.powerMw,
+                poe && poe.consumption_mw,
+                normalizedPort && normalizedPort.poePowerMilliwatts,
+                normalizedPort && normalizedPort.poe_power_mw,
+                normalizedPort && normalizedPort.power_mw
+            ];
+            for (const candidate of milliWattsCandidates) {
+                const milliWatts = parsePowerNumber(candidate);
+                if (Number.isFinite(milliWatts)) {
+                    return roundPowerWatts(milliWatts / 1000);
+                }
+            }
+
+            return undefined;
+        }
+
+        function extractLegacyPortPoePowerWatts(legacyPort) {
+            const item = legacyPort && typeof legacyPort === "object" && !Array.isArray(legacyPort)
+                ? legacyPort
+                : {};
+            const nestedPoe = item.poe && typeof item.poe === "object" ? item.poe : {};
+
+            const wattsCandidates = [
+                item.poe_power,
+                item.poePower,
+                item.poe_power_w,
+                item.poe_power_watts,
+                item.poe_watts,
+                item.poe_current_power,
+                item.poe_power_consumption,
+                item.power,
+                item.power_w,
+                item.power_watts,
+                nestedPoe.power,
+                nestedPoe.powerW,
+                nestedPoe.power_w,
+                nestedPoe.powerConsumption,
+                nestedPoe.outputPower,
+                nestedPoe.output_power
+            ];
+            for (const candidate of wattsCandidates) {
+                const watts = roundPowerWatts(candidate);
+                if (Number.isFinite(watts)) {
+                    return watts;
+                }
+            }
+
+            const milliWattsCandidates = [
+                item.poe_power_mw,
+                item.poe_mw,
+                item.power_mw,
+                nestedPoe.power_mw,
+                nestedPoe.powerMilliwatts
+            ];
+            for (const candidate of milliWattsCandidates) {
+                const milliWatts = parsePowerNumber(candidate);
+                if (Number.isFinite(milliWatts)) {
+                    return roundPowerWatts(milliWatts / 1000);
+                }
+            }
+
+            return undefined;
+        }
+
         function extractDevicePorts(device) {
             // Switch port information moves around depending on hardware family
             // and firmware version, so probe several common shapes.
@@ -413,16 +668,19 @@ module.exports = function(RED) {
                     const idx = Number.isFinite(idxNumeric) ? Math.trunc(idxNumeric) : index + 1;
                     const poe = normalized.poe && typeof normalized.poe === "object" ? normalized.poe : {};
                     const poeEnabled = poe.enabled;
+                    const poePowerW = extractPortPoePowerWatts(normalized, poe);
 
                     return {
                         idx,
                         name: String(normalized.name || normalized.portName || `Port ${idx}`),
                         state: String(normalized.state || normalized.status || ""),
+                        poeState: String(poe.state || normalized.poe_state || ""),
                         poeEnabled: poeEnabled === true
                             ? "on"
                             : poeEnabled === false
                                 ? "off"
                                 : "",
+                        poePowerW,
                         connectedClientNames: extractPortClientNamesFromRawPort(normalized)
                     };
                 })
@@ -432,6 +690,13 @@ module.exports = function(RED) {
 
         function normalizeString(value) {
             return String(value || "").trim();
+        }
+
+        function stripOfflineTag(value) {
+            return String(value || "")
+                .replace(/\s*\(\s*offline\s*\)\s*/ig, " ")
+                .replace(/\s{2,}/g, " ")
+                .trim();
         }
 
         function normalizeIdentifierKey(value) {
@@ -508,7 +773,7 @@ module.exports = function(RED) {
                 return "";
             }
 
-            return firstNonEmptyString([
+            return stripOfflineTag(firstNonEmptyString([
                 entry.name,
                 entry.hostname,
                 entry.displayName,
@@ -520,7 +785,7 @@ module.exports = function(RED) {
                 entry.mac,
                 entry.ipAddress,
                 entry.ip
-            ]);
+            ]));
         }
 
         function extractPortClientNamesFromRawPort(port) {
@@ -853,14 +1118,14 @@ module.exports = function(RED) {
                 online: item.__unifiUltimateOnline === true,
                 offline: item.__unifiUltimateOnline === false,
                 state: item.__unifiUltimateOnline === false ? "offline" : "online",
-                name: firstNonEmptyString([
+                name: stripOfflineTag(firstNonEmptyString([
                     item.name,
                     item.hostname,
                     item.displayName,
                     item.display_name,
                     macAddress,
                     id
-                ]),
+                ])),
                 ipAddress: firstNonEmptyString([
                     item.ipAddress,
                     item.ip_address,
@@ -941,6 +1206,7 @@ module.exports = function(RED) {
             }
 
             const clientsByPortIdx = new Map();
+            const legacyPortPowerByIdx = new Map();
             function matchesSelectedDevice(attachment) {
                 if (!attachment || attachment.siteId !== scopedDevice.siteId) {
                     return false;
@@ -1056,6 +1322,27 @@ module.exports = function(RED) {
                         return selectedDeviceKeys.has(rawKey) || selectedDeviceKeys.has(compactKey);
                     });
                 });
+                const legacyPortTable = Array.isArray(selectedLegacyDevice && selectedLegacyDevice.port_table)
+                    ? selectedLegacyDevice.port_table
+                    : [];
+                legacyPortTable.forEach((legacyPort, index) => {
+                    const idx = parsePortIndex(
+                        legacyPort && (
+                            legacyPort.port_idx
+                            ?? legacyPort.idx
+                            ?? legacyPort.port_index
+                            ?? legacyPort.index
+                            ?? (index + 1)
+                        )
+                    );
+                    if (!Number.isInteger(idx) || idx < 0) {
+                        return;
+                    }
+                    const powerW = extractLegacyPortPoePowerWatts(legacyPort);
+                    if (Number.isFinite(powerW)) {
+                        legacyPortPowerByIdx.set(idx, powerW);
+                    }
+                });
 
                 const downlinks = Array.isArray(selectedLegacyDevice && selectedLegacyDevice.downlink_table)
                     ? selectedLegacyDevice.downlink_table
@@ -1127,8 +1414,15 @@ module.exports = function(RED) {
                         return true;
                     });
 
+                const mergedPowerW = Number.isFinite(Number(port.poePowerW))
+                    ? Number(port.poePowerW)
+                    : legacyPortPowerByIdx.get(port.idx);
+
                 return {
                     ...port,
+                    poePowerW: Number.isFinite(mergedPowerW)
+                        ? Math.round(mergedPowerW * 1000) / 1000
+                        : undefined,
                     connectedClients,
                     connectedClientNames,
                     connectedClientCount: connectedClients.length
@@ -1448,16 +1742,30 @@ module.exports = function(RED) {
             // Store each consumer only once so config-node fan-out stays clean.
             node.nodeClients = node.nodeClients.filter((entry) => entry && entry.id !== client.id);
             node.nodeClients.push(client);
+            try {
+                node.ensureUnofficialNetworkWebSocket();
+            } catch (error) {
+                node.warn(`Unable to initialize Network websocket: ${error && error.message ? error.message : error}`);
+            }
         };
 
         node.removeClient = (client) => {
             node.nodeClients = node.nodeClients.filter((entry) => entry && client && entry.id !== client.id);
+            if (!node.hasUnofficialNetworkStreamSubscribers()) {
+                node.closeUnofficialNetworkWebSocket();
+            }
         };
 
         node.on("close", function(done) {
-            node.nodeClients = [];
-            if (typeof done === "function") {
-                done();
+            try {
+                node.isClosing = true;
+                node.nodeClients = [];
+                node.closeUnofficialNetworkWebSocket();
+            } catch (error) {
+            } finally {
+                if (typeof done === "function") {
+                    done();
+                }
             }
         });
     }

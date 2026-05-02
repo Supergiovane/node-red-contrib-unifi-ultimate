@@ -62,6 +62,75 @@ function requiresDeviceSpecificCapabilityValidation(deviceType, capabilityId) {
     ].includes(String(capabilityId || "").trim());
 }
 
+function resolveNodeName(value) {
+    return String(value || "").trim();
+}
+
+function resolveDeviceName(value) {
+    return String(value || "").trim();
+}
+
+function extractDeviceNameFromPayload(payload) {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        return "";
+    }
+
+    return resolveDeviceName(
+        payload.name
+        || payload.displayName
+        || payload.alias
+        || payload.full_name
+        || payload.id
+    );
+}
+
+function attachDeviceNameToPayload(payload, deviceName) {
+    if (!deviceName) {
+        return payload;
+    }
+
+    if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+        return {
+            ...payload,
+            deviceName
+        };
+    }
+
+    return payload;
+}
+
+function attachDetails(outputMsg, details) {
+    if (!details || typeof details !== "object" || Array.isArray(details)) {
+        return;
+    }
+
+    const currentDetails = outputMsg.details && typeof outputMsg.details === "object" && !Array.isArray(outputMsg.details)
+        ? outputMsg.details
+        : {};
+
+    outputMsg.details = {
+        ...currentDetails,
+        ...details
+    };
+}
+
+function resolveConfiguredObservable(capabilityConfig) {
+    const observable = String(
+        capabilityConfig && capabilityConfig.observable !== undefined
+            ? capabilityConfig.observable
+            : ""
+    ).trim().toLowerCase();
+    return observable === "all" ? "" : observable;
+}
+
+function resolveConfiguredObservableScope(capabilityConfig) {
+    return String(
+        capabilityConfig && capabilityConfig.observableScopeId !== undefined
+            ? capabilityConfig.observableScopeId
+            : ""
+    ).trim();
+}
+
 module.exports = function(RED) {
     function UnifiProtectDeviceNode(config) {
         RED.nodes.createNode(this, config);
@@ -73,20 +142,53 @@ module.exports = function(RED) {
         node.deviceId = config.deviceId || "";
         node.capability = config.capability || "observe";
         node.capabilityConfig = config.capabilityConfig || "{}";
+        node.deviceName = resolveDeviceName(config.deviceName);
         node.timeout = Number(config.timeout) > 0 ? Number(config.timeout) : 15000;
         node.currentDevice = null;
         node.currentObservableValue = false;
         node.isObserving = false;
 
+        function resolveOutputDeviceName(payload) {
+            const extracted = extractDeviceNameFromPayload(payload);
+            if (extracted) {
+                node.deviceName = extracted;
+                return extracted;
+            }
+
+            return resolveDeviceName(node.deviceName) || extractDeviceNameFromPayload(node.currentDevice);
+        }
+
+        function decorateOutputMessage(outputMsg, payload, eventName) {
+            const nodeName = resolveNodeName(node.name);
+            const resolvedDeviceName = resolveOutputDeviceName(payload);
+            outputMsg.topic = nodeName;
+            outputMsg.deviceName = resolvedDeviceName || undefined;
+            outputMsg.eventName = String(eventName || "").trim() || undefined;
+            outputMsg.payload = attachDeviceNameToPayload(outputMsg.payload, resolvedDeviceName);
+        }
+
         function sendOutputs(send, stateMsg, eventMsg) {
-            // Protect nodes always expose a state-oriented output and an event
-            // output, even when only one of them is used for a given update.
-            send([stateMsg || null, eventMsg || null]);
+            // Protect now emits on a single output pin. When both state and
+            // event messages are available, forward them in sequence.
+            try {
+                if (stateMsg) {
+                    send(stateMsg);
+                }
+                if (eventMsg) {
+                    send(eventMsg);
+                }
+            } catch (error) {
+                node.warn(`Protect output send failed: ${error && error.message ? error.message : error}`);
+            }
         }
 
         function buildBaseMetadata(deviceType, deviceId, capabilityId, extra) {
+            const nodeName = resolveNodeName(node.name);
+            const resolvedDeviceName = resolveOutputDeviceName(node.currentDevice);
             return {
                 nodeType: "device",
+                name: nodeName || undefined,
+                deviceName: resolvedDeviceName || undefined,
                 deviceType,
                 deviceId,
                 capability: capabilityId,
@@ -94,17 +196,23 @@ module.exports = function(RED) {
             };
         }
 
-        function buildObservedStateMessage(deviceType, deviceId, capabilityConfig, payload, source, extra) {
-            const observable = String(capabilityConfig.observable || "").trim();
+        function buildObservedStateMessage(deviceType, deviceId, capabilityConfig, payload, source, extra, eventName) {
+            const resolvedDeviceName = resolveOutputDeviceName(payload);
+            const observable = resolveConfiguredObservable(capabilityConfig);
             if (observable) {
                 // Observables let the node collapse complex Protect payloads into
-                // a stable boolean while preserving the original context in RAW.
+                // a stable boolean while preserving the original context in details.raw.
                 const observableValue = resolveObservableState(deviceType, payload, observable, node.currentObservableValue);
                 node.currentObservableValue = Boolean(observableValue);
 
-                return {
+                const outputMsg = {
                     payload: node.currentObservableValue,
-                    RAW: {
+                    topic: resolveNodeName(node.name),
+                    deviceName: resolvedDeviceName || undefined,
+                    eventName: String(eventName || source || "observe").trim() || undefined
+                };
+                attachDetails(outputMsg, {
+                    raw: {
                         device: payload,
                         observable,
                         source: source || "observe",
@@ -116,14 +224,21 @@ module.exports = function(RED) {
                         observable,
                         ...(extra || {})
                     })
-                };
+                });
+                return outputMsg;
             }
 
-            return {
-                payload,
+            const outputMsg = {
+                payload: attachDeviceNameToPayload(payload, resolvedDeviceName),
+                topic: resolveNodeName(node.name),
+                deviceName: resolvedDeviceName || undefined,
+                eventName: String(eventName || source || "observe").trim() || undefined
+            };
+            attachDetails(outputMsg, {
                 device: payload,
                 unifiProtect: buildBaseMetadata(deviceType, deviceId, "observe", { source: source || "observe", ...(extra || {}) })
-            };
+            });
+            return outputMsg;
         }
 
         async function fetchDeviceState(deviceType, deviceId, capabilityConfig, send, source) {
@@ -193,24 +308,47 @@ module.exports = function(RED) {
                 node.currentDevice = response.payload;
             }
 
-            const stateMsg = {};
-            stateMsg.payload = response.payload;
-            stateMsg.statusCode = response.statusCode;
-            stateMsg.headers = response.headers;
-            stateMsg.device = node.currentDevice;
-            stateMsg.unifiProtect = buildBaseMetadata(deviceType, deviceId, capabilityId, {
-                source: "request",
-                method: request.method,
-                path: request.path,
-                capabilityConfig
+            const stateMsg = {
+                payload: response.payload
+            };
+            decorateOutputMessage(stateMsg, response.payload, `request:${capabilityId}`);
+            attachDetails(stateMsg, {
+                response: {
+                    statusCode: response.statusCode,
+                    headers: response.headers,
+                    method: request.method,
+                    path: request.path
+                },
+                capabilityConfig,
+                device: node.currentDevice,
+                unifiProtect: buildBaseMetadata(deviceType, deviceId, capabilityId, {
+                    source: "request",
+                    method: request.method,
+                    path: request.path,
+                    capabilityConfig
+                })
             });
 
             node.status({ fill: "green", shape: "dot", text: `${capability.label}` });
             sendOutputs(send, stateMsg, null);
         }
 
+        function resolveConfiguredCapabilityDefinition() {
+            const deviceType = resolveDeviceType(node.deviceType);
+            const capabilityId = resolveCapabilityId(node.capability);
+            return getCapabilityDefinition(deviceType, capabilityId, node.currentDevice);
+        }
+
+        function configuredCapabilityOpensEventStream() {
+            const capability = resolveConfiguredCapabilityDefinition();
+            if (capability) {
+                return capability.opensEventStream === true;
+            }
+            return resolveCapabilityId(node.capability) === "observe";
+        }
+
         function shouldObserveConfiguredDevice() {
-            return node.server && node.capability === "observe" && node.deviceType && node.deviceId;
+            return node.server && configuredCapabilityOpensEventStream() && node.deviceType && node.deviceId;
         }
 
         function startObservation() {
@@ -275,7 +413,8 @@ module.exports = function(RED) {
                     capabilityConfig,
                     item,
                     "devices",
-                    { updateType: update.type || "" }
+                    { updateType: update.type || "" },
+                    update.type || "devices"
                 ), null);
             } catch (error) {
             }
@@ -289,40 +428,81 @@ module.exports = function(RED) {
                 }
 
                 const capabilityConfig = parseCapabilityConfig(node.capabilityConfig);
-                const observable = String(capabilityConfig.observable || "").trim();
+                const observable = resolveConfiguredObservable(capabilityConfig);
+                const observableScopeId = resolveConfiguredObservableScope(capabilityConfig);
                 if (observable) {
                     // When the user selected an observable, events can update the
                     // boolean state output directly instead of only the event port.
-                    const observation = resolveObservableEventValue(node.deviceType, item, observable);
+                    const observation = resolveObservableEventValue(node.deviceType, item, observable, observableScopeId);
                     if (observation.matched) {
+                        const resolvedDeviceName = resolveOutputDeviceName(node.currentDevice);
                         node.currentObservableValue = Boolean(observation.value);
                         node.status({ fill: "blue", shape: "ring", text: `${item.type || "event"}` });
-                        sendOutputs(node.send.bind(node), {
+                        const stateMsg = {
                             payload: node.currentObservableValue,
-                            RAW: {
+                            topic: resolveNodeName(node.name),
+                            deviceName: resolvedDeviceName || undefined,
+                            eventName: String(item.type || "event").trim()
+                        };
+                        attachDetails(stateMsg, {
+                            raw: {
                                 device: node.currentDevice,
                                 event: item,
                                 observable,
+                                observableScopeId: observableScopeId || undefined,
                                 source: "events"
                             },
                             device: node.currentDevice,
                             unifiProtect: buildBaseMetadata(node.deviceType, node.deviceId, "observe", {
                                 source: "events",
                                 observable,
+                                observableScopeId: observableScopeId || undefined,
                                 eventType: item.type || "",
                                 updateType: update.type || ""
                             })
-                        }, null);
+                        });
+                        const eventMsg = {
+                            payload: attachDeviceNameToPayload({
+                                device: node.currentDevice,
+                                event: item
+                            }, resolvedDeviceName),
+                            topic: resolveNodeName(node.name),
+                            deviceName: resolvedDeviceName || undefined,
+                            eventName: String(item.type || "event").trim()
+                        };
+                        attachDetails(eventMsg, {
+                            raw: item,
+                            device: node.currentDevice,
+                            unifiProtect: buildBaseMetadata(node.deviceType, node.deviceId, "observe", {
+                                source: "events",
+                                observable,
+                                observableScopeId: observableScopeId || undefined,
+                                eventType: item.type || "",
+                                updateType: update.type || ""
+                            })
+                        });
+                        sendOutputs(node.send.bind(node), stateMsg, eventMsg);
+                        return;
+                    }
+
+                    if (observation.eventTypeMatched) {
                         return;
                     }
                 }
 
                 node.status({ fill: "blue", shape: "ring", text: `${item.type || "event"}` });
-                sendOutputs(node.send.bind(node), null, {
-                    payload: {
+                const resolvedDeviceName = resolveOutputDeviceName(node.currentDevice);
+                const eventMsg = {
+                    payload: attachDeviceNameToPayload({
                         device: node.currentDevice,
                         event: item
-                    },
+                    }, resolvedDeviceName),
+                    topic: resolveNodeName(node.name),
+                    deviceName: resolvedDeviceName || undefined,
+                    eventName: String(item.type || "event").trim()
+                };
+                attachDetails(eventMsg, {
+                    raw: item,
                     device: node.currentDevice,
                     unifiProtect: buildBaseMetadata(node.deviceType, node.deviceId, "observe", {
                         source: "events",
@@ -330,25 +510,30 @@ module.exports = function(RED) {
                         updateType: update.type || ""
                     })
                 });
+                sendOutputs(node.send.bind(node), null, eventMsg);
             } catch (error) {
             }
         };
 
         if (!node.server) {
             node.status({ fill: "red", shape: "ring", text: "config missing" });
-        } else if (node.capability === "observe" && (!node.deviceType || !node.deviceId)) {
+        } else if (configuredCapabilityOpensEventStream() && (!node.deviceType || !node.deviceId)) {
             node.status({ fill: "yellow", shape: "ring", text: "select device" });
         } else {
             startObservation();
         }
 
         node.on("close", function(done) {
-            if (node.server && typeof node.server.removeClient === "function") {
-                node.server.removeClient(node);
-            }
-            node.isObserving = false;
-            if (typeof done === "function") {
-                done();
+            try {
+                if (node.server && typeof node.server.removeClient === "function") {
+                    node.server.removeClient(node);
+                }
+                node.isObserving = false;
+            } catch (error) {
+            } finally {
+                if (typeof done === "function") {
+                    done();
+                }
             }
         });
     }

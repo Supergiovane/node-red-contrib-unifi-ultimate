@@ -236,13 +236,16 @@ module.exports = function(RED) {
             });
 
             ws.on("close", () => {
-                if (kind === "devices" && node.wsDevices === ws) {
-                    node.wsDevices = null;
+                try {
+                    if (kind === "devices" && node.wsDevices === ws) {
+                        node.wsDevices = null;
+                    }
+                    if (kind === "events" && node.wsEvents === ws) {
+                        node.wsEvents = null;
+                    }
+                    node.scheduleReconnect();
+                } catch (error) {
                 }
-                if (kind === "events" && node.wsEvents === ws) {
-                    node.wsEvents = null;
-                }
-                node.scheduleReconnect();
             });
 
             ws.on("error", () => {
@@ -320,10 +323,14 @@ module.exports = function(RED) {
         };
 
         node.on("close", function(done) {
-            node.isClosing = true;
-            node.closeWebSockets();
-            if (typeof done === "function") {
-                done();
+            try {
+                node.isClosing = true;
+                node.closeWebSockets();
+            } catch (error) {
+            } finally {
+                if (typeof done === "function") {
+                    done();
+                }
             }
         });
     }

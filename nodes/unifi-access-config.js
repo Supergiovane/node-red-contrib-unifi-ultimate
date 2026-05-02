@@ -512,7 +512,11 @@ module.exports = function(RED) {
             node.doorbellLogPollCursor = Math.floor(Date.now() / 1000) - DOORBELL_LOG_POLL_LOOKBACK_SECONDS;
             node.runDoorbellLogPoll();
             node.doorbellLogPollTimer = setInterval(() => {
-                node.runDoorbellLogPoll();
+                try {
+                    node.runDoorbellLogPoll();
+                } catch (error) {
+                    node.warn(`Access doorbell log poll timer failed: ${error && error.message ? error.message : error}`);
+                }
             }, DOORBELL_LOG_POLL_INTERVAL_MS);
         };
 
@@ -645,10 +649,13 @@ module.exports = function(RED) {
             });
 
             ws.on("close", () => {
-                if (node.wsNotifications === ws) {
-                    node.wsNotifications = null;
+                try {
+                    if (node.wsNotifications === ws) {
+                        node.wsNotifications = null;
+                    }
+                    node.scheduleReconnect();
+                } catch (error) {
                 }
-                node.scheduleReconnect();
             });
 
             ws.on("error", () => {
@@ -702,13 +709,17 @@ module.exports = function(RED) {
         };
 
         node.on("close", function(done) {
-            node.isClosing = true;
-            node.activeDoorbells.clear();
-            node.activeDoorbellRequests.clear();
-            node.closeWebSocket();
-            node.stopDoorbellLogPolling();
-            if (typeof done === "function") {
-                done();
+            try {
+                node.isClosing = true;
+                node.activeDoorbells.clear();
+                node.activeDoorbellRequests.clear();
+                node.closeWebSocket();
+                node.stopDoorbellLogPolling();
+            } catch (error) {
+            } finally {
+                if (typeof done === "function") {
+                    done();
+                }
             }
         });
     }

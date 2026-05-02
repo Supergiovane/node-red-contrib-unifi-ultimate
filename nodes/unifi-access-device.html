@@ -78,19 +78,27 @@
             server: { value: "", type: "unifi-access-config", required: true },
             deviceType: { value: "", required: true },
             deviceId: { value: "", required: true },
+            deviceName: { value: "" },
+            inputs: { value: 1 },
             capability: { value: "observe", required: true },
             capabilityConfig: { value: "{}" },
             timeout: { value: 15000, required: true, validate: RED.validators.number() }
         },
         inputs: 1,
-        outputs: 2,
+        outputs: 1,
         icon: "unifi-access-icon.svg",
         paletteLabel: "ACCESS",
-        outputLabels: ["state", "events"],
+        outputLabels: ["result"],
         label: function () {
             return this.name || this.deviceId || "Unifi Access";
         },
         oneditsave: function () {
+            const selectedCapabilityId = String($("#node-input-capability").val() || this.capability || "observe").trim();
+            const selectedCapabilityOpensStream = $("#node-input-capability option:selected").data("opens-stream") === true
+                || $("#node-input-capability option:selected").attr("data-opens-stream") === "true";
+            // Hide the input pin only when the selected action starts an event stream.
+            this.inputs = (selectedCapabilityOpensStream || selectedCapabilityId === "observe") ? 0 : 1;
+
             const $capabilityConfig = $("#node-input-capabilityConfig");
             const capabilityConfig = {};
             if ($capabilityConfig.length === 0) {
@@ -140,6 +148,7 @@
             const $server = $("#node-input-server");
             const $deviceType = $("#node-input-deviceType");
             const $deviceId = $("#node-input-deviceId");
+            const $deviceName = $("#node-input-deviceName");
             const $capability = $("#node-input-capability");
             const $capabilityConfig = $("#node-input-capabilityConfig");
             const $capabilityConfigRow = $("#node-row-capabilityConfig");
@@ -398,6 +407,7 @@
                             return false;
                         }
                         if (ui.item) {
+                            $select.data("unifi-user-selection", true);
                             setSelectedValue(ui.item.optionValue, true);
                         }
                         return true;
@@ -571,6 +581,14 @@
                 $name.val(selectedDeviceName);
             }
 
+            function rememberSelectedDeviceName() {
+                const selectedDeviceName = getSelectedDeviceName();
+                if (!selectedDeviceName) {
+                    return;
+                }
+                $deviceName.val(selectedDeviceName);
+            }
+
             function renderDeviceTypes(items) {
                 deviceTypeDefinitions = Array.isArray(items) ? items.slice() : [];
                 const currentValue = getCurrentOrNodeValue($deviceType, node.deviceType, "");
@@ -605,6 +623,7 @@
                         $capability.append(
                             $("<option></option>")
                                 .val(item.id)
+                                .attr("data-opens-stream", item.opensEventStream === true ? "true" : "false")
                                 .text(item.label)
                         );
                     });
@@ -857,7 +876,7 @@
                 });
 
                 makeSelectSearchable($deviceId, "Search devices");
-                syncNameFromSelection();
+                rememberSelectedDeviceName();
                 refreshSelectionSummary();
             }
 
@@ -1041,7 +1060,12 @@
                 if (suspendChangeHandling || isInitializingEditor) {
                     return;
                 }
-                syncNameFromSelection();
+                rememberSelectedDeviceName();
+                const isUserSelection = $deviceId.data("unifi-user-selection") === true;
+                $deviceId.removeData("unifi-user-selection");
+                if (isUserSelection) {
+                    syncNameFromSelection();
+                }
                 capabilityConfig = {};
                 writeCapabilityConfig();
                 refreshAfterDeviceChange();
@@ -1106,6 +1130,7 @@
         <label><i class="fa fa-sliders"></i> Action options</label>
         <div id="node-input-capabilityConfigContainer" style="width:70%; display:inline-block;"></div>
         <input type="hidden" id="node-input-capabilityConfig">
+        <input type="hidden" id="node-input-deviceName">
     </div>
     <div id="node-row-advanced" class="unifi-ultimate-advanced">
         <div class="form-row">
@@ -1128,22 +1153,43 @@
     <p><b>Action</b> only shows actions supported by the selected item.</p>
     <p><b>Action options</b> appears only when the selected action needs extra input, such as a temporary lock rule or a room name for doorbell actions.</p>
     <p>For <code>Set Temporary Lock Rule</code>, choose <code>Custom Duration</code> to reveal the minutes field. Legacy <code>ended_time</code> is still available only as fallback compatibility.</p>
-    <p><code>Receive Events</code> fetches the current state once and then listens to the official UniFi Access notifications WebSocket.</p>
+    <p><code>Receive Events</code> fetches the current state once and then listens to the official UniFi Access notifications WebSocket. In <b>Action options</b>, <code>All</code> emits every event for the selected device/door. In this mode, the input pin is hidden and listening starts automatically after deploy/restart.</p>
     <p><code>Trigger Doorbell</code> and <code>Cancel Doorbell</code> use a manual <code>Room Name</code> field when needed. The node does not currently discover Intercom directory names automatically.</p>
     <p><code>Cancel Doorbell</code> uses a shared safe-cancel guard in the UniFi Access config node with a 3 minute tracking window. Tracking is updated by websocket events and a fallback system-log poller.</p>
-    <p><b>Name</b> is the node name shown in the editor and is updated automatically when you select a different item. <b>Timeout</b> controls the request timeout in milliseconds for direct API calls.</p>
+    <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different item from the list. <b>Timeout</b> controls the request timeout in milliseconds for direct API calls.</p>
 
     <h3>Input</h3>
     <ul>
+        <li>When <code>Receive Events</code> is selected, the input pin is hidden.</li>
         <li>Any incoming message triggers the configured action.</li>
         <li>Input message properties are ignored by this node.</li>
     </ul>
 
     <h3>Output</h3>
     <ul>
-        <li>Output 1 emits a new message containing the current state or primary capability response.</li>
-        <li>Output 2: Access notification events related to the selected item</li>
-        <li><code>msg.unifiAccess</code>: standardized metadata for the device and selected capability</li>
+        <li>A single output pin emits state and event messages for the selected item.</li>
+        <li><code>msg.topic</code>: node name from the editor.</li>
+        <li><code>msg.deviceName</code>: remembered/observed selected device name.</li>
+        <li><code>msg.eventName</code>: trigger/event that produced the message.</li>
+        <li><code>msg.details.unifiAccess</code>: standardized metadata for the device and selected capability.</li>
         <li>Safe-cancel skip: <code>msg.payload.skipped = true</code> when <code>Cancel Doorbell</code> is blocked because no active ring is currently tracked</li>
     </ul>
+    <p>Example output:</p>
+    <pre><code>{
+  "topic": "Main Door",
+  "deviceName": "Main Door",
+  "eventName": "door.unlock",
+  "payload": {
+    "event": "door.unlock",
+    "deviceName": "Main Door"
+  },
+  "details": {
+    "unifiAccess": {
+      "nodeType": "device",
+      "deviceType": "door",
+      "capability": "observe",
+      "source": "events"
+    }
+  }
+}</code></pre>
 </script>
