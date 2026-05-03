@@ -2,6 +2,16 @@
 
 
 
+## 0.1.7
+
+- Network Control POE: added `POE controlled by msg.payload` action and set it as the default for new nodes (`true` enables PoE, `false` disables PoE)
+- editor UX: when client lists are loading/not populated, dependent derived fields stay disabled to prevent invalid selections
+- fixed refresh-button spinner behavior so only the refresh icon spins (not the full button container)
+- added accessibility labels (`title` and `aria-label`) to refresh buttons in node editors
+- moved shared editor styles into `resources/editor/unifi-ultimate-editor-common.css` and aligned node HTML templates to use it
+- refreshed README and node editor branding assets to official UniFi SVG logos
+- updated Node-RED palette icons to the UniFi `U-logo-light` set with product badges (`N`, `A`, `P`), including a softer badge color palette
+
 ## 0.1.6
 
 - added `msg.topic` (node name) across runtime node outputs
