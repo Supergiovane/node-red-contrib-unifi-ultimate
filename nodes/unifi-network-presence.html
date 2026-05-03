@@ -1,77 +1,5 @@
-<style>
-    .unifi-ultimate-hero {
-        margin: 0 0 14px 0;
-    }
+<link rel="stylesheet" type="text/css" href="resources/node-red-contrib-unifi-ultimate/editor/unifi-ultimate-editor-common.css">
 
-    .unifi-ultimate-hero-panel {
-        padding: 14px 16px;
-        border: 1px solid #d9e7f5;
-        border-radius: 14px;
-        background: linear-gradient(135deg, #eef7ff 0%, #f8fbff 58%, #f7fafc 100%);
-        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
-        color: #334155;
-    }
-
-    .unifi-ultimate-eyebrow {
-        margin-bottom: 4px;
-        color: #2563eb;
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-    }
-
-    .unifi-ultimate-hero-panel strong {
-        display: block;
-        color: #0f172a;
-        font-size: 15px;
-        line-height: 1.35;
-    }
-
-    .unifi-ultimate-hero-panel span {
-        display: block;
-        margin-top: 4px;
-        line-height: 1.45;
-    }
-
-    .unifi-ultimate-section-title {
-        margin: 14px 0 8px 150px;
-        color: #64748b;
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-    }
-
-    .unifi-ultimate-card {
-        margin-left: 150px;
-        padding: 13px 15px;
-        border: 1px solid #e2e8f0;
-        border-radius: 14px;
-        background: #f8fafc;
-        color: #334155;
-        line-height: 1.45;
-        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-    }
-
-    .unifi-ultimate-card strong {
-        display: block;
-        margin-bottom: 4px;
-        color: #0f172a;
-        font-weight: 600;
-    }
-
-    .unifi-ultimate-advanced {
-        margin-top: 14px;
-        padding-top: 10px;
-        border-top: 1px solid #e5e7eb;
-    }
-
-    .unifi-ultimate-offline-option {
-        color: #94a3b8 !important;
-    }
-
-</style>
 
 <script type="text/javascript">
     RED.nodes.registerType("unifi-network-presence", {
@@ -89,7 +17,7 @@
         },
         inputs: 0,
         outputs: 1,
-        icon: "unifi-network-icon.svg",
+        icon: "unifi-u-logo-light-network.svg",
         paletteLabel: "Presence Detection",
         outputLabels: ["presence"],
         label: function () {
@@ -539,9 +467,11 @@
 </script>
 
 <script type="text/html" data-template-name="unifi-network-presence">
+    <div class="form-row unifi-ultimate-product-logo-row">
+        <img class="unifi-ultimate-product-logo" src="resources/node-red-contrib-unifi-ultimate/logos/unifi-network-black.svg" alt="UniFi Network logo" onerror="this.closest('.unifi-ultimate-product-logo-row').style.display='none';">
+    </div>
     <div class="form-row unifi-ultimate-hero">
         <div class="unifi-ultimate-hero-panel">
-            <div class="unifi-ultimate-eyebrow">UniFi Network Presence</div>
             <strong>Track one client with stable true/false output.</strong>
             <span>Hysteresis avoids noisy online/offline transitions when Wi-Fi clients roam.</span>
         </div>
@@ -555,7 +485,7 @@
     <div class="form-row">
         <label for="node-input-clientId"><i class="fa fa-wifi"></i> Client</label>
         <select id="node-input-clientId" style="width:70%;"></select>
-        <a href="#" id="node-input-refreshClients" class="editor-button" style="margin-left:6px;">
+        <a href="#" id="node-input-refreshClients" class="editor-button" style="margin-left:6px;" title="Refresh clients" aria-label="Refresh clients">
             <i class="fa fa-refresh"></i>
         </a>
     </div>

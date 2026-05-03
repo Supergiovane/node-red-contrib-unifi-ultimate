@@ -15,7 +15,8 @@
 
 Control and monitor `UniFi Network`, `UniFi Protect`, and `UniFi Access` from Node-RED without building API requests by hand.
 
-> **Beta notice:** until version `1.0.0`, this package should be considered **BETA** and may include **breaking changes** between releases.
+> **Beta notice:** until version `1.0.0`, this package should be considered **BETA** and may include **breaking changes** between releases.  
+> Please [report issues or feedback](https://github.com/Supergiovane/node-red-contrib-unifi-ultimate/issues) to help improve the package.
 
 [View Changelog](CHANGELOG.md)
 
@@ -38,15 +39,14 @@ In Node-RED:
 6. Deploy.
 7. Send any message into the node to run the configured action.
 
-The incoming message is only a trigger. The node uses the item and action configured in the editor.
+For most actions, the incoming message is only a trigger and the node uses the item/action configured in the editor.  
+Exception: in `Unifi Network Control POE`, action `POE controlled by msg.payload` uses `msg.payload` (`true` = enable PoE, `false` = disable PoE).
 
-           |
-
-## UniFi Network
-
-<p align="center">
+<br/>
+<br/>
+<p align="left">
   <a href="https://ui.com/switching">
-    <img src="nodes/readme-assets/unifi-network-switching.jpg" alt="UniFi Network switching" width="860">
+    <img src="nodes/readme-assets/UniFi%20Network/UniFi%20Network%20Black.svg" alt="UniFi Network logo" width="430">
   </a>
 </p>
 
@@ -73,11 +73,11 @@ Editor conveniences:
 - Port lists show port status and connected clients when UniFi exposes that information.
 - Selecting an item updates the node `Name` automatically.
 
-## UniFi Protect
-
-<p align="center">
+<br/>
+<br/>
+<p align="left">
   <a href="https://store.ui.com/us/en/products/uvc-g5-pro">
-    <img src="nodes/readme-assets/unifi-protect-camera.png" alt="UniFi Protect camera" width="520">
+    <img src="nodes/readme-assets/UniFi%20Protect/UniFi%20Protect%20Black.svg" alt="UniFi Protect logo" width="430">
   </a>
 </p>
 
@@ -103,11 +103,11 @@ Common uses:
 
 For supported observables, the node can output simple `true/false` values while still keeping the raw UniFi event details available.
 
-## UniFi Access
-
-<p align="center">
+<br/>
+<br/>
+<p align="left">
   <a href="https://ui.com/door-access">
-    <img src="nodes/readme-assets/unifi-access-door-access.jpg" alt="UniFi Access door access" width="860">
+    <img src="nodes/readme-assets/UniFi%20Access/UniFi%20Access%20Black.svg" alt="UniFi Access logo" width="430">
   </a>
 </p>
 
@@ -221,14 +221,14 @@ When `msg.payload` is an object, it also includes `payload.deviceName` with the 
 
 Power fields for `Unifi Network Control POE`:
 
-| Field                                      | Type     | Guaranteed | Notes                                                                 |
-| ------------------------------------------ | -------- | ---------- | --------------------------------------------------------------------- |
-| `msg.payload.portIdx`                      | number   | yes        | Selected port index.                                                  |
-| `msg.payload.portName`                     | string   | yes        | Selected port display name.                                           |
-| `msg.payload.portPowerW`                   | number   | no         | Current PoE power draw for the selected port (W), when UniFi exposes it. |
-| `msg.payload.powerConsumptionSwitchTotal`  | number   | no         | Sum of all port PoE consumptions on the switch (W), when available.  |
-| `msg.details.unifiNetworkPoe.portPowerW`   | number   | no         | Same value as `msg.payload.portPowerW`.                               |
-| `msg.details.unifiNetworkPoe.powerConsumptionSwitchTotal` | number | no | Same value as `msg.payload.powerConsumptionSwitchTotal`.              |
+| Field                                                     | Type   | Guaranteed | Notes                                                                    |
+| --------------------------------------------------------- | ------ | ---------- | ------------------------------------------------------------------------ |
+| `msg.payload.portIdx`                                     | number | yes        | Selected port index.                                                     |
+| `msg.payload.portName`                                    | string | yes        | Selected port display name.                                              |
+| `msg.payload.portPowerW`                                  | number | no         | Current PoE power draw for the selected port (W), when UniFi exposes it. |
+| `msg.payload.powerConsumptionSwitchTotal`                 | number | no         | Sum of all port PoE consumptions on the switch (W), when available.      |
+| `msg.details.unifiNetworkPoe.portPowerW`                  | number | no         | Same value as `msg.payload.portPowerW`.                                  |
+| `msg.details.unifiNetworkPoe.powerConsumptionSwitchTotal` | number | no         | Same value as `msg.payload.powerConsumptionSwitchTotal`.                 |
 
 ### Unifi Protect Device
 

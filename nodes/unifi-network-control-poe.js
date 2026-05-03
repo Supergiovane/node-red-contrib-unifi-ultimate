@@ -49,6 +49,13 @@ function resolveConfiguredAction(value) {
     const lower = normalized.toLowerCase();
     const upper = normalized.toUpperCase();
 
+    if (["msgpayload", "payload", "poecontrolledbymsgpayload"].includes(lower)) {
+        return {
+            type: "poeModeFromPayload",
+            payloadAction: "POE_CONTROLLED_BY_MSG_PAYLOAD"
+        };
+    }
+
     if (["emitpoweratchange", "emit_power_consumption_at_change"].includes(lower)) {
         return {
             type: "observePower",
@@ -104,6 +111,35 @@ function resolvePowerIntervalSeconds(value) {
         return MIN_POWER_INTERVAL_SECONDS;
     }
     return integer;
+}
+
+function resolvePayloadBoolean(value) {
+    if (typeof value === "boolean") {
+        return value;
+    }
+
+    if (typeof value === "number") {
+        if (value === 1) {
+            return true;
+        }
+        if (value === 0) {
+            return false;
+        }
+        return null;
+    }
+
+    if (typeof value === "string") {
+        const normalized = value.trim().toLowerCase();
+        if (["true", "1", "on", "enable", "enabled"].includes(normalized)) {
+            return true;
+        }
+        if (["false", "0", "off", "disable", "disabled"].includes(normalized)) {
+            return false;
+        }
+        return null;
+    }
+
+    return null;
 }
 
 function resolveNodeName(value) {
@@ -222,7 +258,7 @@ module.exports = function(RED) {
         node.deviceId = config.deviceId || "";
         node.deviceName = resolveDeviceName(config.deviceName);
         node.portIdx = config.portIdx;
-        node.action = config.action || "cycle";
+        node.action = config.action || "msgPayload";
         node.powerIntervalSeconds = resolvePowerIntervalSeconds(config.powerIntervalSeconds);
         node.timeout = Number(config.timeout) > 0 ? Number(config.timeout) : 15000;
         node.powerPollTimer = null;
@@ -270,6 +306,31 @@ module.exports = function(RED) {
 
         function actionOpensPowerObservation(action) {
             return action && action.type === "observePower";
+        }
+
+        function resolvePoeModeActionFromMessage(action, msg) {
+            if (!action || action.type !== "poeModeFromPayload") {
+                return action;
+            }
+
+            const payload = msg && typeof msg === "object" ? msg.payload : undefined;
+            const payloadBoolean = resolvePayloadBoolean(payload);
+            if (payloadBoolean === true) {
+                return {
+                    type: "poeMode",
+                    payloadAction: "ENABLE_POE",
+                    poeMode: "auto"
+                };
+            }
+            if (payloadBoolean === false) {
+                return {
+                    type: "poeMode",
+                    payloadAction: "DISABLE_POE",
+                    poeMode: "off"
+                };
+            }
+
+            throw new Error("When action is 'POE controlled by msg.payload', msg.payload must be true/false.");
         }
 
         function formatPowerText(powerW) {
@@ -647,13 +708,14 @@ module.exports = function(RED) {
             }, node.powerIntervalSeconds * 1000);
         }
 
-        async function invoke(send) {
+        async function invoke(msg, send) {
             if (!node.server) {
                 throw new Error("Unifi Network configuration is missing.");
             }
 
-            // The incoming message is only a trigger. The node always executes
-            // the action configured in the editor.
+            // The node executes the action configured in the editor. The only
+            // runtime override is the payload-driven action, which maps
+            // msg.payload true/false to enable/disable PoE.
             const deviceId = resolveDeviceId(node.deviceId);
             if (!deviceId) {
                 throw new Error("Missing switch device id.");
@@ -675,9 +737,11 @@ module.exports = function(RED) {
                 return;
             }
 
-            const result = action.type === "poeMode"
-                ? await invokePoeMode(deviceId, scoped, portIdx, action)
-                : await invokePowerCycle(deviceId, scoped, portIdx, action);
+            const effectiveAction = resolvePoeModeActionFromMessage(action, msg);
+
+            const result = effectiveAction.type === "poeMode"
+                ? await invokePoeMode(deviceId, scoped, portIdx, effectiveAction)
+                : await invokePowerCycle(deviceId, scoped, portIdx, effectiveAction);
             const powerSnapshot = await fetchSelectedPortSummary(deviceId, portIdx);
             const selectedPort = powerSnapshot.selectedPort;
 
@@ -701,19 +765,19 @@ module.exports = function(RED) {
                     selectedPort: selectedPort || undefined
                 }
             });
-            decorateOutputMessage(output, output.payload, `request:${action.payloadAction}`);
+            decorateOutputMessage(output, output.payload, `request:${effectiveAction.payloadAction}`);
 
-            node.status({ fill: "green", shape: "dot", text: `${action.payloadAction} ok` });
+            node.status({ fill: "green", shape: "dot", text: `${effectiveAction.payloadAction} ok` });
             send(output);
         }
 
-        node.on("input", async function(_msg, send, done) {
+        node.on("input", async function(msg, send, done) {
             send = send || function() {
                 node.send.apply(node, arguments);
             };
 
             try {
-                await invoke(send);
+                await invoke(msg, send);
                 if (typeof done === "function") {
                     done();
                 }
