@@ -73,6 +73,9 @@ module.exports = function(RED) {
             );
         };
 
+        // Leaf nodes must delegate outbound UniFi Protect calls to the config node.
+        node.executeProtectRequest = async (request) => node.apiRequest(request || {});
+
         node.fetchDevices = async (deviceType) => {
             const definition = getDeviceTypeDefinition(deviceType);
             if (!definition) {

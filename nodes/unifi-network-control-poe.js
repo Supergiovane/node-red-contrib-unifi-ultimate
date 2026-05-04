@@ -5,8 +5,6 @@ const {
     resolveScopedIdentifiers
 } = require("./utils/unifi-network-device-registry");
 const { extractNetworkData } = require("./utils/unifi-network-utils");
-const MIN_POWER_INTERVAL_SECONDS = 5;
-const DEFAULT_POWER_INTERVAL_SECONDS = 15;
 
 function normalizeString(value) {
     return String(value || "").trim();
@@ -56,19 +54,10 @@ function resolveConfiguredAction(value) {
         };
     }
 
-    if (["emitpoweratchange", "emit_power_consumption_at_change"].includes(lower)) {
+    if (["emitpowerconsumption", "emit_power_consumption"].includes(lower)) {
         return {
             type: "observePower",
-            payloadAction: "EMIT_POWER_CONSUMPTION_AT_CHANGE",
-            observeMode: "change"
-        };
-    }
-
-    if (["emitpoweratinterval", "emit_power_consumption_at_fixed_intervals"].includes(lower)) {
-        return {
-            type: "observePower",
-            payloadAction: "EMIT_POWER_CONSUMPTION_AT_FIXED_INTERVALS",
-            observeMode: "interval"
+            payloadAction: "EMIT_POWER_CONSUMPTION"
         };
     }
 
@@ -99,18 +88,6 @@ function resolveConfiguredAction(value) {
         type: "powerCycle",
         payloadAction: upper
     };
-}
-
-function resolvePowerIntervalSeconds(value) {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed)) {
-        return DEFAULT_POWER_INTERVAL_SECONDS;
-    }
-    const integer = Math.trunc(parsed);
-    if (integer < MIN_POWER_INTERVAL_SECONDS) {
-        return MIN_POWER_INTERVAL_SECONDS;
-    }
-    return integer;
 }
 
 function resolvePayloadBoolean(value) {
@@ -197,6 +174,18 @@ function attachDetails(outputMsg, details) {
     };
 }
 
+function buildStatusTimestampText() {
+    const now = new Date();
+    const time = now.toTimeString().split(" ")[0];
+    return `(day ${now.getDate()}, ${time})`;
+}
+
+function appendStatusTimestamp(text) {
+    const normalized = String(text === undefined || text === null ? "" : text).trim();
+    const suffix = buildStatusTimestampText();
+    return normalized ? `${normalized} ${suffix}` : suffix;
+}
+
 function resolveNumericPortIndex(value) {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? Math.trunc(parsed) : NaN;
@@ -259,12 +248,28 @@ module.exports = function(RED) {
         node.deviceName = resolveDeviceName(config.deviceName);
         node.portIdx = config.portIdx;
         node.action = config.action || "msgPayload";
-        node.powerIntervalSeconds = resolvePowerIntervalSeconds(config.powerIntervalSeconds);
         node.timeout = Number(config.timeout) > 0 ? Number(config.timeout) : 15000;
-        node.powerPollTimer = null;
         node.isPowerObserving = false;
         node.lastObservedPowerW = undefined;
         node.hasObservedPower = false;
+
+        function setNodeStatus(status) {
+            if (!status || typeof status !== "object" || Array.isArray(status)) {
+                return;
+            }
+            node.status({
+                ...status,
+                text: appendStatusTimestamp(status.text)
+            });
+        }
+
+        function resolvePowerObservationIntervalSeconds() {
+            const configured = Number(node.server && node.server.powerObservationIntervalSeconds);
+            if (Number.isFinite(configured) && configured >= 1) {
+                return Math.trunc(configured);
+            }
+            return 15;
+        }
 
         function resolveOutputDeviceName(payload) {
             const extracted = extractDeviceNameFromPayload(payload);
@@ -400,11 +405,11 @@ module.exports = function(RED) {
 
         async function fetchLegacySiteName(siteId) {
             const normalizedSiteId = normalizeString(siteId);
-            if (!normalizedSiteId || typeof node.server.legacyApiRequest !== "function") {
+            if (!normalizedSiteId || typeof node.server.executeLegacyNetworkRequest !== "function") {
                 return "";
             }
 
-            const response = await node.server.legacyApiRequest({
+            const response = await node.server.executeLegacyNetworkRequest({
                 path: "/api/self/sites",
                 method: "GET",
                 timeout: node.timeout
@@ -428,7 +433,7 @@ module.exports = function(RED) {
         }
 
         async function fetchOfficialDevice(scoped) {
-            const response = await node.server.apiRequest({
+            const response = await node.server.executeNetworkRequest({
                 path: `/v1/sites/${encodeURIComponent(scoped.siteId)}/devices/${encodeURIComponent(scoped.resourceId)}`,
                 method: "GET",
                 timeout: node.timeout
@@ -444,7 +449,7 @@ module.exports = function(RED) {
         }
 
         async function fetchLegacyDevices(legacySiteName) {
-            const response = await node.server.legacyApiRequest({
+            const response = await node.server.executeLegacyNetworkRequest({
                 path: `/api/s/${encodeURIComponent(legacySiteName)}/stat/device`,
                 method: "GET",
                 timeout: node.timeout
@@ -511,7 +516,7 @@ module.exports = function(RED) {
         }
 
         async function invokePoeMode(deviceId, scoped, portIdx, action) {
-            if (typeof node.server.legacyApiRequest !== "function") {
+            if (typeof node.server.executeLegacyNetworkRequest !== "function") {
                 throw new Error("This action requires the UniFi Network legacy API helper.");
             }
 
@@ -529,9 +534,9 @@ module.exports = function(RED) {
 
             const path = `/api/s/${encodeURIComponent(legacySiteName)}/rest/device/${encodeURIComponent(legacyDevice._id)}`;
             const portOverrides = buildPortOverrides(legacyDevice, portIdx, action.poeMode);
-            node.status({ fill: "blue", shape: "dot", text: `${action.poeMode} p${portIdx}` });
+            setNodeStatus({ fill: "blue", shape: "dot", text: `${action.poeMode} p${portIdx}` });
 
-            const response = await node.server.legacyApiRequest({
+            const response = await node.server.executeLegacyNetworkRequest({
                 path,
                 method: "PUT",
                 payload: {
@@ -562,9 +567,9 @@ module.exports = function(RED) {
 
         async function invokePowerCycle(deviceId, scoped, portIdx, action) {
             const path = `/v1/sites/${encodeURIComponent(scoped.siteId)}/devices/${encodeURIComponent(scoped.resourceId)}/interfaces/ports/${encodeURIComponent(String(portIdx))}/actions`;
-            node.status({ fill: "blue", shape: "dot", text: `${action.payloadAction} p${portIdx}` });
+            setNodeStatus({ fill: "blue", shape: "dot", text: `${action.payloadAction} p${portIdx}` });
 
-            const response = await node.server.apiRequest({
+            const response = await node.server.executeNetworkRequest({
                 path,
                 method: "POST",
                 payload: {
@@ -592,7 +597,7 @@ module.exports = function(RED) {
             };
         }
 
-        async function emitPowerObservation(send, action, source, forcedEmit) {
+        async function emitPowerObservation(send, action, source) {
             if (!node.server) {
                 throw new Error("Unifi Network configuration is missing.");
             }
@@ -610,29 +615,16 @@ module.exports = function(RED) {
             const powerSnapshot = await fetchSelectedPortSummary(deviceId, portIdx);
             const selectedPort = powerSnapshot.selectedPort;
             if (!selectedPort) {
-                node.status({ fill: "yellow", shape: "ring", text: `port ${portIdx} unavailable` });
+                setNodeStatus({ fill: "yellow", shape: "ring", text: `port ${portIdx} unavailable` });
                 return;
             }
 
             const currentPowerW = Number(selectedPort.poePowerW);
             const powerW = Number.isFinite(currentPowerW) ? currentPowerW : undefined;
             const powerChanged = hasPowerChanged(node.lastObservedPowerW, powerW);
-            const shouldEmit = forcedEmit === true
-                || action.observeMode === "interval"
-                || !node.hasObservedPower
-                || powerChanged;
 
             node.lastObservedPowerW = powerW;
             node.hasObservedPower = true;
-
-            if (!shouldEmit) {
-                node.status({
-                    fill: "blue",
-                    shape: "ring",
-                    text: `watch p${portIdx} ${formatPowerText(powerW)}W`
-                });
-                return;
-            }
 
             const output = {
                 payload: {
@@ -648,8 +640,7 @@ module.exports = function(RED) {
                 unifiNetworkPoe: {
                     ...buildMetadata(deviceId, action.payloadAction, portIdx, {
                         source,
-                    observeMode: action.observeMode,
-                        intervalSeconds: node.powerIntervalSeconds
+                        intervalSeconds: resolvePowerObservationIntervalSeconds()
                     }),
                     portPowerW: powerW,
                     powerConsumptionSwitchTotal: powerSnapshot.powerConsumptionSwitchTotal,
@@ -659,12 +650,10 @@ module.exports = function(RED) {
             decorateOutputMessage(
                 output,
                 output.payload,
-                action.observeMode === "change"
-                    ? "power-consumption-changed"
-                    : "power-consumption-interval"
+                "power-consumption-interval"
             );
 
-            node.status({
+            setNodeStatus({
                 fill: "green",
                 shape: "dot",
                 text: `p${portIdx} ${formatPowerText(powerW)}W`
@@ -672,12 +661,66 @@ module.exports = function(RED) {
             send(output);
         }
 
-        function stopPowerObservation() {
-            if (node.powerPollTimer) {
-                clearInterval(node.powerPollTimer);
-                node.powerPollTimer = null;
+        function handlePowerObservationEvent(send, action, event) {
+            const deviceId = resolveDeviceId(node.deviceId);
+            const configuredPortIdx = resolvePortIdx(node.portIdx);
+            const observedPortIdx = resolvePortIdx(event && event.portIdx);
+            const portIdx = Number.isFinite(observedPortIdx)
+                ? observedPortIdx
+                : configuredPortIdx;
+            const selectedPort = event && event.selectedPort && typeof event.selectedPort === "object"
+                ? event.selectedPort
+                : null;
+            const powerW = Number(event && event.portPowerW);
+            const normalizedPowerW = Number.isFinite(powerW) ? powerW : undefined;
+            const source = String(event && event.source || "poll");
+            if (!selectedPort || event.available === false) {
+                setNodeStatus({ fill: "yellow", shape: "ring", text: `port ${portIdx} unavailable` });
+                return;
             }
+
+            const output = {
+                payload: {
+                    portIdx: selectedPort.idx !== undefined ? selectedPort.idx : portIdx,
+                    portName: selectedPort.name || `Port ${portIdx}`,
+                    portPowerW: normalizedPowerW,
+                    powerConsumptionSwitchTotal: event.powerConsumptionSwitchTotal,
+                    powerChanged: event.powerChanged === true,
+                    source
+                }
+            };
+            attachDetails(output, {
+                unifiNetworkPoe: {
+                    ...buildMetadata(deviceId, action.payloadAction, portIdx, {
+                        source,
+                        intervalSeconds: Number.isFinite(Number(event && event.intervalSeconds))
+                            ? Math.trunc(Number(event.intervalSeconds))
+                            : resolvePowerObservationIntervalSeconds()
+                    }),
+                    portPowerW: normalizedPowerW,
+                    powerConsumptionSwitchTotal: event.powerConsumptionSwitchTotal,
+                    selectedPort
+                }
+            });
+            decorateOutputMessage(
+                output,
+                output.payload,
+                "power-consumption-interval"
+            );
+
+            setNodeStatus({
+                fill: "green",
+                shape: "dot",
+                text: `p${portIdx} ${formatPowerText(normalizedPowerW)}W`
+            });
+            send(output);
+        }
+
+        function stopPowerObservation() {
             node.isPowerObserving = false;
+            if (node.server && typeof node.server.refreshPowerObservationScheduler === "function") {
+                node.server.refreshPowerObservationScheduler();
+            }
         }
 
         function startPowerObservation() {
@@ -692,20 +735,14 @@ module.exports = function(RED) {
             node.isPowerObserving = true;
             node.hasObservedPower = false;
             node.lastObservedPowerW = undefined;
-            node.status({
+            setNodeStatus({
                 fill: "blue",
                 shape: "ring",
-                text: `observe every ${node.powerIntervalSeconds}s`
+                text: `observe every ${resolvePowerObservationIntervalSeconds()}s`
             });
-
-            const send = node.send.bind(node);
-            emitPowerObservation(send, action, "startup", true).catch(() => {
-            });
-
-            node.powerPollTimer = setInterval(() => {
-                emitPowerObservation(send, action, "poll", false).catch(() => {
-                });
-            }, node.powerIntervalSeconds * 1000);
+            if (node.server && typeof node.server.refreshPowerObservationScheduler === "function") {
+                node.server.refreshPowerObservationScheduler();
+            }
         }
 
         async function invoke(msg, send) {
@@ -733,7 +770,7 @@ module.exports = function(RED) {
 
             const action = resolveConfiguredAction(node.action);
             if (actionOpensPowerObservation(action)) {
-                await emitPowerObservation(send, action, "manual", true);
+                await emitPowerObservation(send, action, "manual");
                 return;
             }
 
@@ -767,7 +804,7 @@ module.exports = function(RED) {
             });
             decorateOutputMessage(output, output.payload, `request:${effectiveAction.payloadAction}`);
 
-            node.status({ fill: "green", shape: "dot", text: `${effectiveAction.payloadAction} ok` });
+            setNodeStatus({ fill: "green", shape: "dot", text: `${effectiveAction.payloadAction} ok` });
             send(output);
         }
 
@@ -782,7 +819,7 @@ module.exports = function(RED) {
                     done();
                 }
             } catch (error) {
-                node.status({ fill: "red", shape: "ring", text: "error" });
+                setNodeStatus({ fill: "red", shape: "ring", text: "error" });
                 if (typeof done === "function") {
                     done(error);
                 } else {
@@ -791,21 +828,61 @@ module.exports = function(RED) {
             }
         });
 
+        node.getNetworkPoePowerObservationDescriptor = () => {
+            if (!node.isPowerObserving) {
+                return null;
+            }
+            const action = resolveConfiguredAction(node.action);
+            if (!actionOpensPowerObservation(action)) {
+                return null;
+            }
+            const deviceId = resolveDeviceId(node.deviceId);
+            const portIdx = resolvePortIdx(node.portIdx);
+            if (!deviceId || !Number.isFinite(portIdx)) {
+                return null;
+            }
+
+            return {
+                deviceId,
+                portIdx
+            };
+        };
+
+        node.handleNetworkPoePowerObservationUpdate = (event) => {
+            try {
+                if (!node.isPowerObserving) {
+                    return;
+                }
+                const action = resolveConfiguredAction(node.action);
+                if (!actionOpensPowerObservation(action)) {
+                    return;
+                }
+                handlePowerObservationEvent(node.send.bind(node), action, event);
+            } catch (error) {
+            }
+        };
+
         if (!node.server) {
-            node.status({ fill: "red", shape: "ring", text: "no config" });
+            setNodeStatus({ fill: "red", shape: "ring", text: "no config" });
         } else if (!node.deviceId) {
-            node.status({ fill: "grey", shape: "ring", text: "set device" });
+            setNodeStatus({ fill: "grey", shape: "ring", text: "set device" });
         } else {
+            if (typeof node.server.addClient === "function") {
+                node.server.addClient(node);
+            }
             const action = resolveConfiguredAction(node.action);
             if (actionOpensPowerObservation(action)) {
                 startPowerObservation();
             } else {
-                node.status({ fill: "grey", shape: "ring", text: "ready" });
+                setNodeStatus({ fill: "grey", shape: "ring", text: "ready" });
             }
         }
 
         node.on("close", function(done) {
             try {
+                if (node.server && typeof node.server.removeClient === "function") {
+                    node.server.removeClient(node);
+                }
                 stopPowerObservation();
             } catch (error) {
             } finally {

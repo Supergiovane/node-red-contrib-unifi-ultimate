@@ -1,6 +1,16 @@
 # Changelog
 
 
+## 0.1.8
+
+- centralized UniFi Network observation logic in `unifi-network-config` (single shared timers/schedulers and event fan-out to runtime nodes)
+- aligned runtime nodes to subscribe via config-node client registry (`addClient/removeClient`) instead of opening their own event channels
+- Network Control POE: simplified actions to a single `Emit Power Consumption` observer mode with global poll interval from Network config
+- fixed POE power reporting in Client search mode and improved fallback power extraction when official port power is missing
+- updated node help HTML across touched nodes to reflect centralized fetch/event architecture and global POE polling
+- added status timestamp formatting to runtime/config node statuses (`<status> (day X, HH:MM:SS)`)
+- removed dead code paths tied to deprecated POE observe modes (`change` vs `interval`)
+
 
 ## 0.1.7
 

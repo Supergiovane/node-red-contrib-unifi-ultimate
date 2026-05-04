@@ -1191,9 +1191,9 @@
     <p><b>Action</b> only shows actions supported by the selected resource. <b>Action options</b> appears only when the selected action needs extra input.</p>
     <p>Action highlights include <code>Read Application Info</code>, <code>Authorize Guest Access</code>, <code>Revoke Guest Access</code>, <code>Restart Device</code>, and <code>Power Cycle Port</code>.</p>
     <p><code>Read Application Info</code> is available on the <code>Site</code> resource type and returns Network application metadata.</p>
-    <p><code>Receive Events (Unofficial Stream)</code> uses a non-official websocket endpoint and is marked experimental. In this mode, <b>Action options</b> exposes <code>All</code> only, and the node emits all received Network events because fine-grained filtering is not currently available.</p>
+    <p><code>Receive Events (Unofficial Stream)</code> uses a non-official websocket endpoint and is marked experimental. The websocket is opened once by the shared Network config node and events are fanned out to subscribed runtime nodes. In this mode, <b>Action options</b> exposes <code>All</code> only, and the node emits all received Network events because fine-grained filtering is not currently available.</p>
     <p>When selecting a switch port, the port list shows connected clients or downstream UniFi devices when the controller exposes that information.</p>
-    <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different item from the list. <b>Timeout</b> controls the request timeout in milliseconds for direct API calls.</p>
+    <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different item from the list. <b>Timeout</b> controls the request timeout in milliseconds for API calls.</p>
 
     <h3>Input</h3>
     <ul>

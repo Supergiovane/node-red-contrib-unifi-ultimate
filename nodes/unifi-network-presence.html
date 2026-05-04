@@ -309,7 +309,7 @@
 
                 if (serverId && serverId !== "_ADD_") {
                     summary = "Choose the client to monitor.";
-                    detail = "Presence checks run on a fixed interval using UniFi Network data.";
+                    detail = "Presence checks are scheduled by the shared Network config node using UniFi Network data.";
                 }
 
                 if (clientName) {
@@ -526,7 +526,7 @@
     <h3>Configuration</h3>
     <p><b>Connection</b> selects the shared UniFi Network config node.</p>
     <p><b>Client</b> selects the client to track. The selector is searchable and opens with the complete list before filtering.</p>
-    <p><b>Poll (s)</b> is how often the node checks presence.</p>
+    <p><b>Poll (s)</b> sets this node cadence for presence checks. Scheduling and fetch execution are handled by the shared Network config node.</p>
     <p><b>Connect Hysteresis (s)</b> delays the <code>true</code> output so brief reconnects do not flap.</p>
     <p><b>Hysteresis (s)</b> delays the <code>false</code> output to avoid flapping when the client disconnects briefly.</p>
     <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different client from the list.</p>
@@ -534,7 +534,7 @@
 
     <h3>Input</h3>
     <ul>
-        <li>No input pin in this mode: checks run automatically at startup and on every poll interval.</li>
+        <li>No input pin in this mode: checks run automatically at startup and then on the configured cadence through the shared config scheduler.</li>
     </ul>
 
     <h3>Output</h3>

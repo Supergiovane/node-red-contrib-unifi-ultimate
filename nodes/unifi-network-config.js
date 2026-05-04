@@ -21,6 +21,53 @@ const {
 
 module.exports = function(RED) {
     const API_KEY_HEADER = "X-API-Key";
+    const MIN_POWER_OBSERVER_INTERVAL_SECONDS = 5;
+    const DEFAULT_POWER_OBSERVER_INTERVAL_SECONDS = 15;
+    const POWER_OBSERVER_SCHEDULER_TICK_MS = 1000;
+
+    function normalizePowerObserverIntervalSeconds(value) {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed)) {
+            return DEFAULT_POWER_OBSERVER_INTERVAL_SECONDS;
+        }
+        const integer = Math.trunc(parsed);
+        if (integer < MIN_POWER_OBSERVER_INTERVAL_SECONDS) {
+            return MIN_POWER_OBSERVER_INTERVAL_SECONDS;
+        }
+        return integer;
+    }
+
+    function resolveObservedPortIdx(value) {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed) || parsed < 0) {
+            return NaN;
+        }
+        return Math.trunc(parsed);
+    }
+
+    function hasObservedPowerChanged(previousPowerW, nextPowerW) {
+        const previous = Number(previousPowerW);
+        const next = Number(nextPowerW);
+        if (!Number.isFinite(previous) && !Number.isFinite(next)) {
+            return false;
+        }
+        if (!Number.isFinite(previous) || !Number.isFinite(next)) {
+            return true;
+        }
+        return Math.abs(previous - next) >= 0.001;
+    }
+
+    function buildStatusTimestampText() {
+        const now = new Date();
+        const time = now.toTimeString().split(" ")[0];
+        return `(day ${now.getDate()}, ${time})`;
+    }
+
+    function appendStatusTimestamp(text) {
+        const normalized = String(text === undefined || text === null ? "" : text).trim();
+        const suffix = buildStatusTimestampText();
+        return normalized ? `${normalized} ${suffix}` : suffix;
+    }
 
     function UnifiNetworkConfigNode(config) {
         RED.nodes.createNode(this, config);
@@ -30,10 +77,30 @@ module.exports = function(RED) {
         node.host = String(config.host || "").trim();
         node.baseUrl = buildBaseUrlFromHost(node.host);
         node.rejectUnauthorized = config.rejectUnauthorized !== false && config.rejectUnauthorized !== "false";
+        node.powerObservationIntervalSeconds = normalizePowerObserverIntervalSeconds(config.powerObservationIntervalSeconds);
         node.nodeClients = [];
         node.wsNetworkEvents = null;
         node.reconnectTimer = null;
         node.isClosing = false;
+        node.powerObserverNodeState = new Map();
+        node.powerObserverTimer = null;
+        node.powerObserverPollInProgress = false;
+        node.presenceObserverNodeState = new Map();
+        node.presenceObserverTimer = null;
+        node.presenceObserverPollInProgress = false;
+        node.unofficialPollObserverNodeState = new Map();
+        node.unofficialPollObserverTimer = null;
+        node.unofficialPollObserverPollInProgress = false;
+
+        function setNodeStatus(status) {
+            if (!status || typeof status !== "object" || Array.isArray(status)) {
+                return;
+            }
+            node.status({
+                ...status,
+                text: appendStatusTimestamp(status.text)
+            });
+        }
 
         node.getApiKey = () => node.credentials && node.credentials.apiKey;
 
@@ -75,6 +142,9 @@ module.exports = function(RED) {
             );
         };
 
+        // Leaf nodes must delegate outbound UniFi calls to the config node.
+        node.executeNetworkRequest = async (request) => node.apiRequest(request || {});
+
         node.legacyApiRequest = async ({
             path,
             method = "GET",
@@ -111,6 +181,9 @@ module.exports = function(RED) {
                 requestBody
             );
         };
+
+        // Leaf nodes must delegate outbound UniFi legacy calls to the config node.
+        node.executeLegacyNetworkRequest = async (request) => node.legacyApiRequest(request || {});
 
         node.fetchPagedCollection = async ({
             path,
@@ -1430,6 +1503,747 @@ module.exports = function(RED) {
             });
         };
 
+        node.fetchDevicePortsPowerLite = async (deviceId) => {
+            const device = await node.fetchDeviceByTypeAndId("device", deviceId);
+            const ports = extractDevicePorts(device);
+            if (!Array.isArray(ports) || ports.length === 0) {
+                return [];
+            }
+
+            const hasOfficialPower = ports.some((port) => Number.isFinite(Number(port && port.poePowerW)));
+            if (hasOfficialPower) {
+                return ports.map((port) => ({
+                    ...port,
+                    poePowerW: Number.isFinite(Number(port && port.poePowerW))
+                        ? Math.round(Number(port.poePowerW) * 1000) / 1000
+                        : undefined
+                }));
+            }
+
+            const scopedDevice = resolveScopedIdentifiers("device", deviceId, device);
+            if (!scopedDevice.siteId || !scopedDevice.resourceId) {
+                return ports;
+            }
+
+            const selectedDevice = device && typeof device === "object" && !Array.isArray(device)
+                ? device
+                : {};
+            const selectedDeviceKeys = new Set();
+            [
+                scopedDevice.resourceId,
+                selectedDevice.id,
+                selectedDevice.deviceId,
+                selectedDevice.device_id,
+                selectedDevice.macAddress,
+                selectedDevice.mac,
+                selectedDevice.mac_address
+            ].forEach((value) => addIdentifierKeys(selectedDeviceKeys, value));
+
+            let legacyPortPowerByIdx = new Map();
+            try {
+                const legacyDevices = await fetchLegacyDevices(scopedDevice.siteId);
+                const selectedLegacyDevice = legacyDevices.find((legacyDevice) => {
+                    return [
+                        legacyDevice && legacyDevice.device_id,
+                        legacyDevice && legacyDevice.id,
+                        legacyDevice && legacyDevice._id,
+                        legacyDevice && legacyDevice.mac
+                    ].some((value) => {
+                        const rawKey = normalizeString(value).toLowerCase();
+                        const compactKey = normalizeIdentifierKey(value);
+                        return selectedDeviceKeys.has(rawKey) || selectedDeviceKeys.has(compactKey);
+                    });
+                });
+
+                const legacyPortTable = Array.isArray(selectedLegacyDevice && selectedLegacyDevice.port_table)
+                    ? selectedLegacyDevice.port_table
+                    : [];
+                legacyPortTable.forEach((legacyPort, index) => {
+                    const idx = parsePortIndex(
+                        legacyPort && (
+                            legacyPort.port_idx
+                            ?? legacyPort.idx
+                            ?? legacyPort.port_index
+                            ?? legacyPort.index
+                            ?? (index + 1)
+                        )
+                    );
+                    if (!Number.isInteger(idx) || idx < 0) {
+                        return;
+                    }
+                    const powerW = extractLegacyPortPoePowerWatts(legacyPort);
+                    if (Number.isFinite(powerW)) {
+                        legacyPortPowerByIdx.set(idx, powerW);
+                    }
+                });
+            } catch (error) {
+                legacyPortPowerByIdx = new Map();
+            }
+
+            return ports.map((port) => {
+                const mergedPowerW = Number.isFinite(Number(port && port.poePowerW))
+                    ? Number(port.poePowerW)
+                    : legacyPortPowerByIdx.get(port.idx);
+                return {
+                    ...port,
+                    poePowerW: Number.isFinite(mergedPowerW)
+                        ? Math.round(mergedPowerW * 1000) / 1000
+                        : undefined
+                };
+            });
+        };
+
+        node.fetchPowerObservationSnapshot = async (deviceId) => {
+            const ports = await node.fetchDevicePortsPowerLite(deviceId);
+            const portsByIdx = new Map();
+            let powerSum = 0;
+            let powerCount = 0;
+
+            ports.forEach((entry) => {
+                const port = entry && typeof entry === "object" && !Array.isArray(entry)
+                    ? entry
+                    : {};
+                const idx = resolveObservedPortIdx(port.idx);
+                if (Number.isInteger(idx) && idx >= 0) {
+                    portsByIdx.set(idx, port);
+                }
+                const power = Number(port.poePowerW);
+                if (Number.isFinite(power)) {
+                    powerSum += power;
+                    powerCount += 1;
+                }
+            });
+
+            const totalPower = Math.round(powerSum * 1000) / 1000;
+            return {
+                portsByIdx,
+                powerConsumptionSwitchTotal: powerCount > 0 && Number.isFinite(totalPower)
+                    ? totalPower
+                    : undefined
+            };
+        };
+
+        node.notifyPowerObserverClient = (client, event) => {
+            if (!client || typeof client.handleNetworkPoePowerObservationUpdate !== "function") {
+                return;
+            }
+            try {
+                client.handleNetworkPoePowerObservationUpdate(event);
+            } catch (error) {
+            }
+        };
+
+        node.getPowerObservationClients = () => {
+            return node.nodeClients
+                .map((client) => {
+                    if (!client || typeof client.getNetworkPoePowerObservationDescriptor !== "function") {
+                        return null;
+                    }
+                    let descriptor;
+                    try {
+                        descriptor = client.getNetworkPoePowerObservationDescriptor();
+                    } catch (error) {
+                        return null;
+                    }
+                    if (!descriptor || typeof descriptor !== "object") {
+                        return null;
+                    }
+
+                    const deviceId = normalizeString(descriptor.deviceId);
+                    const portIdx = resolveObservedPortIdx(descriptor.portIdx);
+                    if (!deviceId || !Number.isInteger(portIdx)) {
+                        return null;
+                    }
+
+                    return {
+                        client,
+                        descriptor: {
+                            deviceId,
+                            portIdx,
+                            intervalSeconds: node.powerObservationIntervalSeconds
+                        }
+                    };
+                })
+                .filter(Boolean);
+        };
+
+        node.refreshPowerObservationScheduler = () => {
+            const activeClientIds = new Set(
+                node.getPowerObservationClients()
+                    .map((entry) => normalizeString(entry.client && entry.client.id))
+                    .filter(Boolean)
+            );
+
+            Array.from(node.powerObserverNodeState.keys()).forEach((clientId) => {
+                if (!activeClientIds.has(clientId)) {
+                    node.powerObserverNodeState.delete(clientId);
+                }
+            });
+
+            if (activeClientIds.size === 0 || node.isClosing) {
+                node.stopPowerObservationScheduler();
+                return;
+            }
+
+            if (!node.powerObserverTimer) {
+                node.powerObserverTimer = setInterval(() => {
+                    node.pollPowerObservers().catch(() => {
+                    });
+                }, POWER_OBSERVER_SCHEDULER_TICK_MS);
+            }
+            node.updateObserverDebugStatus();
+        };
+
+        node.getPowerObservationClientState = (clientId) => {
+            const normalizedClientId = normalizeString(clientId);
+            if (!normalizedClientId) {
+                return null;
+            }
+            if (!node.powerObserverNodeState.has(normalizedClientId)) {
+                node.powerObserverNodeState.set(normalizedClientId, {
+                    nextRunAt: Date.now(),
+                    hasObservedPower: false,
+                    lastObservedPowerW: undefined
+                });
+            }
+            return node.powerObserverNodeState.get(normalizedClientId);
+        };
+
+        node.stopPowerObservationScheduler = () => {
+            if (node.powerObserverTimer) {
+                clearInterval(node.powerObserverTimer);
+                node.powerObserverTimer = null;
+            }
+            node.updateObserverDebugStatus();
+        };
+
+        node.pollPowerObservers = async () => {
+            if (node.powerObserverPollInProgress) {
+                return;
+            }
+            node.powerObserverPollInProgress = true;
+
+            try {
+                const observedClients = node.getPowerObservationClients();
+                if (observedClients.length === 0) {
+                    node.stopPowerObservationScheduler();
+                    return;
+                }
+
+                const now = Date.now();
+                const dueByDevice = new Map();
+                observedClients.forEach((entry) => {
+                    const clientId = normalizeString(entry.client && entry.client.id);
+                    if (!clientId) {
+                        return;
+                    }
+                    const state = node.getPowerObservationClientState(clientId);
+                    if (!state || Number(state.nextRunAt) > now) {
+                        return;
+                    }
+
+                    state.nextRunAt = now + (entry.descriptor.intervalSeconds * 1000);
+                    const list = dueByDevice.get(entry.descriptor.deviceId) || [];
+                    list.push({
+                        client: entry.client,
+                        descriptor: entry.descriptor,
+                        state
+                    });
+                    dueByDevice.set(entry.descriptor.deviceId, list);
+                });
+
+                if (dueByDevice.size === 0) {
+                    return;
+                }
+
+                for (const [deviceId, entries] of dueByDevice.entries()) {
+                    let snapshot;
+                    try {
+                        snapshot = await node.fetchPowerObservationSnapshot(deviceId);
+                    } catch (error) {
+                        continue;
+                    }
+
+                    entries.forEach((entry) => {
+                        const selectedPort = snapshot.portsByIdx.get(entry.descriptor.portIdx) || null;
+                        if (!selectedPort) {
+                            node.notifyPowerObserverClient(entry.client, {
+                                source: entry.state.hasObservedPower ? "poll" : "startup",
+                                available: false,
+                                deviceId: entry.descriptor.deviceId,
+                                portIdx: entry.descriptor.portIdx,
+                                intervalSeconds: entry.descriptor.intervalSeconds
+                            });
+                            return;
+                        }
+
+                        const source = entry.state.hasObservedPower ? "poll" : "startup";
+                        const numericPower = Number(selectedPort.poePowerW);
+                        const powerW = Number.isFinite(numericPower) ? numericPower : undefined;
+                        const powerChanged = hasObservedPowerChanged(entry.state.lastObservedPowerW, powerW);
+
+                        entry.state.lastObservedPowerW = powerW;
+                        entry.state.hasObservedPower = true;
+
+                        node.notifyPowerObserverClient(entry.client, {
+                            source,
+                            available: true,
+                            deviceId: entry.descriptor.deviceId,
+                            portIdx: entry.descriptor.portIdx,
+                            intervalSeconds: entry.descriptor.intervalSeconds,
+                            selectedPort,
+                            powerConsumptionSwitchTotal: snapshot.powerConsumptionSwitchTotal,
+                            portPowerW: powerW,
+                            powerChanged
+                        });
+                    });
+                }
+            } finally {
+                node.powerObserverPollInProgress = false;
+                node.updateObserverDebugStatus();
+            }
+        };
+
+        node.fetchPresenceObservationSnapshot = async (clientId, timeout) => {
+            const scoped = resolveScopedIdentifiers("client", clientId);
+            if (!scoped.siteId || !scoped.resourceId) {
+                throw new Error("Client selection is invalid. Re-select the client from the editor.");
+            }
+
+            const response = await node.apiRequest({
+                path: `/v1/sites/${encodeURIComponent(scoped.siteId)}/clients/${encodeURIComponent(scoped.resourceId)}`,
+                method: "GET",
+                timeout: Number(timeout) > 0 ? Number(timeout) : 8000
+            });
+
+            if (response.statusCode === 404) {
+                return {
+                    found: false,
+                    connected: false,
+                    statusCode: 404,
+                    client: null
+                };
+            }
+            if (response.statusCode < 200 || response.statusCode >= 300) {
+                return {
+                    found: false,
+                    connected: false,
+                    statusCode: response.statusCode,
+                    client: null,
+                    error: `Client lookup failed (${response.statusCode})`
+                };
+            }
+
+            const client = extractNetworkData(response.payload);
+            return {
+                found: true,
+                connected: true,
+                statusCode: response.statusCode,
+                client: client && typeof client === "object" && !Array.isArray(client) ? client : null
+            };
+        };
+
+        node.requestPresenceObservationNow = async (descriptor) => {
+            if (!descriptor || typeof descriptor !== "object") {
+                throw new Error("Invalid presence descriptor.");
+            }
+            const snapshot = await node.fetchPresenceObservationSnapshot(descriptor.clientId, descriptor.timeout);
+            return {
+                source: normalizeString(descriptor.source) || "manual-input",
+                ...snapshot,
+                clientId: descriptor.clientId
+            };
+        };
+
+        node.notifyPresenceObserverClient = (client, event) => {
+            if (!client || typeof client.handleNetworkPresenceObservationUpdate !== "function") {
+                return;
+            }
+            try {
+                client.handleNetworkPresenceObservationUpdate(event);
+            } catch (error) {
+            }
+        };
+
+        node.getPresenceObservationClients = () => {
+            return node.nodeClients
+                .map((client) => {
+                    if (!client || typeof client.getNetworkPresenceObservationDescriptor !== "function") {
+                        return null;
+                    }
+                    let descriptor;
+                    try {
+                        descriptor = client.getNetworkPresenceObservationDescriptor();
+                    } catch (error) {
+                        return null;
+                    }
+                    if (!descriptor || typeof descriptor !== "object") {
+                        return null;
+                    }
+
+                    const clientId = normalizeString(descriptor.clientId);
+                    const pollIntervalSeconds = Number(descriptor.pollIntervalSeconds);
+                    const timeout = Number(descriptor.timeout);
+                    if (!clientId || !Number.isFinite(pollIntervalSeconds) || pollIntervalSeconds <= 0) {
+                        return null;
+                    }
+
+                    return {
+                        client,
+                        descriptor: {
+                            clientId,
+                            pollIntervalMs: Math.max(1000, Math.trunc(pollIntervalSeconds * 1000)),
+                            timeout: Number.isFinite(timeout) && timeout > 0 ? Math.trunc(timeout) : 8000
+                        }
+                    };
+                })
+                .filter(Boolean);
+        };
+
+        node.refreshPresenceObservationScheduler = () => {
+            const activeClientIds = new Set(
+                node.getPresenceObservationClients()
+                    .map((entry) => normalizeString(entry.client && entry.client.id))
+                    .filter(Boolean)
+            );
+
+            Array.from(node.presenceObserverNodeState.keys()).forEach((clientId) => {
+                if (!activeClientIds.has(clientId)) {
+                    node.presenceObserverNodeState.delete(clientId);
+                }
+            });
+
+            if (activeClientIds.size === 0 || node.isClosing) {
+                node.stopPresenceObservationScheduler();
+                return;
+            }
+
+            if (!node.presenceObserverTimer) {
+                node.presenceObserverTimer = setInterval(() => {
+                    node.pollPresenceObservers().catch(() => {
+                    });
+                }, 1000);
+            }
+            node.updateObserverDebugStatus();
+        };
+
+        node.getPresenceObservationClientState = (clientId) => {
+            const normalizedClientId = normalizeString(clientId);
+            if (!normalizedClientId) {
+                return null;
+            }
+            if (!node.presenceObserverNodeState.has(normalizedClientId)) {
+                node.presenceObserverNodeState.set(normalizedClientId, {
+                    nextRunAt: Date.now()
+                });
+            }
+            return node.presenceObserverNodeState.get(normalizedClientId);
+        };
+
+        node.stopPresenceObservationScheduler = () => {
+            if (node.presenceObserverTimer) {
+                clearInterval(node.presenceObserverTimer);
+                node.presenceObserverTimer = null;
+            }
+            node.updateObserverDebugStatus();
+        };
+
+        node.pollPresenceObservers = async () => {
+            if (node.presenceObserverPollInProgress) {
+                return;
+            }
+            node.presenceObserverPollInProgress = true;
+
+            try {
+                const observedClients = node.getPresenceObservationClients();
+                if (observedClients.length === 0) {
+                    node.stopPresenceObservationScheduler();
+                    return;
+                }
+
+                const now = Date.now();
+                const dueGroups = new Map();
+                observedClients.forEach((entry) => {
+                    const clientNodeId = normalizeString(entry.client && entry.client.id);
+                    if (!clientNodeId) {
+                        return;
+                    }
+                    const state = node.getPresenceObservationClientState(clientNodeId);
+                    if (!state || Number(state.nextRunAt) > now) {
+                        return;
+                    }
+
+                    state.nextRunAt = now + entry.descriptor.pollIntervalMs;
+                    const key = entry.descriptor.clientId;
+                    const group = dueGroups.get(key) || {
+                        clientId: entry.descriptor.clientId,
+                        timeout: entry.descriptor.timeout,
+                        entries: []
+                    };
+                    group.timeout = Math.max(group.timeout, entry.descriptor.timeout);
+                    group.entries.push(entry);
+                    dueGroups.set(key, group);
+                });
+
+                for (const group of dueGroups.values()) {
+                    let snapshot;
+                    try {
+                        snapshot = await node.fetchPresenceObservationSnapshot(group.clientId, group.timeout);
+                    } catch (error) {
+                        snapshot = {
+                            found: false,
+                            connected: false,
+                            statusCode: 0,
+                            client: null,
+                            error: error && error.message ? error.message : String(error)
+                        };
+                    }
+
+                    group.entries.forEach((entry) => {
+                        node.notifyPresenceObserverClient(entry.client, {
+                            source: "poll",
+                            clientId: group.clientId,
+                            ...snapshot
+                        });
+                    });
+                }
+            } finally {
+                node.presenceObserverPollInProgress = false;
+                node.updateObserverDebugStatus();
+            }
+        };
+
+        node.notifyUnofficialPollObserverClient = (client, event) => {
+            if (!client || typeof client.handleUnofficialNetworkPollUpdate !== "function") {
+                return;
+            }
+            try {
+                client.handleUnofficialNetworkPollUpdate(event);
+            } catch (error) {
+            }
+        };
+
+        node.getUnofficialPollObservationClients = () => {
+            return node.nodeClients
+                .map((client) => {
+                    if (!client || typeof client.getUnofficialNetworkPollDescriptor !== "function") {
+                        return null;
+                    }
+                    let descriptor;
+                    try {
+                        descriptor = client.getUnofficialNetworkPollDescriptor();
+                    } catch (error) {
+                        return null;
+                    }
+                    if (!descriptor || typeof descriptor !== "object") {
+                        return null;
+                    }
+
+                    const deviceType = normalizeString(descriptor.deviceType);
+                    const deviceId = normalizeString(descriptor.deviceId);
+                    const intervalMs = Number(descriptor.intervalMs);
+                    if (!deviceType || !deviceId || !Number.isFinite(intervalMs) || intervalMs <= 0) {
+                        return null;
+                    }
+
+                    return {
+                        client,
+                        descriptor: {
+                            deviceType,
+                            deviceId,
+                            intervalMs: Math.max(1000, Math.trunc(intervalMs))
+                        }
+                    };
+                })
+                .filter(Boolean);
+        };
+
+        node.refreshUnofficialPollObservationScheduler = () => {
+            const activeClientIds = new Set(
+                node.getUnofficialPollObservationClients()
+                    .map((entry) => normalizeString(entry.client && entry.client.id))
+                    .filter(Boolean)
+            );
+
+            Array.from(node.unofficialPollObserverNodeState.keys()).forEach((clientId) => {
+                if (!activeClientIds.has(clientId)) {
+                    node.unofficialPollObserverNodeState.delete(clientId);
+                }
+            });
+
+            if (activeClientIds.size === 0 || node.isClosing) {
+                node.stopUnofficialPollObservationScheduler();
+                return;
+            }
+
+            if (!node.unofficialPollObserverTimer) {
+                node.unofficialPollObserverTimer = setInterval(() => {
+                    node.pollUnofficialObservers().catch(() => {
+                    });
+                }, 1000);
+            }
+            node.updateObserverDebugStatus();
+        };
+
+        node.getUnofficialPollObserverClientState = (clientId) => {
+            const normalizedClientId = normalizeString(clientId);
+            if (!normalizedClientId) {
+                return null;
+            }
+            if (!node.unofficialPollObserverNodeState.has(normalizedClientId)) {
+                node.unofficialPollObserverNodeState.set(normalizedClientId, {
+                    nextRunAt: Date.now()
+                });
+            }
+            return node.unofficialPollObserverNodeState.get(normalizedClientId);
+        };
+
+        node.stopUnofficialPollObservationScheduler = () => {
+            if (node.unofficialPollObserverTimer) {
+                clearInterval(node.unofficialPollObserverTimer);
+                node.unofficialPollObserverTimer = null;
+            }
+            node.updateObserverDebugStatus();
+        };
+
+        node.pollUnofficialObservers = async () => {
+            if (node.unofficialPollObserverPollInProgress) {
+                return;
+            }
+            node.unofficialPollObserverPollInProgress = true;
+
+            try {
+                const observedClients = node.getUnofficialPollObservationClients();
+                if (observedClients.length === 0) {
+                    node.stopUnofficialPollObservationScheduler();
+                    return;
+                }
+
+                if (typeof node.isUnofficialNetworkWebSocketConnected === "function" && node.isUnofficialNetworkWebSocketConnected()) {
+                    return;
+                }
+
+                const now = Date.now();
+                const dueByDevice = new Map();
+                observedClients.forEach((entry) => {
+                    const clientNodeId = normalizeString(entry.client && entry.client.id);
+                    if (!clientNodeId) {
+                        return;
+                    }
+                    const state = node.getUnofficialPollObserverClientState(clientNodeId);
+                    if (!state || Number(state.nextRunAt) > now) {
+                        return;
+                    }
+
+                    state.nextRunAt = now + entry.descriptor.intervalMs;
+                    const key = `${entry.descriptor.deviceType}::${entry.descriptor.deviceId}`;
+                    const list = dueByDevice.get(key) || [];
+                    list.push(entry);
+                    dueByDevice.set(key, list);
+                });
+
+                for (const entries of dueByDevice.values()) {
+                    if (!Array.isArray(entries) || entries.length === 0) {
+                        continue;
+                    }
+                    const base = entries[0].descriptor;
+                    let latest;
+                    try {
+                        latest = await node.fetchDeviceByTypeAndId(base.deviceType, base.deviceId);
+                    } catch (error) {
+                        continue;
+                    }
+
+                    entries.forEach((entry) => {
+                        node.notifyUnofficialPollObserverClient(entry.client, {
+                            source: "poll-fallback",
+                            deviceType: base.deviceType,
+                            deviceId: base.deviceId,
+                            latest
+                        });
+                    });
+                }
+            } finally {
+                node.unofficialPollObserverPollInProgress = false;
+                node.updateObserverDebugStatus();
+            }
+        };
+
+        node.getObserverDebugMetrics = () => {
+            const powerObservers = node.getPowerObservationClients();
+            const presenceObservers = node.getPresenceObservationClients();
+            const unofficialObservers = node.getUnofficialPollObservationClients();
+
+            const powerDeviceCount = new Set(powerObservers.map((entry) => entry.descriptor.deviceId)).size;
+            const presenceTargetCount = new Set(presenceObservers.map((entry) => entry.descriptor.clientId)).size;
+            const unofficialDeviceCount = new Set(
+                unofficialObservers.map((entry) => `${entry.descriptor.deviceType}::${entry.descriptor.deviceId}`)
+            ).size;
+
+            return {
+                timestamp: new Date().toISOString(),
+                registeredClients: node.nodeClients.length,
+                observers: {
+                    power: {
+                        count: powerObservers.length,
+                        targets: powerDeviceCount
+                    },
+                    presence: {
+                        count: presenceObservers.length,
+                        targets: presenceTargetCount
+                    },
+                    unofficialPoll: {
+                        count: unofficialObservers.length,
+                        targets: unofficialDeviceCount
+                    }
+                },
+                schedulers: {
+                    power: {
+                        active: Boolean(node.powerObserverTimer),
+                        inFlight: node.powerObserverPollInProgress === true
+                    },
+                    presence: {
+                        active: Boolean(node.presenceObserverTimer),
+                        inFlight: node.presenceObserverPollInProgress === true
+                    },
+                    unofficialPoll: {
+                        active: Boolean(node.unofficialPollObserverTimer),
+                        inFlight: node.unofficialPollObserverPollInProgress === true
+                    }
+                }
+            };
+        };
+
+        node.updateObserverDebugStatus = () => {
+            if (node.isClosing) {
+                return;
+            }
+
+            const metrics = node.getObserverDebugMetrics();
+            const activeObserverCount = metrics.observers.power.count
+                + metrics.observers.presence.count
+                + metrics.observers.unofficialPoll.count;
+            const hasActiveScheduler = metrics.schedulers.power.active
+                || metrics.schedulers.presence.active
+                || metrics.schedulers.unofficialPoll.active;
+
+            let fill = "grey";
+            let shape = "ring";
+            let text = "ready";
+            if (activeObserverCount > 0 || hasActiveScheduler) {
+                fill = "blue";
+                shape = "ring";
+                text = `obs p:${metrics.observers.power.count}/${metrics.observers.power.targets} pr:${metrics.observers.presence.count}/${metrics.observers.presence.targets} u:${metrics.observers.unofficialPoll.count}/${metrics.observers.unofficialPoll.targets}`;
+            }
+
+            const nextKey = `${fill}|${shape}|${text}`;
+            if (node.lastObserverDebugStatusKey === nextKey) {
+                return;
+            }
+            node.lastObserverDebugStatusKey = nextKey;
+            setNodeStatus({ fill, shape, text });
+        };
+
         node.resolveClientAttachment = async (clientId) => {
             const normalizedClientId = normalizeString(clientId);
             if (!normalizedClientId) {
@@ -1747,19 +2561,39 @@ module.exports = function(RED) {
             } catch (error) {
                 node.warn(`Unable to initialize Network websocket: ${error && error.message ? error.message : error}`);
             }
+            node.refreshPowerObservationScheduler();
+            node.refreshPresenceObservationScheduler();
+            node.refreshUnofficialPollObservationScheduler();
         };
 
         node.removeClient = (client) => {
             node.nodeClients = node.nodeClients.filter((entry) => entry && client && entry.id !== client.id);
+            const clientId = normalizeString(client && client.id);
+            if (clientId) {
+                node.powerObserverNodeState.delete(clientId);
+                node.presenceObserverNodeState.delete(clientId);
+                node.unofficialPollObserverNodeState.delete(clientId);
+            }
             if (!node.hasUnofficialNetworkStreamSubscribers()) {
                 node.closeUnofficialNetworkWebSocket();
             }
+            node.refreshPowerObservationScheduler();
+            node.refreshPresenceObservationScheduler();
+            node.refreshUnofficialPollObservationScheduler();
         };
+
+        node.updateObserverDebugStatus();
 
         node.on("close", function(done) {
             try {
                 node.isClosing = true;
                 node.nodeClients = [];
+                node.powerObserverNodeState.clear();
+                node.stopPowerObservationScheduler();
+                node.presenceObserverNodeState.clear();
+                node.stopPresenceObservationScheduler();
+                node.unofficialPollObserverNodeState.clear();
+                node.stopUnofficialPollObservationScheduler();
                 node.closeUnofficialNetworkWebSocket();
             } catch (error) {
             } finally {
@@ -1951,6 +2785,26 @@ module.exports = function(RED) {
             }
 
             res.json(await server.fetchClientsWithAttachment());
+        } catch (error) {
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    RED.httpAdmin.get("/unifiNetwork/observer-metrics", RED.auth.needsPermission("unifi-network-config.read"), async (req, res) => {
+        try {
+            const serverId = String(req.query.serverId || "").trim();
+            if (!serverId) {
+                res.status(400).json({ error: "Missing serverId" });
+                return;
+            }
+
+            const server = RED.nodes.getNode(serverId);
+            if (!server || typeof server.getObserverDebugMetrics !== "function") {
+                res.status(404).json({ error: "Configuration node not found" });
+                return;
+            }
+
+            res.json(server.getObserverDebugMetrics());
         } catch (error) {
             res.status(500).json({ error: error.message });
         }

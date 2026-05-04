@@ -14,7 +14,6 @@
             deviceName: { value: "" },
             portIdx: { value: 1, required: true, validate: RED.validators.number() },
             action: { value: "msgPayload", required: true },
-            powerIntervalSeconds: { value: 15, required: true, validate: RED.validators.number() },
             timeout: { value: 15000, required: true, validate: RED.validators.number() }
         },
         inputs: 1,
@@ -27,14 +26,24 @@
         },
         oneditsave: function () {
             const actionValue = String($("#node-input-action").val() || "").trim().toLowerCase();
-            const opensObservation = ["emitpoweratchange", "emitpoweratinterval"].includes(actionValue);
-            const intervalValue = Number($("#node-input-powerIntervalSeconds").val());
-            const normalizedInterval = Number.isFinite(intervalValue)
-                ? Math.max(5, Math.trunc(intervalValue))
-                : 15;
+            const opensObservation = ["emitpowerconsumption"].includes(actionValue);
+            const selectionMode = String($("#node-input-selectionMode").val() || "switchPort").trim();
 
-            $("#node-input-powerIntervalSeconds").val(String(normalizedInterval));
-            this.powerIntervalSeconds = normalizedInterval;
+            if (selectionMode === "client") {
+                const $selectedClient = $("#node-input-clientLookupId option:selected");
+                const derivedDeviceId = String($selectedClient.attr("data-attached-device-id") || "").trim();
+                const derivedPortIdx = String($selectedClient.attr("data-attached-port-idx") || "").trim();
+                if (derivedDeviceId && derivedPortIdx !== "") {
+                    $("#node-input-deviceId").val(derivedDeviceId);
+                    $("#node-input-portIdx").val(derivedPortIdx);
+                    this.deviceId = derivedDeviceId;
+                    const numericPortIdx = Number(derivedPortIdx);
+                    this.portIdx = Number.isFinite(numericPortIdx)
+                        ? Math.trunc(numericPortIdx)
+                        : derivedPortIdx;
+                }
+            }
+
             this.inputs = opensObservation ? 0 : 1;
         },
         oneditprepare: function () {
@@ -52,20 +61,21 @@
             const $rowSwitch = $("#node-row-deviceId");
             const $rowClient = $("#node-row-clientLookupId");
             const $rowPort = $("#node-row-portIdx");
-            const $rowPowerInterval = $("#node-row-powerIntervalSeconds");
-            const $powerIntervalSeconds = $("#node-input-powerIntervalSeconds");
             const $selectionSummary = $("#node-input-selectionSummary");
             const $selectionDetail = $("#node-input-selectionDetail");
             let suspendChangeHandling = false;
+            let isInitializingEditor = true;
             let clientTargetsPopulated = false;
             let clientTargetsLoading = false;
+            let clientsLoadedForServerId = "";
+            let clientsRequestPromise = null;
 
             function getSelectedActionValue() {
                 return String($action.val() || node.action || "msgPayload").trim().toLowerCase();
             }
 
             function selectedActionObservesPower() {
-                return ["emitpoweratchange", "emitpoweratinterval"].includes(getSelectedActionValue());
+                return ["emitpowerconsumption"].includes(getSelectedActionValue());
             }
 
             function selectedActionUsesPayloadControl() {
@@ -97,25 +107,6 @@
                 // Persist dynamic pin visibility: stream-like power observation
                 // modes do not accept input triggers.
                 node.inputs = selectedActionObservesPower() ? 0 : 1;
-            }
-
-            function selectedActionPowerObserveMode() {
-                const value = getSelectedActionValue();
-                if (value === "emitpoweratchange") {
-                    return "change";
-                }
-                if (value === "emitpoweratinterval") {
-                    return "interval";
-                }
-                return "";
-            }
-
-            function normalizeIntervalSeconds(value) {
-                const parsed = Number(value);
-                if (!Number.isFinite(parsed)) {
-                    return 15;
-                }
-                return Math.max(5, Math.trunc(parsed));
             }
 
             function requestJson(url) {
@@ -183,6 +174,10 @@
                 }
 
                 $server.val(firstConfigId);
+            }
+
+            function getSelectedServerId() {
+                return String($server.val() || "").trim();
             }
 
             function makeSelectSearchable($select, placeholder) {
@@ -410,6 +405,23 @@
                 updateDerivedTargetFieldsState();
             }
 
+            function bindLazyClientLookupLoad() {
+                function triggerLazyLoad() {
+                    if (getSelectionMode() !== "client" || clientTargetsLoading) {
+                        return;
+                    }
+                    loadClients({ showLoading: false });
+                }
+
+                $clientLookupId
+                    .off(".unifiLazyClientLoad")
+                    .on("focus.unifiLazyClientLoad mousedown.unifiLazyClientLoad", triggerLazyLoad);
+
+                $("#node-input-clientLookupId-search")
+                    .off(".unifiLazyClientLoad")
+                    .on("focus.unifiLazyClientLoad mousedown.unifiLazyClientLoad", triggerLazyLoad);
+            }
+
             function updateDerivedTargetFieldsState() {
                 const isClientMode = getSelectionMode() === "client";
                 const disableDerived = isClientMode && (clientTargetsLoading || !clientTargetsPopulated);
@@ -424,8 +436,7 @@
                 const mode = getSelectionMode();
                 const actionLabel = String($action.find("option:selected").text() || "POE controlled by msg.payload").trim();
                 const portLabel = String($portIdx.val() || "").trim();
-                const powerObserveMode = selectedActionPowerObserveMode();
-                const intervalSeconds = normalizeIntervalSeconds($powerIntervalSeconds.val());
+                const powerObserveMode = selectedActionObservesPower();
 
                 let summary = "Choose a switch and a port.";
                 let detail = "This node sends a port action request to UniFi Network.";
@@ -447,13 +458,8 @@
                         ? (clientName ? (clientName + " (derived switch/port)") : "selected client target")
                         : (deviceName ? (deviceName + " (port " + (portLabel || "?") + ")") : "selected switch port");
 
-                    if (powerObserveMode === "change") {
-                        summary = "Emit power consumption changes for " + targetLabel + ".";
-                        detail = "After deploy/restart, polling starts automatically and emits only when the selected port power changes.";
-                    } else {
-                        summary = "Emit power consumption every " + intervalSeconds + "s for " + targetLabel + ".";
-                        detail = "After deploy/restart, polling starts automatically and emits at fixed intervals.";
-                    }
+                    summary = "Emit power consumption for " + targetLabel + ".";
+                    detail = "After deploy/restart, polling starts automatically using the global interval set in Unifi Network Config.";
                 }
 
                 if (selectedActionUsesPayloadControl()) {
@@ -465,10 +471,6 @@
             }
 
             function refreshActionUi() {
-                $rowPowerInterval.toggle(selectedActionObservesPower());
-                if (selectedActionObservesPower()) {
-                    $powerIntervalSeconds.val(String(normalizeIntervalSeconds($powerIntervalSeconds.val())));
-                }
                 syncEditorInputsFlag();
             }
 
@@ -620,8 +622,49 @@
                 }
 
                 makeSelectSearchable($clientLookupId, "Search clients");
+                bindLazyClientLookupLoad();
                 clientTargetsLoading = false;
                 clientTargetsPopulated = renderedTargets > 0;
+                clientsLoadedForServerId = getSelectedServerId();
+                updateDerivedTargetFieldsState();
+                rememberSelectedTargetName();
+                refreshSummary();
+            }
+
+            function renderSavedClientSelection() {
+                const savedClientId = String(node.clientLookupId || "").trim();
+                const savedClientName = String(node.deviceName || "").trim();
+                const savedDeviceId = String(node.deviceId || "").trim();
+                const savedPortIdx = String(node.portIdx || "").trim();
+                suspendChangeHandling = true;
+                try {
+                    $clientLookupId.empty();
+                    $clientLookupId.append($("<option></option>").val("").text("Choose a client target"));
+                    if (savedClientId) {
+                        const label = savedClientName || savedClientId;
+                        const $savedOption = $("<option></option>")
+                            .val(savedClientId)
+                            .text(label)
+                            .attr("data-client-name", label);
+                        if (savedDeviceId) {
+                            $savedOption.attr("data-attached-device-id", savedDeviceId);
+                        }
+                        if (savedPortIdx !== "") {
+                            $savedOption.attr("data-attached-port-idx", savedPortIdx);
+                        }
+                        $clientLookupId.append($savedOption);
+                        $clientLookupId.val(savedClientId);
+                    } else {
+                        $clientLookupId.val("");
+                    }
+                } finally {
+                    suspendChangeHandling = false;
+                }
+
+                clientTargetsLoading = false;
+                clientTargetsPopulated = savedClientId !== "";
+                makeSelectSearchable($clientLookupId, "Search clients");
+                bindLazyClientLookupLoad();
                 updateDerivedTargetFieldsState();
                 rememberSelectedTargetName();
                 refreshSummary();
@@ -647,6 +690,7 @@
                 $("#node-input-clientLookupId-search")
                     .val("Loading clients, please wait...")
                     .prop("disabled", true);
+                bindLazyClientLookupLoad();
                 updateDerivedTargetFieldsState();
                 $selectionSummary.text("Loading client targets...");
                 $selectionDetail.text("Please wait while UniFi returns clients and switch-port attachments.");
@@ -711,28 +755,49 @@
                     });
             }
 
-            function loadClients() {
-                const serverId = String($server.val() || "").trim();
+            function loadClients(options) {
+                const settings = options && typeof options === "object" ? options : {};
+                const forceReload = settings.force === true;
+                const showLoadingState = settings.showLoading !== false;
+                const serverId = getSelectedServerId();
                 if (!serverId || serverId === "_ADD_") {
+                    clientsLoadedForServerId = "";
                     renderClients([]);
                     $refreshClients.find("i").removeClass("fa-spin");
                     return Promise.resolve();
                 }
 
+                if (!forceReload
+                    && !clientTargetsLoading
+                    && clientTargetsPopulated
+                    && clientsLoadedForServerId === serverId) {
+                    return Promise.resolve();
+                }
+
+                if (clientsRequestPromise) {
+                    return clientsRequestPromise;
+                }
+
                 $refreshClients.find("i").addClass("fa-spin");
-                renderClientsLoading();
-                return requestJson("unifiNetwork/clients-with-attachment?serverId=" + encodeURIComponent(serverId))
+                if (showLoadingState) {
+                    renderClientsLoading();
+                }
+
+                clientsRequestPromise = requestJson("unifiNetwork/clients-with-attachment?serverId=" + encodeURIComponent(serverId))
                     .then(function (data) {
                         renderClients(Array.isArray(data) ? data : []);
                     })
                     .catch(function (xhr) {
+                        clientsLoadedForServerId = "";
                         renderClients([]);
                         const errorText = xhr && xhr.responseJSON && xhr.responseJSON.error ? xhr.responseJSON.error : "Unable to load clients";
                         RED.notify(errorText, "error");
                     })
                     .finally(function () {
+                        clientsRequestPromise = null;
                         $refreshClients.find("i").removeClass("fa-spin");
                     });
+                return clientsRequestPromise;
             }
 
             function applySelectedClientTarget(options) {
@@ -787,9 +852,17 @@
                 });
             }
 
-            function loadEditorData() {
+            function loadEditorData(options) {
+                const settings = options && typeof options === "object" ? options : {};
+                const shouldLoadClients = settings.loadClients === true;
                 return loadDevices().then(function () {
-                    return loadClients();
+                    if (!shouldLoadClients) {
+                        return;
+                    }
+                    return loadClients({
+                        force: settings.forceClients === true,
+                        showLoading: settings.showClientsLoading !== false
+                    });
                 }).then(function () {
                     if (getSelectionMode() === "client") {
                         return applySelectedClientTarget();
@@ -805,10 +878,14 @@
             }
 
             $server.on("change", function () {
-                if (suspendChangeHandling) {
+                if (suspendChangeHandling || isInitializingEditor) {
                     return;
                 }
-                loadEditorData();
+                clientsLoadedForServerId = "";
+                loadEditorData({
+                    loadClients: getSelectionMode() === "client",
+                    forceClients: true
+                });
             });
 
             $deviceId.on("change", function () {
@@ -829,10 +906,6 @@
                 refreshActionUi();
                 refreshSummary();
             });
-            $powerIntervalSeconds.on("change", function () {
-                $powerIntervalSeconds.val(String(normalizeIntervalSeconds($powerIntervalSeconds.val())));
-                refreshSummary();
-            });
             $selectionMode.on("change", function () {
                 if (suspendChangeHandling) {
                     return;
@@ -840,7 +913,9 @@
                 refreshSelectionModeUi();
                 rememberSelectedTargetName();
                 if (getSelectionMode() === "client") {
-                    applySelectedClientTarget();
+                    loadClients({ showLoading: false }).then(function () {
+                        return applySelectedClientTarget();
+                    });
                 } else {
                     refreshSummary();
                 }
@@ -869,7 +944,7 @@
             });
             $refreshClients.on("click", function (event) {
                 event.preventDefault();
-                loadClients().then(function () {
+                loadClients({ force: true }).then(function () {
                     if (getSelectionMode() === "client") {
                         return applySelectedClientTarget();
                     }
@@ -882,14 +957,16 @@
             if (!$action.val()) {
                 $action.val("msgPayload");
             }
-            $powerIntervalSeconds.val(String(normalizeIntervalSeconds(node.powerIntervalSeconds)));
             makeSelectSearchable($deviceId, "Search switches");
-            makeSelectSearchable($clientLookupId, "Search clients");
+            renderSavedClientSelection();
             refreshSelectionModeUi();
             refreshActionUi();
             $refreshDevices.find("i").addClass("fa-spin");
-            $refreshClients.find("i").addClass("fa-spin");
-            loadEditorData();
+            loadEditorData({
+                loadClients: false
+            }).finally(function () {
+                isInitializingEditor = false;
+            });
         }
     });
 </script>
@@ -943,13 +1020,8 @@
             <option value="enable">Enable PoE</option>
             <option value="disable">Disable PoE</option>
             <option value="cycle">Power Cycle</option>
-            <option value="emitPowerAtChange">Emit Power Consumption at change</option>
-            <option value="emitPowerAtInterval">Emit Power Consumption at fixed intervals</option>
+            <option value="emitPowerConsumption">Emit Power Consumption</option>
         </select>
-    </div>
-    <div class="form-row" id="node-row-powerIntervalSeconds" style="display:none;">
-        <label for="node-input-powerIntervalSeconds"><i class="fa fa-repeat"></i> Interval (s)</label>
-        <input type="text" id="node-input-powerIntervalSeconds" placeholder="15">
     </div>
     <div class="form-row">
         <div class="unifi-ultimate-card">
@@ -985,14 +1057,14 @@
     <p><b>Switch</b> selects the adopted UniFi switch. The selector is searchable.</p>
     <p><b>Client</b> lists clients with known switch and port mapping. The selector is searchable.</p>
     <p><b>Port</b> selects the physical port index. Port labels include connected clients or downstream UniFi devices when available.</p>
-    <p><b>Action</b> executes the configured PoE operation. <code>POE controlled by msg.payload</code> maps incoming payloads to PoE mode (<code>true</code> enables PoE, <code>false</code> disables PoE). Enable and Disable update the UniFi port override (<code>poe_mode</code> auto/off). Power Cycle uses the official Network port action. You can also use <code>Emit Power Consumption at change</code> and <code>Emit Power Consumption at fixed intervals</code>.</p>
-    <p><b>Interval (s)</b> is used by power-consumption emit actions and has a minimum of <code>5</code> seconds.</p>
+    <p><b>Action</b> executes the configured PoE operation. <code>POE controlled by msg.payload</code> maps incoming payloads to PoE mode (<code>true</code> enables PoE, <code>false</code> disables PoE). Enable and Disable update the UniFi port override (<code>poe_mode</code> auto/off). Power Cycle uses the official Network port action. <code>Emit Power Consumption</code> emits power values from the shared observer in the config node.</p>
+    <p><b>Power poll interval</b> for emit action is configured globally in <code>Unifi Network Config</code>. This node does not run its own timer.</p>
     <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different switch or client target.</p>
     <p><b>Timeout</b> controls the request timeout in milliseconds.</p>
 
     <h3>Input</h3>
     <ul>
-        <li>When using <code>Emit Power Consumption at change</code> or <code>Emit Power Consumption at fixed intervals</code>, the input pin is hidden and listening starts automatically after deploy/restart.</li>
+        <li>When using <code>Emit Power Consumption</code>, the input pin is hidden and listening starts automatically after deploy/restart.</li>
         <li>Any incoming message triggers the configured action.</li>
         <li>When action is <code>POE controlled by msg.payload</code>, the node reads <code>msg.payload</code>: <code>true</code> enables PoE, <code>false</code> disables PoE.</li>
         <li>For all other actions, input message properties are ignored.</li>

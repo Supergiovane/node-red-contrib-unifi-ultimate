@@ -115,6 +115,18 @@ function attachDetails(outputMsg, details) {
     };
 }
 
+function buildStatusTimestampText() {
+    const now = new Date();
+    const time = now.toTimeString().split(" ")[0];
+    return `(day ${now.getDate()}, ${time})`;
+}
+
+function appendStatusTimestamp(text) {
+    const normalized = String(text === undefined || text === null ? "" : text).trim();
+    const suffix = buildStatusTimestampText();
+    return normalized ? `${normalized} ${suffix}` : suffix;
+}
+
 module.exports = function(RED) {
     function UnifiAccessDeviceNode(config) {
         RED.nodes.createNode(this, config);
@@ -130,6 +142,16 @@ module.exports = function(RED) {
         node.timeout = Number(config.timeout) > 0 ? Number(config.timeout) : 15000;
         node.currentDevice = null;
         node.isObserving = false;
+
+        function setNodeStatus(status) {
+            if (!status || typeof status !== "object" || Array.isArray(status)) {
+                return;
+            }
+            node.status({
+                ...status,
+                text: appendStatusTimestamp(status.text)
+            });
+        }
 
         function resolveOutputDeviceName(payload) {
             const extracted = extractDeviceNameFromPayload(payload);
@@ -194,7 +216,7 @@ module.exports = function(RED) {
                 })
             });
 
-            node.status({ fill: "green", shape: "dot", text: buildNodeStatus(deviceType, payload) });
+            setNodeStatus({ fill: "green", shape: "dot", text: buildNodeStatus(deviceType, payload) });
             sendOutputs(send, stateMsg, null);
         }
 
@@ -269,7 +291,7 @@ module.exports = function(RED) {
                         })
                     });
 
-                    node.status({ fill: "yellow", shape: "ring", text: "no ring" });
+                    setNodeStatus({ fill: "yellow", shape: "ring", text: "no ring" });
                     sendOutputs(send, skippedMsg, null);
                     return;
                 }
@@ -291,9 +313,9 @@ module.exports = function(RED) {
             const execution = composeCapabilityExecution(deviceType, capabilityId, capabilityConfig, selectedDevice);
             const request = buildCapabilityRequest(deviceType, capabilityId, deviceId, selectedDevice);
 
-            node.status({ fill: "blue", shape: "dot", text: `${capability.label}` });
+            setNodeStatus({ fill: "blue", shape: "dot", text: `${capability.label}` });
 
-            const response = await node.server.apiRequest({
+            const response = await node.server.executeAccessRequest({
                 path: request.path,
                 method: request.method,
                 query: execution.query,
@@ -303,7 +325,7 @@ module.exports = function(RED) {
             });
 
             if (response.statusCode < 200 || response.statusCode >= 300) {
-                node.status({ fill: "yellow", shape: "ring", text: `${response.statusCode}` });
+                setNodeStatus({ fill: "yellow", shape: "ring", text: `${response.statusCode}` });
                 throw new Error(`UniFi Access request failed with status ${response.statusCode}`);
             }
 
@@ -350,7 +372,7 @@ module.exports = function(RED) {
                 })
             });
 
-            node.status({ fill: "green", shape: "dot", text: `${capability.label}` });
+            setNodeStatus({ fill: "green", shape: "dot", text: `${capability.label}` });
             sendOutputs(send, stateMsg, null);
         }
 
@@ -396,7 +418,7 @@ module.exports = function(RED) {
                     done();
                 }
             } catch (error) {
-                node.status({ fill: "red", shape: "ring", text: "error" });
+                setNodeStatus({ fill: "red", shape: "ring", text: "error" });
                 if (typeof done === "function") {
                     done(error);
                 } else {
@@ -414,7 +436,7 @@ module.exports = function(RED) {
                 }
                 const eventName = String(eventPayload.event || "").trim();
 
-                node.status({ fill: "blue", shape: "ring", text: eventName || "event" });
+                setNodeStatus({ fill: "blue", shape: "ring", text: eventName || "event" });
                 const resolvedDeviceName = resolveOutputDeviceName(node.currentDevice);
                 const eventMsg = {
                     payload: attachDeviceNameToPayload(eventPayload, resolvedDeviceName),
@@ -436,9 +458,9 @@ module.exports = function(RED) {
         };
 
         if (!node.server) {
-            node.status({ fill: "red", shape: "ring", text: "config missing" });
+            setNodeStatus({ fill: "red", shape: "ring", text: "config missing" });
         } else if (configuredCapabilityOpensEventStream() && (!node.deviceType || !node.deviceId)) {
-            node.status({ fill: "yellow", shape: "ring", text: "select device" });
+            setNodeStatus({ fill: "yellow", shape: "ring", text: "select device" });
         } else {
             if (typeof node.server.addClient === "function") {
                 node.server.addClient(node);

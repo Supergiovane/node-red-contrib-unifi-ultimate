@@ -118,6 +118,18 @@ function attachDetails(outputMsg, details) {
     };
 }
 
+function buildStatusTimestampText() {
+    const now = new Date();
+    const time = now.toTimeString().split(" ")[0];
+    return `(day ${now.getDate()}, ${time})`;
+}
+
+function appendStatusTimestamp(text) {
+    const normalized = String(text === undefined || text === null ? "" : text).trim();
+    const suffix = buildStatusTimestampText();
+    return normalized ? `${normalized} ${suffix}` : suffix;
+}
+
 function extractNetworkEventName(payload) {
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
         return "event";
@@ -473,8 +485,17 @@ module.exports = function(RED) {
         node.timeout = Number(config.timeout) > 0 ? Number(config.timeout) : 15000;
         node.currentDevice = null;
         node.isObserving = false;
-        node.unofficialPollTimer = null;
         node.unofficialLastFingerprint = "";
+
+        function setNodeStatus(status) {
+            if (!status || typeof status !== "object" || Array.isArray(status)) {
+                return;
+            }
+            node.status({
+                ...status,
+                text: appendStatusTimestamp(status.text)
+            });
+        }
 
         function resolveOutputDeviceName(payload) {
             const extracted = extractDeviceNameFromPayload(payload);
@@ -547,7 +568,7 @@ module.exports = function(RED) {
             });
             decorateOutputMessage(outputMsg, payload, source || "observe");
 
-            node.status({ fill: "green", shape: "dot", text: buildNodeStatus(deviceType, payload) });
+            setNodeStatus({ fill: "green", shape: "dot", text: buildNodeStatus(deviceType, payload) });
             send(outputMsg);
         }
 
@@ -588,9 +609,9 @@ module.exports = function(RED) {
             const execution = composeCapabilityExecution(deviceType, capabilityId, capabilityConfig);
             const request = buildCapabilityRequest(deviceType, capabilityId, deviceId, execution.params, node.currentDevice);
 
-            node.status({ fill: "blue", shape: "dot", text: `${capability.label}` });
+            setNodeStatus({ fill: "blue", shape: "dot", text: `${capability.label}` });
 
-            const response = await node.server.apiRequest({
+            const response = await node.server.executeNetworkRequest({
                 path: request.path,
                 method: request.method,
                 query: execution.query,
@@ -600,7 +621,7 @@ module.exports = function(RED) {
             });
 
             if (response.statusCode < 200 || response.statusCode >= 300) {
-                node.status({ fill: "yellow", shape: "ring", text: `${response.statusCode}` });
+                setNodeStatus({ fill: "yellow", shape: "ring", text: `${response.statusCode}` });
                 throw new Error(`UniFi Network request failed with status ${response.statusCode}`);
             }
 
@@ -629,7 +650,7 @@ module.exports = function(RED) {
             });
             decorateOutputMessage(outputMsg, responseData, `request:${capabilityId}`);
 
-            node.status({ fill: "green", shape: "dot", text: `${capability.label}` });
+            setNodeStatus({ fill: "green", shape: "dot", text: `${capability.label}` });
             send(outputMsg);
         }
 
@@ -667,89 +688,10 @@ module.exports = function(RED) {
             );
         }
 
-        function stopUnofficialPollingFallback() {
-            if (node.unofficialPollTimer) {
-                clearInterval(node.unofficialPollTimer);
-                node.unofficialPollTimer = null;
+        function refreshUnofficialPollingFallback() {
+            if (node.server && typeof node.server.refreshUnofficialPollObservationScheduler === "function") {
+                node.server.refreshUnofficialPollObservationScheduler();
             }
-        }
-
-        function startUnofficialPollingFallback() {
-            if (!shouldUseUnofficialPollingFallback() || node.unofficialPollTimer) {
-                return;
-            }
-
-            node.unofficialPollTimer = setInterval(async () => {
-                try {
-                    if (!shouldUseUnofficialPollingFallback()) {
-                        return;
-                    }
-
-                    if (node.server && typeof node.server.isUnofficialNetworkWebSocketConnected === "function" && node.server.isUnofficialNetworkWebSocketConnected()) {
-                        return;
-                    }
-
-                    const latest = await node.server.fetchDeviceByTypeAndId(node.deviceType, node.deviceId);
-                    const nextFingerprint = buildObservationFingerprint(node.deviceType, latest);
-                    if (!nextFingerprint) {
-                        return;
-                    }
-
-                    if (!node.unofficialLastFingerprint) {
-                        node.currentDevice = latest;
-                        node.unofficialLastFingerprint = nextFingerprint;
-                        return;
-                    }
-
-                    if (node.unofficialLastFingerprint === nextFingerprint) {
-                        return;
-                    }
-
-                    const previousDeviceSnapshot = node.currentDevice;
-                    const changeSummary = buildDeviceChangeSummary(node.deviceType, previousDeviceSnapshot, latest);
-                    node.currentDevice = latest;
-                    node.unofficialLastFingerprint = nextFingerprint;
-                    const primaryPortChange = changeSummary && Array.isArray(changeSummary.ports) && changeSummary.ports.length === 1
-                        ? changeSummary.ports[0]
-                        : null;
-                    const resolvedEventName = primaryPortChange
-                        ? `port-${primaryPortChange.portIdx}-changed`
-                        : "state-changed";
-                    node.status({ fill: "blue", shape: "ring", text: resolvedEventName });
-                    const readablePayload = buildReadableEventPayload({
-                        eventName: resolvedEventName,
-                        source: "poll-fallback",
-                        eventPayload: {},
-                        portIdx: primaryPortChange ? primaryPortChange.portIdx : undefined,
-                        portName: primaryPortChange ? primaryPortChange.portName : undefined,
-                        changeSummary
-                    });
-                    const output = {};
-                    output.payload = attachDeviceNameToPayload({
-                        ...readablePayload,
-                        device: latest,
-                    }, resolveOutputDeviceName(latest));
-                    if (primaryPortChange) {
-                        output.portIdx = primaryPortChange.portIdx;
-                        output.portName = primaryPortChange.portName;
-                    }
-                    attachDetails(output, {
-                        device: latest,
-                        changeSummary,
-                        unifiNetwork: buildBaseMetadata(node.deviceType, node.deviceId, node.capability, {
-                            source: "poll-fallback",
-                            eventType: resolvedEventName,
-                            changeSummary,
-                            portIdx: primaryPortChange ? primaryPortChange.portIdx : undefined,
-                            portName: primaryPortChange ? primaryPortChange.portName : undefined,
-                            unofficialStream: true
-                        })
-                    });
-                    decorateOutputMessage(output, output.payload, resolvedEventName);
-                    node.send(output);
-                } catch (error) {
-                }
-            }, UNOFFICIAL_POLL_INTERVAL_MS);
         }
 
         function startAutoReceive() {
@@ -772,7 +714,7 @@ module.exports = function(RED) {
             // as soon as Node-RED starts.
             fetchDeviceState(node.deviceType, node.deviceId, capabilityId, node.send.bind(node), "startup").catch(() => {
             });
-            startUnofficialPollingFallback();
+            refreshUnofficialPollingFallback();
         }
 
         node.on("input", async function(_msg, send, done) {
@@ -786,7 +728,7 @@ module.exports = function(RED) {
                     done();
                 }
             } catch (error) {
-                node.status({ fill: "red", shape: "ring", text: "error" });
+                setNodeStatus({ fill: "red", shape: "ring", text: "error" });
                 if (typeof done === "function") {
                     done(error);
                 } else {
@@ -811,7 +753,7 @@ module.exports = function(RED) {
                     portIdx: eventPortIdx,
                     portName: resolvedPortName
                 });
-                node.status({ fill: "blue", shape: "ring", text: String(readablePayload.summary || eventName) });
+                setNodeStatus({ fill: "blue", shape: "ring", text: String(readablePayload.summary || eventName) });
                 const output = {};
                 output.payload = attachDeviceNameToPayload(readablePayload, resolveOutputDeviceName(node.currentDevice));
                 if (eventPortIdx !== undefined) {
@@ -837,6 +779,84 @@ module.exports = function(RED) {
             }
         };
 
+        node.getUnofficialNetworkPollDescriptor = () => {
+            if (!shouldUseUnofficialPollingFallback()) {
+                return null;
+            }
+            return {
+                deviceType: node.deviceType,
+                deviceId: node.deviceId,
+                intervalMs: UNOFFICIAL_POLL_INTERVAL_MS
+            };
+        };
+
+        node.handleUnofficialNetworkPollUpdate = (update) => {
+            try {
+                if (!shouldUseUnofficialPollingFallback()) {
+                    return;
+                }
+                const latest = update && update.latest;
+                const nextFingerprint = buildObservationFingerprint(node.deviceType, latest);
+                if (!nextFingerprint) {
+                    return;
+                }
+
+                if (!node.unofficialLastFingerprint) {
+                    node.currentDevice = latest;
+                    node.unofficialLastFingerprint = nextFingerprint;
+                    return;
+                }
+
+                if (node.unofficialLastFingerprint === nextFingerprint) {
+                    return;
+                }
+
+                const previousDeviceSnapshot = node.currentDevice;
+                const changeSummary = buildDeviceChangeSummary(node.deviceType, previousDeviceSnapshot, latest);
+                node.currentDevice = latest;
+                node.unofficialLastFingerprint = nextFingerprint;
+                const primaryPortChange = changeSummary && Array.isArray(changeSummary.ports) && changeSummary.ports.length === 1
+                    ? changeSummary.ports[0]
+                    : null;
+                const resolvedEventName = primaryPortChange
+                    ? `port-${primaryPortChange.portIdx}-changed`
+                    : "state-changed";
+                setNodeStatus({ fill: "blue", shape: "ring", text: resolvedEventName });
+                const readablePayload = buildReadableEventPayload({
+                    eventName: resolvedEventName,
+                    source: "poll-fallback",
+                    eventPayload: {},
+                    portIdx: primaryPortChange ? primaryPortChange.portIdx : undefined,
+                    portName: primaryPortChange ? primaryPortChange.portName : undefined,
+                    changeSummary
+                });
+                const output = {};
+                output.payload = attachDeviceNameToPayload({
+                    ...readablePayload,
+                    device: latest,
+                }, resolveOutputDeviceName(latest));
+                if (primaryPortChange) {
+                    output.portIdx = primaryPortChange.portIdx;
+                    output.portName = primaryPortChange.portName;
+                }
+                attachDetails(output, {
+                    device: latest,
+                    changeSummary,
+                    unifiNetwork: buildBaseMetadata(node.deviceType, node.deviceId, node.capability, {
+                        source: "poll-fallback",
+                        eventType: resolvedEventName,
+                        changeSummary,
+                        portIdx: primaryPortChange ? primaryPortChange.portIdx : undefined,
+                        portName: primaryPortChange ? primaryPortChange.portName : undefined,
+                        unofficialStream: true
+                    })
+                });
+                decorateOutputMessage(output, output.payload, resolvedEventName);
+                node.send(output);
+            } catch (error) {
+            }
+        };
+
         if (node.server && typeof node.server.addClient === "function") {
             node.server.addClient(node);
         }
@@ -844,17 +864,18 @@ module.exports = function(RED) {
         if (shouldAutoReceiveConfiguredDevice()) {
             startAutoReceive();
         } else if (configuredCapabilityOpensEventStream() && (!node.deviceType || !node.deviceId)) {
-            node.status({ fill: "grey", shape: "ring", text: "set device" });
+            setNodeStatus({ fill: "grey", shape: "ring", text: "set device" });
         } else {
-            node.status({ fill: "grey", shape: "ring", text: "ready" });
+            setNodeStatus({ fill: "grey", shape: "ring", text: "ready" });
         }
 
         node.on("close", function(done) {
             try {
+                node.isObserving = false;
                 if (node.server && typeof node.server.removeClient === "function") {
                     node.server.removeClient(node);
                 }
-                stopUnofficialPollingFallback();
+                refreshUnofficialPollingFallback();
             } catch (error) {
             } finally {
                 if (typeof done === "function") {

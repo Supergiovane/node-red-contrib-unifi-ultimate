@@ -7,7 +7,8 @@
         defaults: {
             name: { value: "Unifi Network Config" },
             host: { value: "", required: true },
-            rejectUnauthorized: { value: false }
+            rejectUnauthorized: { value: false },
+            powerObservationIntervalSeconds: { value: 15, required: true, validate: RED.validators.number() }
         },
         credentials: {
             apiKey: { type: "password", required: true }
@@ -88,6 +89,10 @@
         <span style="margin-left:8px;">Secure connection only</span>
     </div>
     <div class="form-row">
+        <label for="node-config-input-powerObservationIntervalSeconds"><i class="fa fa-repeat"></i> Power Poll (s)</label>
+        <input type="text" id="node-config-input-powerObservationIntervalSeconds" placeholder="15">
+    </div>
+    <div class="form-row">
         <div id="node-config-input-connectionHint" class="unifi-ultimate-card"></div>
     </div>
     <div id="node-config-row-advanced" class="unifi-ultimate-advanced">
@@ -105,9 +110,12 @@
     <p><b>Controller</b> accepts the UniFi OS host or IP address. The node builds the local UniFi Network proxy URL automatically.</p>
     <p><b>API Key</b> is required for authentication and is sent as <code>X-API-Key</code>.</p>
     <p><b>Security</b> controls certificate verification. Disable it only when your controller uses a self-signed certificate.</p>
+    <p><b>Power Poll (s)</b> is the global polling interval used by all <code>Control POE</code> nodes when action is <code>Emit Power Consumption</code>.</p>
     <p><b>Name</b> is the config node name shown in the editor.</p>
 
     <h3>Usage</h3>
     <p>This config node is used by Network Device, Network Presence, and Control POE nodes.</p>
+    <p>All UniFi Network requests are executed by this config node. Runtime nodes subscribe through <code>addClient/removeClient</code> and receive updates/events from here.</p>
+    <p>Event streams and observation timers are centralized here (shared scheduler per config node), so runtime nodes do not open their own websocket channels or polling timers.</p>
     <p>The node uses the official Network integration API where available. For switch port/client mapping and PoE enable/disable, it also uses the local Network legacy API endpoints exposed through the UniFi OS proxy.</p>
 </script>

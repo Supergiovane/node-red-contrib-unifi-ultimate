@@ -1087,10 +1087,10 @@
     <p><b>Action</b> only shows actions supported by the selected item.</p>
     <p><b>Action options</b> appears only when the selected action needs extra input, such as a temporary lock rule or a room name for doorbell actions.</p>
     <p>For <code>Set Temporary Lock Rule</code>, choose <code>Custom Duration</code> to reveal the minutes field. Legacy <code>ended_time</code> is still available only as fallback compatibility.</p>
-    <p><code>Receive Events</code> fetches the current state once and then listens to the official UniFi Access notifications WebSocket. In <b>Action options</b>, <code>All</code> emits every event for the selected device/door. In this mode, the input pin is hidden and listening starts automatically after deploy/restart.</p>
+    <p><code>Receive Events</code> fetches the current state once and then subscribes to events provided by the shared UniFi Access config node. The config node maintains the official notifications WebSocket and fans out events to runtime nodes. In <b>Action options</b>, <code>All</code> emits every event for the selected device/door. In this mode, the input pin is hidden and listening starts automatically after deploy/restart.</p>
     <p><code>Trigger Doorbell</code> and <code>Cancel Doorbell</code> use a manual <code>Room Name</code> field when needed. The node does not currently discover Intercom directory names automatically.</p>
     <p><code>Cancel Doorbell</code> uses a shared safe-cancel guard in the UniFi Access config node with a 3 minute tracking window. Tracking is updated by websocket events and a fallback system-log poller.</p>
-    <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different item from the list. <b>Timeout</b> controls the request timeout in milliseconds for direct API calls.</p>
+    <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different item from the list. <b>Timeout</b> controls the request timeout in milliseconds for API calls.</p>
 
     <h3>Input</h3>
     <ul>

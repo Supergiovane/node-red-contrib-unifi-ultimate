@@ -1098,9 +1098,9 @@
     <p><b>Action</b> only shows actions supported by the selected device.</p>
     <p><b>Action options</b> appears only when the selected action needs extra input. For example, observables, PTZ presets, live views, or discovered properties.</p>
     <p>Action highlights: <code>Receive Events</code>, <code>Read Device State</code>, <code>Take Snapshot</code>, <code>Show Doorbell Message</code>, and <code>Read Application Info</code> on <code>NVR</code>.</p>
-    <p><code>Receive Events</code> performs an initial fetch and then stays connected to the Protect streams. In this mode, the input pin is hidden and listening starts automatically after deploy/restart.</p>
+    <p><code>Receive Events</code> performs an initial fetch and then subscribes to streams managed by the shared Protect config node. The config node keeps websocket channels and forwards matching updates to runtime nodes. In this mode, the input pin is hidden and listening starts automatically after deploy/restart.</p>
     <p>For <code>Sensor</code>, <code>Camera</code>, and <code>Light</code> observables, <code>All</code> emits every event for the selected device. Choosing a specific observable normalizes the main output to <code>true</code> or <code>false</code> and keeps the original context in <code>msg.details.raw</code>. Sensor observables include <code>Extreme Values</code>.</p>
-    <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different item from the list. <b>Timeout</b> controls the request timeout in milliseconds for direct API calls.</p>
+    <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different item from the list. <b>Timeout</b> controls the request timeout in milliseconds for API calls.</p>
 
     <h3>Input</h3>
     <ul>

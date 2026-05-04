@@ -1,6 +1,6 @@
 {
   "name": "node-red-contrib-unifi-ultimate",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Node-RED nodes for Ubiquiti UniFi integrations, including UniFi Protect, UniFi Access, and UniFi Network.",
   "files": [
     "nodes/",

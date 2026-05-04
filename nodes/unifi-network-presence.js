@@ -1,7 +1,6 @@
 "use strict";
 
 const { decodeScopedDeviceId } = require("./utils/unifi-network-device-registry");
-const { extractNetworkData } = require("./utils/unifi-network-utils");
 
 function parsePositiveSeconds(value, fallbackValue) {
     const numeric = Number(value);
@@ -23,16 +22,6 @@ function parseNonNegativeSeconds(value, fallbackValue) {
 
 function resolveClientId(configuredClientId) {
     return String(configuredClientId || "").trim();
-}
-
-function parseStatusCodeFromError(error) {
-    const message = String(error && error.message || "");
-    const match = message.match(/\((\d{3})\)\s*$/);
-    if (!match) {
-        return 0;
-    }
-
-    return Number(match[1]);
 }
 
 function resolveNodeName(value) {
@@ -75,6 +64,18 @@ function attachDetails(outputMsg, details) {
     };
 }
 
+function buildStatusTimestampText() {
+    const now = new Date();
+    const time = now.toTimeString().split(" ")[0];
+    return `(day ${now.getDate()}, ${time})`;
+}
+
+function appendStatusTimestamp(text) {
+    const normalized = String(text === undefined || text === null ? "" : text).trim();
+    const suffix = buildStatusTimestampText();
+    return normalized ? `${normalized} ${suffix}` : suffix;
+}
+
 module.exports = function(RED) {
     function UnifiNetworkPresenceNode(config) {
         RED.nodes.createNode(this, config);
@@ -89,28 +90,37 @@ module.exports = function(RED) {
         node.timeout = Number(config.timeout) > 0 ? Number(config.timeout) : 8000;
         node.deviceName = resolveDeviceName(config.deviceName);
 
-        node.pollTimer = null;
-        node.pollInFlight = false;
+        node.isObserving = false;
         node.currentPresence = null;
         node.lastConnectedAt = 0;
         node.firstOnlineDetectedAt = 0;
         node.firstOfflineDetectedAt = 0;
         node.lastKnownClient = null;
 
+        function setNodeStatus(status) {
+            if (!status || typeof status !== "object" || Array.isArray(status)) {
+                return;
+            }
+            node.status({
+                ...status,
+                text: appendStatusTimestamp(status.text)
+            });
+        }
+
         function updateStatus() {
             // The status dot mirrors the debounced presence state rather than the
             // most recent poll result, so the editor reflects hysteresis too.
             if (node.currentPresence === true) {
-                node.status({ fill: "green", shape: "dot", text: "present" });
+                setNodeStatus({ fill: "green", shape: "dot", text: "present" });
                 return;
             }
 
             if (node.currentPresence === false) {
-                node.status({ fill: "grey", shape: "ring", text: "away" });
+                setNodeStatus({ fill: "grey", shape: "ring", text: "away" });
                 return;
             }
 
-            node.status({ fill: "blue", shape: "ring", text: "checking" });
+            setNodeStatus({ fill: "blue", shape: "ring", text: "checking" });
         }
 
         function resolveOutputDeviceName(payload) {
@@ -207,7 +217,7 @@ module.exports = function(RED) {
             if (node.currentPresence !== false && node.offlineHysteresisSeconds > 0) {
                 if (!node.firstOfflineDetectedAt) {
                     node.firstOfflineDetectedAt = now;
-                    node.status({ fill: "yellow", shape: "ring", text: `away in ${node.offlineHysteresisSeconds}s` });
+                    setNodeStatus({ fill: "yellow", shape: "ring", text: `away in ${node.offlineHysteresisSeconds}s` });
                     return;
                 }
 
@@ -215,7 +225,7 @@ module.exports = function(RED) {
                 const required = node.offlineHysteresisSeconds * 1000;
                 if (elapsed < required) {
                     const remaining = Math.max(1, Math.ceil((required - elapsed) / 1000));
-                    node.status({ fill: "yellow", shape: "ring", text: `away in ${remaining}s` });
+                    setNodeStatus({ fill: "yellow", shape: "ring", text: `away in ${remaining}s` });
                     return;
                 }
             }
@@ -232,7 +242,7 @@ module.exports = function(RED) {
             if (node.currentPresence !== true && node.onlineHysteresisSeconds > 0) {
                 if (!node.firstOnlineDetectedAt) {
                     node.firstOnlineDetectedAt = now;
-                    node.status({ fill: "yellow", shape: "ring", text: `back in ${node.onlineHysteresisSeconds}s` });
+                    setNodeStatus({ fill: "yellow", shape: "ring", text: `back in ${node.onlineHysteresisSeconds}s` });
                     return;
                 }
 
@@ -240,7 +250,7 @@ module.exports = function(RED) {
                 const required = node.onlineHysteresisSeconds * 1000;
                 if (elapsed < required) {
                     const remaining = Math.max(1, Math.ceil((required - elapsed) / 1000));
-                    node.status({ fill: "yellow", shape: "ring", text: `back in ${remaining}s` });
+                    setNodeStatus({ fill: "yellow", shape: "ring", text: `back in ${remaining}s` });
                     return;
                 }
             }
@@ -248,88 +258,75 @@ module.exports = function(RED) {
             setPresent(clientId, source, raw);
         }
 
-        async function checkPresence(source) {
+        function processPresenceSnapshot(snapshot) {
+            const clientId = resolveClientId(node.clientId);
+            if (!clientId) {
+                setNodeStatus({ fill: "red", shape: "ring", text: "set client" });
+                return;
+            }
+
+            const source = String(snapshot && snapshot.source || "poll");
+            const connected = snapshot && snapshot.connected === true;
+            const statusCode = Number(snapshot && snapshot.statusCode);
+            const client = snapshot && snapshot.client && typeof snapshot.client === "object" && !Array.isArray(snapshot.client)
+                ? snapshot.client
+                : null;
+            if (client) {
+                node.lastKnownClient = client;
+            }
+
+            if (connected) {
+                applyOnlineHysteresis(clientId, source, client);
+                return;
+            }
+
+            if (statusCode === 404 || snapshot && snapshot.found === false) {
+                applyOfflineHysteresis(clientId, source, {
+                    statusCode: Number.isFinite(statusCode) ? statusCode : 404
+                }, "not-connected");
+                return;
+            }
+
+            setNodeStatus({ fill: "red", shape: "ring", text: "error" });
+            const errorMessage = String(snapshot && (snapshot.error || snapshot.message) || "Presence polling failed");
+            node.error(new Error(errorMessage));
+        }
+
+        async function requestPresenceSnapshot(source) {
             if (!node.server) {
                 throw new Error("Unifi Network configuration is missing.");
             }
 
-            // The incoming message is only a trigger. Presence is always checked
-            // for the client configured in the editor.
             const clientId = resolveClientId(node.clientId);
             if (!clientId) {
-                node.status({ fill: "red", shape: "ring", text: "set client" });
-                return;
+                throw new Error("Missing client id.");
             }
 
-            try {
-                const scoped = decodeScopedDeviceId(clientId);
-                if (!scoped.siteId || !scoped.resourceId) {
-                    throw new Error("Client selection is invalid. Re-select the client from the editor.");
-                }
+            if (typeof node.server.requestPresenceObservationNow !== "function") {
+                throw new Error("Unifi Network config node is missing presence request helper.");
+            }
+            return node.server.requestPresenceObservationNow({
+                clientId,
+                timeout: node.timeout,
+                source: source || "manual-input"
+            });
+        }
 
-                const response = await node.server.apiRequest({
-                    path: `/v1/sites/${encodeURIComponent(scoped.siteId)}/clients/${encodeURIComponent(scoped.resourceId)}`,
-                    method: "GET",
-                    timeout: node.timeout
-                });
-
-                // The official "connected client details" endpoint returns 404
-                // when the client is no longer connected.
-                if (response.statusCode === 404) {
-                    applyOfflineHysteresis(clientId, source, { statusCode: 404 }, "not-connected");
-                    return;
-                }
-
-                if (response.statusCode < 200 || response.statusCode >= 300) {
-                    throw new Error(`Client lookup failed (${response.statusCode})`);
-                }
-
-                const client = extractNetworkData(response.payload);
-                node.lastKnownClient = client && typeof client === "object"
-                    ? client
-                    : null;
-                applyOnlineHysteresis(clientId, source, client);
-            } catch (error) {
-                const statusCode = parseStatusCodeFromError(error);
-                const raw = {
-                    statusCode,
-                    message: error && error.message
-                };
-
-                if (statusCode === 404) {
-                    applyOfflineHysteresis(clientId, source, raw, "not-connected");
-                    return;
-                }
-
-                node.status({ fill: "red", shape: "ring", text: "error" });
-                node.error(error);
+        function startObservation() {
+            if (node.isObserving) {
+                return;
+            }
+            node.isObserving = true;
+            if (node.server && typeof node.server.refreshPresenceObservationScheduler === "function") {
+                node.server.refreshPresenceObservationScheduler();
             }
         }
 
-        function scheduleNextPoll() {
-            if (node.pollTimer) {
-                clearTimeout(node.pollTimer);
+        function stopObservation() {
+            node.isObserving = false;
+            if (node.server && typeof node.server.refreshPresenceObservationScheduler === "function") {
+                node.server.refreshPresenceObservationScheduler();
             }
-
-            node.pollTimer = setTimeout(async () => {
-                // Never run overlapping polls; when UniFi is slow, simply defer
-                // the next iteration instead of stacking requests.
-                if (node.pollInFlight) {
-                    scheduleNextPoll();
-                    return;
-                }
-
-                node.pollInFlight = true;
-                try {
-                    await checkPresence("poll");
-                } catch (error) {
-                    node.status({ fill: "red", shape: "ring", text: "error" });
-                    node.error(error);
-                } finally {
-                    node.pollInFlight = false;
-                    scheduleNextPoll();
-                }
-            }, node.pollIntervalSeconds * 1000);
         }
 
         node.on("input", async function(_msg, send, done) {
@@ -338,7 +335,7 @@ module.exports = function(RED) {
             };
 
             try {
-                await checkPresence("manual-input");
+                processPresenceSnapshot(await requestPresenceSnapshot("manual-input"));
                 if (typeof done === "function") {
                     done();
                 }
@@ -351,25 +348,54 @@ module.exports = function(RED) {
             }
         });
 
+        node.getNetworkPresenceObservationDescriptor = () => {
+            if (!node.isObserving) {
+                return null;
+            }
+            const clientId = resolveClientId(node.clientId);
+            if (!clientId) {
+                return null;
+            }
+            return {
+                clientId,
+                pollIntervalSeconds: node.pollIntervalSeconds,
+                timeout: node.timeout
+            };
+        };
+
+        node.handleNetworkPresenceObservationUpdate = (event) => {
+            try {
+                if (!node.isObserving) {
+                    return;
+                }
+                processPresenceSnapshot(event);
+            } catch (error) {
+            }
+        };
+
         if (!node.server) {
-            node.status({ fill: "red", shape: "ring", text: "no config" });
+            setNodeStatus({ fill: "red", shape: "ring", text: "no config" });
         } else if (!node.clientId) {
-            node.status({ fill: "grey", shape: "ring", text: "set client" });
+            setNodeStatus({ fill: "grey", shape: "ring", text: "set client" });
         } else {
+            if (node.server && typeof node.server.addClient === "function") {
+                node.server.addClient(node);
+            }
+            startObservation();
             updateStatus();
-            checkPresence("startup").catch((error) => {
-                node.status({ fill: "red", shape: "ring", text: "error" });
+            requestPresenceSnapshot("startup").then((snapshot) => {
+                processPresenceSnapshot(snapshot);
+            }).catch((error) => {
+                setNodeStatus({ fill: "red", shape: "ring", text: "error" });
                 node.error(error);
-            }).finally(() => {
-                scheduleNextPoll();
             });
         }
 
         node.on("close", function(done) {
             try {
-                if (node.pollTimer) {
-                    clearTimeout(node.pollTimer);
-                    node.pollTimer = null;
+                stopObservation();
+                if (node.server && typeof node.server.removeClient === "function") {
+                    node.server.removeClient(node);
                 }
             } catch (error) {
             } finally {
