@@ -21,7 +21,7 @@ Control and monitor `UniFi Network`, `UniFi Protect`, and `UniFi Access` from No
 [View Changelog](CHANGELOG.md)
 
 <a href="https://www.youtube.com/watch?v=ZOq7M5mgUBk&list=PL9Yh1bjbLAYrWKtMlopN0swuQXbdJ8MFJ">
-  <img src="https://www.youtube.com/s/desktop/7d7f77d5/img/favicon_32x32.png" alt="YouTube" width="20" height="20" align="absmiddle">
+  <img src="nodes/readme-assets/youtube-icon.svg" alt="YouTube" width="24" height="18" align="absmiddle">
   Watch news and tutorials on YouTube
 </a>
 
