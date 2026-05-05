@@ -1,6 +1,14 @@
 # Changelog
 
 
+## 0.1.10
+
+- added YouTube tutorial links with icon to README and every node help/editor panel
+- simplified editor layouts with progressive field disclosure so each node reveals the next fields only after the previous main selection is made
+- removed editor summary/detail cards from runtime nodes to keep node configuration panels cleaner
+- removed connection preview cards from config node editors
+- added a blocking wait popup while the Network Control POE editor loads and resolves client-based targets
+
 ## 0.1.9
 
 - fixed HTTP response parsing so explicitly non-text payloads (including Protect camera snapshots) are returned as raw `Buffer` data instead of being coerced to utf8 strings

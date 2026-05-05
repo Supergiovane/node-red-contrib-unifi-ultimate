@@ -30,9 +30,22 @@
             const $clientId = $("#node-input-clientId");
             const $deviceName = $("#node-input-deviceName");
             const $refresh = $("#node-input-refreshClients");
-            const $selectionSummary = $("#node-input-selectionSummary");
-            const $selectionDetail = $("#node-input-selectionDetail");
+            const $clientRow = $clientId.closest(".form-row");
+            const $advancedRow = $("#node-row-advanced");
             let suspendChangeHandling = false;
+
+            function hasSelection($field) {
+                const value = String($field.val() || "").trim();
+                return value !== "" && value !== "_ADD_";
+            }
+
+            function syncProgressiveRows() {
+                const hasServer = hasSelection($server);
+                const hasClient = hasSelection($clientId);
+
+                $clientRow.toggle(hasServer);
+                $advancedRow.toggle(hasServer && hasClient);
+            }
 
             function requestJson(url) {
                 return new Promise(function (resolve, reject) {
@@ -316,9 +329,7 @@
                     summary = "Monitoring presence for " + clientName + ".";
                     detail = "Connect and disconnect hysteresis reduce false flapping on unstable links.";
                 }
-
-                $selectionSummary.text(summary);
-                $selectionDetail.text(detail);
+                syncProgressiveRows();
             }
 
             function syncNameFromSelection() {
@@ -397,8 +408,6 @@
                 $("#node-input-clientId-search")
                     .val("Loading clients, please wait...")
                     .prop("disabled", true);
-                $selectionSummary.text("Loading clients...");
-                $selectionDetail.text("Please wait while UniFi returns the client list.");
             }
 
             function loadClients() {
@@ -471,29 +480,21 @@
         <img class="unifi-ultimate-product-logo" src="resources/node-red-contrib-unifi-ultimate/logos/unifi-network-black.svg" alt="UniFi Network logo" onerror="this.closest('.unifi-ultimate-product-logo-row').style.display='none';">
     </div>
     <div class="form-row unifi-ultimate-hero">
-        <div class="unifi-ultimate-hero-panel">
-            <strong>Track one client with stable true/false output.</strong>
-            <span>Hysteresis avoids noisy online/offline transitions when Wi-Fi clients roam.</span>
-        </div>
+        <a class="unifi-ultimate-youtube-link" href="https://www.youtube.com/watch?v=ZOq7M5mgUBk&list=PL9Yh1bjbLAYrWKtMlopN0swuQXbdJ8MFJ" target="_blank" rel="noopener noreferrer">
+            <img src="resources/node-red-contrib-unifi-ultimate/logos/youtube-icon.svg" alt="YouTube" width="24" height="18">
+            <span>Youtube Tutorials</span>
+        </a>
     </div>
-    <div class="unifi-ultimate-section-title">Connection</div>
     <div class="form-row">
         <label for="node-input-server"><i class="fa fa-cog"></i> Connection</label>
         <input type="text" id="node-input-server">
     </div>
-    <div class="unifi-ultimate-section-title">Client</div>
     <div class="form-row">
         <label for="node-input-clientId"><i class="fa fa-wifi"></i> Client</label>
         <select id="node-input-clientId" style="width:70%;"></select>
         <a href="#" id="node-input-refreshClients" class="editor-button" style="margin-left:6px;" title="Refresh clients" aria-label="Refresh clients">
             <i class="fa fa-refresh"></i>
         </a>
-    </div>
-    <div class="form-row">
-        <div class="unifi-ultimate-card">
-            <strong id="node-input-selectionSummary">Choose a connection to begin.</strong>
-            <div id="node-input-selectionDetail">Select one client. The node emits true when connected and false when disconnected.</div>
-        </div>
     </div>
     <div id="node-row-advanced" class="unifi-ultimate-advanced">
         <div class="form-row">
@@ -521,6 +522,8 @@
 </script>
 
 <script type="text/html" data-help-name="unifi-network-presence">
+    <p><a href="https://www.youtube.com/watch?v=ZOq7M5mgUBk&list=PL9Yh1bjbLAYrWKtMlopN0swuQXbdJ8MFJ" target="_blank" rel="noopener noreferrer"><img src="resources/node-red-contrib-unifi-ultimate/logos/youtube-icon.svg" alt="YouTube" width="24" height="18" style="vertical-align:text-bottom; margin-right:6px;">Youtube Tutorials</a></p>
+
     <p>Detects whether a selected UniFi Network client is currently connected.</p>
 
     <h3>Configuration</h3>

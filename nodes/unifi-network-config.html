@@ -18,34 +18,20 @@
         },
         oneditprepare: function () {
             const $host = $("#node-config-input-host");
-            const $connectionHint = $("#node-config-input-connectionHint");
+            const $apiKey = $("#node-config-input-apiKey");
+            const $rejectUnauthorized = $("#node-config-input-rejectUnauthorized");
+            const $powerObservationIntervalSeconds = $("#node-config-input-powerObservationIntervalSeconds");
+            const $apiKeyRow = $apiKey.closest(".form-row");
+            const $securityRow = $rejectUnauthorized.closest(".form-row");
+            const $powerObservationRow = $powerObservationIntervalSeconds.closest(".form-row");
+            const $advancedRow = $("#node-config-row-advanced");
 
-            function escapeHtml(value) {
-                // The preview is rendered as HTML, so sanitize user input before
-                // echoing the controller host back into the hint box.
-                return String(value || "")
-                    .replace(/&/g, "&amp;")
-                    .replace(/</g, "&lt;")
-                    .replace(/>/g, "&gt;")
-                    .replace(/\"/g, "&quot;")
-                    .replace(/'/g, "&#39;");
-            }
-
-            function refreshConnectionHint() {
-                const host = String($host.val() || "").trim();
-                if (!host) {
-                    $connectionHint.html("<strong>Enter your controller address</strong>The node builds the UniFi Network connection automatically.");
-                    return;
-                }
-
-                // The runtime accepts either a bare host or a full URL, but the
-                // preview intentionally shows the normalized integration endpoint.
-                const normalizedHost = host.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
-                $connectionHint.html(
-                    "<strong>Connection preview</strong>Will connect to <code>https://" +
-                    escapeHtml(normalizedHost) +
-                    "/proxy/network/integration</code>"
-                );
+            function syncProgressiveRows() {
+                const hasHost = String($host.val() || "").trim() !== "";
+                $apiKeyRow.toggle(hasHost);
+                $securityRow.toggle(hasHost);
+                $powerObservationRow.toggle(hasHost);
+                $advancedRow.toggle(hasHost);
             }
 
             try {
@@ -55,10 +41,9 @@
             } catch (error) {
             }
 
-            refreshConnectionHint();
+            syncProgressiveRows();
             $host.on("change input", function () {
-                // Update the preview live as the user edits the controller host.
-                refreshConnectionHint();
+                syncProgressiveRows();
             });
         }
     });
@@ -69,12 +54,11 @@
         <img class="unifi-ultimate-product-logo" src="resources/node-red-contrib-unifi-ultimate/logos/unifi-network-black.svg" alt="UniFi Network logo" onerror="this.closest('.unifi-ultimate-product-logo-row').style.display='none';">
     </div>
     <div class="form-row unifi-ultimate-hero">
-        <div class="unifi-ultimate-hero-panel">
-            <strong>Connect Node-RED to your UniFi Network application.</strong>
-            <span>Use a local UniFi OS host or IP address and a Network API key.</span>
-        </div>
+        <a class="unifi-ultimate-youtube-link" href="https://www.youtube.com/watch?v=ZOq7M5mgUBk&list=PL9Yh1bjbLAYrWKtMlopN0swuQXbdJ8MFJ" target="_blank" rel="noopener noreferrer">
+            <img src="resources/node-red-contrib-unifi-ultimate/logos/youtube-icon.svg" alt="YouTube" width="24" height="18">
+            <span>Youtube Tutorials</span>
+        </a>
     </div>
-    <div class="unifi-ultimate-section-title">Connection</div>
     <div class="form-row">
         <label for="node-config-input-host"><i class="fa fa-globe"></i> Controller</label>
         <input type="text" id="node-config-input-host" placeholder="192.168.1.10">
@@ -92,9 +76,6 @@
         <label for="node-config-input-powerObservationIntervalSeconds"><i class="fa fa-repeat"></i> Power Poll (s)</label>
         <input type="text" id="node-config-input-powerObservationIntervalSeconds" placeholder="15">
     </div>
-    <div class="form-row">
-        <div id="node-config-input-connectionHint" class="unifi-ultimate-card"></div>
-    </div>
     <div id="node-config-row-advanced" class="unifi-ultimate-advanced">
         <div class="form-row">
             <label for="node-config-input-name"><i class="fa fa-tag"></i> Name</label>
@@ -104,6 +85,8 @@
 </script>
 
 <script type="text/html" data-help-name="unifi-network-config">
+    <p><a href="https://www.youtube.com/watch?v=ZOq7M5mgUBk&list=PL9Yh1bjbLAYrWKtMlopN0swuQXbdJ8MFJ" target="_blank" rel="noopener noreferrer"><img src="resources/node-red-contrib-unifi-ultimate/logos/youtube-icon.svg" alt="YouTube" width="24" height="18" style="vertical-align:text-bottom; margin-right:6px;">Youtube Tutorials</a></p>
+
     <p>Shared connection for UniFi Network nodes.</p>
 
     <h3>Configuration</h3>

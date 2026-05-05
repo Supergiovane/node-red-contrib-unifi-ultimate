@@ -86,8 +86,10 @@
             const $capabilityConfigRow = $("#node-row-capabilityConfig");
             const $capabilityConfigContainer = $("#node-input-capabilityConfigContainer");
             const $refresh = $("#node-input-refreshDevices");
-            const $selectionSummary = $("#node-input-selectionSummary");
-            const $selectionDetail = $("#node-input-selectionDetail");
+            const $deviceTypeRow = $deviceType.closest(".form-row");
+            const $deviceIdRow = $deviceId.closest(".form-row");
+            const $capabilityRow = $capability.closest(".form-row");
+            const $advancedRow = $("#node-row-advanced");
             let capabilityConfig = parseCapabilityConfig(node.capabilityConfig);
             let capabilityListRequestId = 0;
             let capabilityOptionsRequestId = 0;
@@ -95,6 +97,26 @@
             let isInitializingEditor = true;
             let deviceTypeDefinitions = [];
             let capabilityDefinitions = [];
+
+            function hasSelection($field) {
+                const value = String($field.val() || "").trim();
+                return value !== "" && value !== "_ADD_";
+            }
+
+            function syncProgressiveRows() {
+                const hasServer = hasSelection($server);
+                const hasDeviceType = hasSelection($deviceType);
+                const hasDevice = hasSelection($deviceId);
+                const hasCapability = hasSelection($capability);
+                const hasCapabilityFields = $capabilityConfigRow.data("has-fields") === true;
+
+                $deviceTypeRow.toggle(hasServer);
+                $deviceIdRow.toggle(hasServer && hasDeviceType);
+                $capabilityRow.toggle(hasServer && hasDeviceType && hasDevice);
+                $capabilityConfigRow.toggle(hasServer && hasDeviceType && hasDevice && hasCapability && hasCapabilityFields);
+                $advancedRow.toggle(hasServer && hasDeviceType && hasDevice && hasCapability);
+            }
+
             function parseCapabilityConfig(rawValue) {
                 if (rawValue && typeof rawValue === "object" && !Array.isArray(rawValue)) {
                     return rawValue;
@@ -487,9 +509,7 @@
                 } else if (capabilityDefinition && capabilityDefinition.description) {
                     detail = capabilityDefinition.description;
                 }
-
-                $selectionSummary.text(summary);
-                $selectionDetail.text(detail);
+                syncProgressiveRows();
             }
 
             function syncNameFromSelection() {
@@ -668,6 +688,7 @@
                 $capabilityConfigContainer.empty();
 
                 if (fields.length === 0) {
+                    $capabilityConfigRow.data("has-fields", false);
                     $capabilityConfigRow.hide();
                     if (renderOptions.clearStoredConfig) {
                         capabilityConfig = {};
@@ -683,6 +704,7 @@
                     writeCapabilityConfig();
                 }
 
+                $capabilityConfigRow.data("has-fields", true);
                 $capabilityConfigRow.show();
                 fields.forEach(function (field) {
                     const fieldId = "node-input-capability-config-" + field.id;
@@ -1038,17 +1060,15 @@
         <img class="unifi-ultimate-product-logo" src="resources/node-red-contrib-unifi-ultimate/logos/unifi-protect-black.svg" alt="UniFi Protect logo" onerror="this.closest('.unifi-ultimate-product-logo-row').style.display='none';">
     </div>
     <div class="form-row unifi-ultimate-hero">
-        <div class="unifi-ultimate-hero-panel">
-            <strong>Monitor cameras, sensors, viewers, and NVR state.</strong>
-            <span>Select a Protect item, then choose whether to read, listen, or control it.</span>
-        </div>
+        <a class="unifi-ultimate-youtube-link" href="https://www.youtube.com/watch?v=ZOq7M5mgUBk&list=PL9Yh1bjbLAYrWKtMlopN0swuQXbdJ8MFJ" target="_blank" rel="noopener noreferrer">
+            <img src="resources/node-red-contrib-unifi-ultimate/logos/youtube-icon.svg" alt="YouTube" width="24" height="18">
+            <span>Youtube Tutorials</span>
+        </a>
     </div>
-    <div class="unifi-ultimate-section-title">Connection</div>
     <div class="form-row">
         <label for="node-input-server"><i class="fa fa-cog"></i> Connection</label>
         <input type="text" id="node-input-server">
     </div>
-    <div class="unifi-ultimate-section-title">Target</div>
     <div class="form-row">
         <label for="node-input-deviceType"><i class="fa fa-cubes"></i> Control</label>
         <select id="node-input-deviceType"></select>
@@ -1060,16 +1080,9 @@
             <i class="fa fa-refresh"></i>
         </a>
     </div>
-    <div class="unifi-ultimate-section-title">Action</div>
     <div class="form-row">
         <label for="node-input-capability"><i class="fa fa-tasks"></i> Action</label>
         <select id="node-input-capability"></select>
-    </div>
-    <div class="form-row">
-        <div class="unifi-ultimate-card">
-            <strong id="node-input-selectionSummary">Choose a connection to begin.</strong>
-            <div id="node-input-selectionDetail">The editor only shows actions supported by the selected UniFi Protect device.</div>
-        </div>
     </div>
     <div class="form-row" id="node-row-capabilityConfig" style="display:none;">
         <label><i class="fa fa-sliders"></i> Action options</label>
@@ -1090,6 +1103,8 @@
 </script>
 
 <script type="text/html" data-help-name="unifi-protect-device">
+    <p><a href="https://www.youtube.com/watch?v=ZOq7M5mgUBk&list=PL9Yh1bjbLAYrWKtMlopN0swuQXbdJ8MFJ" target="_blank" rel="noopener noreferrer"><img src="resources/node-red-contrib-unifi-ultimate/logos/youtube-icon.svg" alt="YouTube" width="24" height="18" style="vertical-align:text-bottom; margin-right:6px;">Youtube Tutorials</a></p>
+
     <p>Use this node to execute a configured UniFi Protect action or listen for live Protect events.</p>
 
     <h3>Configuration</h3>
