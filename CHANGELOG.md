@@ -1,6 +1,12 @@
 # Changelog
 
 
+## 0.1.9
+
+- fixed HTTP response parsing so explicitly non-text payloads (including Protect camera snapshots) are returned as raw `Buffer` data instead of being coerced to utf8 strings
+- centralized shared response body parsing in `nodes/utils/http-response-utils.js` for Access, Network, and Protect utilities
+- improved JSON detection for `application/json` and `+json` media types while preserving JSON-shape fallback for unknown/text responses
+
 ## 0.1.8
 
 - centralized UniFi Network observation logic in `unifi-network-config` (single shared timers/schedulers and event fan-out to runtime nodes)

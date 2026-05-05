@@ -2,6 +2,7 @@
 
 const http = require("http");
 const https = require("https");
+const { maybeParseBody } = require("./http-response-utils");
 
 function normalizeHost(value) {
     // Access controllers usually live on port 12445. Accept bare hosts, host:port
@@ -66,29 +67,6 @@ function buildQueryString(query) {
 
     const rendered = params.toString();
     return rendered ? `?${rendered}` : "";
-}
-
-function maybeParseBody(contentType, buffer) {
-    // Access can still return JSON with inconsistent headers, so detect it from
-    // the payload shape as well.
-    const raw = buffer.toString("utf8");
-    if (!raw) {
-        return raw;
-    }
-
-    const trimmed = raw.trim();
-    const isJsonType = typeof contentType === "string" && contentType.includes("application/json");
-    const looksJson = trimmed.startsWith("{") || trimmed.startsWith("[");
-
-    if (isJsonType || looksJson) {
-        try {
-            return JSON.parse(trimmed);
-        } catch (error) {
-            return raw;
-        }
-    }
-
-    return raw;
 }
 
 function doRequest(url, options, body) {

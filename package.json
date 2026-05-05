@@ -1,6 +1,6 @@
 {
   "name": "node-red-contrib-unifi-ultimate",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Node-RED nodes for Ubiquiti UniFi integrations, including UniFi Protect, UniFi Access, and UniFi Network.",
   "files": [
     "nodes/",
@@ -46,7 +46,7 @@
     }
   },
   "scripts": {
-    "test": "node --check nodes/unifi-access-config.js && node --check nodes/unifi-access-device.js && node --check nodes/unifi-network-config.js && node --check nodes/unifi-network-control-poe.js && node --check nodes/unifi-network-device.js && node --check nodes/unifi-network-presence.js && node --check nodes/unifi-protect-config.js && node --check nodes/unifi-protect-device.js && node --check nodes/utils/unifi-access-utils.js && node --check nodes/utils/unifi-access-device-registry.js && node --check nodes/utils/unifi-network-utils.js && node --check nodes/utils/unifi-network-device-registry.js && node --check nodes/utils/unifi-protect-utils.js && node --check nodes/utils/unifi-protect-field-metadata.js && node --check nodes/utils/unifi-protect-device-registry.js && node --check scripts/unifi-registry-discovery-common.js && node --check scripts/discover-unifi-network-registry.js && node --check scripts/discover-unifi-protect-registry.js && node --check scripts/discover-unifi-access-registry.js",
+    "test": "node --check nodes/unifi-access-config.js && node --check nodes/unifi-access-device.js && node --check nodes/unifi-network-config.js && node --check nodes/unifi-network-control-poe.js && node --check nodes/unifi-network-device.js && node --check nodes/unifi-network-presence.js && node --check nodes/unifi-protect-config.js && node --check nodes/unifi-protect-device.js && node --check nodes/utils/http-response-utils.js && node --check nodes/utils/unifi-access-utils.js && node --check nodes/utils/unifi-access-device-registry.js && node --check nodes/utils/unifi-network-utils.js && node --check nodes/utils/unifi-network-device-registry.js && node --check nodes/utils/unifi-protect-utils.js && node --check nodes/utils/unifi-protect-field-metadata.js && node --check nodes/utils/unifi-protect-device-registry.js && node --check scripts/unifi-registry-discovery-common.js && node --check scripts/discover-unifi-network-registry.js && node --check scripts/discover-unifi-protect-registry.js && node --check scripts/discover-unifi-access-registry.js",
     "registry:discover:network": "node scripts/discover-unifi-network-registry.js",
     "registry:discover:protect": "node scripts/discover-unifi-protect-registry.js",
     "registry:discover:access": "node scripts/discover-unifi-access-registry.js"

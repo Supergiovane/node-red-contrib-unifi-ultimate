@@ -2,6 +2,7 @@
 
 const http = require("http");
 const https = require("https");
+const { maybeParseBody } = require("./http-response-utils");
 
 function normalizeHost(value) {
     // Protect editor fields may contain a host or a full URL; strip everything
@@ -44,29 +45,6 @@ function buildQueryString(query) {
 
     const rendered = params.toString();
     return rendered ? `?${rendered}` : "";
-}
-
-function maybeParseBody(contentType, buffer) {
-    // Protect sometimes returns JSON-like payloads even when headers are not
-    // perfectly descriptive, so inspect both header and content shape.
-    const raw = buffer.toString("utf8");
-    if (!raw) {
-        return raw;
-    }
-
-    const trimmed = raw.trim();
-    const isJsonType = typeof contentType === "string" && contentType.includes("application/json");
-    const looksJson = trimmed.startsWith("{") || trimmed.startsWith("[");
-
-    if (isJsonType || looksJson) {
-        try {
-            return JSON.parse(trimmed);
-        } catch (error) {
-            return raw;
-        }
-    }
-
-    return raw;
 }
 
 function doRequest(url, options, body) {

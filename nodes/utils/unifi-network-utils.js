@@ -2,6 +2,7 @@
 
 const http = require("http");
 const https = require("https");
+const { maybeParseBody } = require("./http-response-utils");
 
 function normalizeHost(value) {
     // Accept either a bare host or a full URL from the editor and reduce it to
@@ -47,29 +48,6 @@ function buildQueryString(query) {
 
     const rendered = params.toString();
     return rendered ? `?${rendered}` : "";
-}
-
-function maybeParseBody(contentType, buffer) {
-    // Some UniFi endpoints return JSON with a missing/odd content-type header,
-    // so also inspect the raw payload before deciding to parse.
-    const raw = buffer.toString("utf8");
-    if (!raw) {
-        return raw;
-    }
-
-    const trimmed = raw.trim();
-    const isJsonType = typeof contentType === "string" && contentType.includes("application/json");
-    const looksJson = trimmed.startsWith("{") || trimmed.startsWith("[");
-
-    if (isJsonType || looksJson) {
-        try {
-            return JSON.parse(trimmed);
-        } catch (error) {
-            return raw;
-        }
-    }
-
-    return raw;
 }
 
 function doRequest(url, options, body) {
