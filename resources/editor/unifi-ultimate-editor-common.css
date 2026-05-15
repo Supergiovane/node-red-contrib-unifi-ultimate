@@ -66,6 +66,13 @@
     color: #9a3412;
 }
 
+.unifi-ultimate-info-tip.form-tips {
+    border: 1px solid #b8daf3;
+    border-left: 3px solid #7db7e8;
+    background: #edf6ff;
+    color: #1f3f5b;
+}
+
 .unifi-ultimate-wait-overlay {
     position: fixed;
     inset: 0;

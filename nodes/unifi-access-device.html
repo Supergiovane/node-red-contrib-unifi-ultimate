@@ -786,8 +786,8 @@
                     if (field.helpText) {
                         $wrapper.append(
                             $("<div></div>")
-                                .addClass("form-tips")
-                                .css({ marginLeft: "152px" })
+                                .addClass("form-tips unifi-ultimate-info-tip")
+                                .css({ marginLeft: "0", width: "100%", boxSizing: "border-box" })
                                 .text(field.helpText)
                         );
                     }
@@ -1064,7 +1064,7 @@
     </div>
     <div class="form-row">
         <label for="node-input-deviceId"><i class="fa fa-dot-circle-o"></i> Device</label>
-        <select id="node-input-deviceId" style="width:70%;"></select>
+        <select id="node-input-deviceId" style="width:62%;"></select>
         <a href="#" id="node-input-refreshDevices" class="editor-button" style="margin-left:6px;" title="Refresh devices" aria-label="Refresh devices">
             <i class="fa fa-refresh"></i>
         </a>
@@ -1074,7 +1074,7 @@
         <select id="node-input-capability"></select>
     </div>
     <div class="form-row" id="node-row-capabilityConfig" style="display:none;">
-        <label><i class="fa fa-sliders"></i> Action options</label>
+        <label></label>
         <div id="node-input-capabilityConfigContainer" style="width:70%; display:inline-block;"></div>
         <input type="hidden" id="node-input-capabilityConfig">
         <input type="hidden" id="node-input-deviceName">
@@ -1100,9 +1100,9 @@
     <p><b>Connection</b> selects the shared UniFi Access config node.</p>
     <p><b>Control</b> chooses the Access category. <b>Device</b> chooses the specific door or Access device. Device selectors are searchable and open with the complete list before filtering.</p>
     <p><b>Action</b> only shows actions supported by the selected item.</p>
-    <p><b>Action options</b> appears only when the selected action needs extra input, such as a temporary lock rule or a room name for doorbell actions.</p>
+    <p>Additional fields appear only when the selected action needs extra input, such as a temporary lock rule or a room name for doorbell actions.</p>
     <p>For <code>Set Temporary Lock Rule</code>, choose <code>Custom Duration</code> to reveal the minutes field. Legacy <code>ended_time</code> is still available only as fallback compatibility.</p>
-    <p><code>Receive Events</code> fetches the current state once and then subscribes to events provided by the shared UniFi Access config node. The config node maintains the official notifications WebSocket and fans out events to runtime nodes. In <b>Action options</b>, <code>All</code> emits every event for the selected device/door. In this mode, the input pin is hidden and listening starts automatically after deploy/restart.</p>
+    <p><code>Receive Events</code> fetches the current state once and then subscribes to events provided by the shared UniFi Access config node. The config node maintains the official notifications WebSocket and fans out events to runtime nodes. In this mode, <code>All</code> emits every event for the selected device/door. The input pin is hidden and listening starts automatically after deploy/restart.</p>
     <p><code>Trigger Doorbell</code> and <code>Cancel Doorbell</code> use a manual <code>Room Name</code> field when needed. The node does not currently discover Intercom directory names automatically.</p>
     <p><code>Cancel Doorbell</code> uses a shared safe-cancel guard in the UniFi Access config node with a 3 minute tracking window. Tracking is updated by websocket events and a fallback system-log poller.</p>
     <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different item from the list. <b>Timeout</b> controls the request timeout in milliseconds for API calls.</p>

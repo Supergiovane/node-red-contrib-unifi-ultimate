@@ -271,7 +271,7 @@ async function getCapabilityOptions(deviceType, capabilityId, context) {
             fields: [
                 {
                     id: "observable",
-                    label: "Observable",
+                    label: "Event",
                     type: "select",
                     options: [
                         { value: "all", label: "All" }

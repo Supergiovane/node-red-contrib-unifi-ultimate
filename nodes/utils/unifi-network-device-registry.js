@@ -50,7 +50,7 @@ const COMMON_CAPABILITIES = [
             fields: [
                 {
                     id: "observable",
-                    label: "Observable",
+                    label: "Event",
                     type: "select",
                     options: [
                         {

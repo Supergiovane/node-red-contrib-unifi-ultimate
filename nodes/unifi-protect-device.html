@@ -797,8 +797,8 @@
                     if (field.helpText) {
                         $wrapper.append(
                             $("<div></div>")
-                                .addClass("form-tips")
-                                .css({ marginLeft: "152px" })
+                                .addClass("form-tips unifi-ultimate-info-tip")
+                                .css({ marginLeft: "0", width: "100%", boxSizing: "border-box" })
                                 .text(field.helpText)
                         );
                     }
@@ -1075,7 +1075,7 @@
     </div>
     <div class="form-row">
         <label for="node-input-deviceId"><i class="fa fa-dot-circle-o"></i> Device</label>
-        <select id="node-input-deviceId" style="width:70%;"></select>
+        <select id="node-input-deviceId" style="width:62%;"></select>
         <a href="#" id="node-input-refreshDevices" class="editor-button" style="margin-left:6px;" title="Refresh devices" aria-label="Refresh devices">
             <i class="fa fa-refresh"></i>
         </a>
@@ -1085,7 +1085,7 @@
         <select id="node-input-capability"></select>
     </div>
     <div class="form-row" id="node-row-capabilityConfig" style="display:none;">
-        <label><i class="fa fa-sliders"></i> Action options</label>
+        <label></label>
         <div id="node-input-capabilityConfigContainer" style="width:70%; display:inline-block;"></div>
         <input type="hidden" id="node-input-capabilityConfig">
         <input type="hidden" id="node-input-deviceName">
@@ -1111,7 +1111,7 @@
     <p><b>Connection</b> selects the shared UniFi Protect config node.</p>
     <p><b>Control</b> chooses the Protect device category. <b>Device</b> chooses the specific item. Device selectors are searchable and open with the complete list before filtering.</p>
     <p><b>Action</b> only shows actions supported by the selected device.</p>
-    <p><b>Action options</b> appears only when the selected action needs extra input. For example, observables, PTZ presets, live views, or discovered properties.</p>
+    <p>Additional fields appear only when the selected action needs extra input. For example, events, PTZ presets, live views, or discovered properties.</p>
     <p>Action highlights: <code>Receive Events</code>, <code>Read Device State</code>, <code>Take Snapshot</code>, <code>Show Doorbell Message</code>, and <code>Read Application Info</code> on <code>NVR</code>.</p>
     <p><code>Receive Events</code> performs an initial fetch and then subscribes to streams managed by the shared Protect config node. The config node keeps websocket channels and forwards matching updates to runtime nodes. In this mode, the input pin is hidden and listening starts automatically after deploy/restart.</p>
     <p>For <code>Sensor</code>, <code>Camera</code>, and <code>Light</code> observables, <code>All</code> emits every event for the selected device. Choosing a specific observable normalizes the main output to <code>true</code> or <code>false</code> and keeps the original context in <code>msg.details.raw</code>. Sensor observables include <code>Extreme Values</code>.</p>

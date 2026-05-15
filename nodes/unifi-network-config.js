@@ -216,7 +216,9 @@ module.exports = function(RED) {
                 });
 
                 if (response.statusCode < 200 || response.statusCode >= 300) {
-                    throw new Error(`Failed to load collection (${response.statusCode})`);
+                    const statusError = new Error(`Failed to load collection (${response.statusCode})`);
+                    statusError.statusCode = response.statusCode;
+                    throw statusError;
                 }
 
                 const payload = response.payload && typeof response.payload === "object" && !Array.isArray(response.payload)
@@ -255,11 +257,95 @@ module.exports = function(RED) {
             return collected;
         };
 
+        function getResponseStatusFromError(error) {
+            const directStatus = Number(error && error.statusCode);
+            if (Number.isFinite(directStatus)) {
+                return Math.trunc(directStatus);
+            }
+
+            const message = String(error && error.message || "");
+            const match = message.match(/\((\d{3})\)/);
+            if (!match) {
+                return NaN;
+            }
+
+            const parsed = Number(match[1]);
+            return Number.isFinite(parsed) ? Math.trunc(parsed) : NaN;
+        }
+
+        function shouldUseLegacyNetworkFallback(error) {
+            const statusCode = getResponseStatusFromError(error);
+            if (!Number.isFinite(statusCode)) {
+                return false;
+            }
+
+            // Older local Network releases may not expose the official
+            // integration endpoints and return explicit route/method errors.
+            return [403, 404, 405, 410, 501].includes(statusCode);
+        }
+
+        function mapLegacySiteToNormalizedShape(site) {
+            const item = site && typeof site === "object" && !Array.isArray(site)
+                ? site
+                : {};
+            const siteName = normalizeString(item.name || item.desc || "default");
+            const siteId = normalizeString(
+                item.external_id
+                || item.id
+                || item._id
+                || item.name
+            );
+
+            if (!siteId) {
+                return null;
+            }
+
+            return {
+                ...item,
+                id: siteId,
+                siteId,
+                name: siteName || siteId,
+                displayName: normalizeString(item.desc || item.displayName || siteName || siteId)
+            };
+        }
+
+        node.fetchLegacySites = async () => {
+            const response = await node.legacyApiRequest({
+                path: "/api/self/sites",
+                method: "GET"
+            });
+            if (response.statusCode < 200 || response.statusCode >= 300) {
+                const statusError = new Error(`Failed to load legacy sites (${response.statusCode})`);
+                statusError.statusCode = response.statusCode;
+                throw statusError;
+            }
+
+            const sites = normalizeNetworkCollection(response.payload)
+                .map((site) => mapLegacySiteToNormalizedShape(site))
+                .filter(Boolean);
+
+            const dedupById = new Map();
+            sites.forEach((site) => {
+                const key = normalizeString(site && site.id);
+                if (key && !dedupById.has(key)) {
+                    dedupById.set(key, site);
+                }
+            });
+            return Array.from(dedupById.values());
+        };
+
         node.fetchSites = async () => {
             // Sites are the root scope for nearly all other Network resources.
-            return node.fetchPagedCollection({
-                path: "/v1/sites"
-            });
+            try {
+                return await node.fetchPagedCollection({
+                    path: "/v1/sites"
+                });
+            } catch (error) {
+                if (!shouldUseLegacyNetworkFallback(error)) {
+                    throw error;
+                }
+                return node.fetchLegacySites();
+            }
         };
 
         node.fetchDevices = async (deviceType) => {
@@ -293,6 +379,55 @@ module.exports = function(RED) {
                         siteName
                     }));
                 } catch (error) {
+                    if (!shouldUseLegacyNetworkFallback(error)) {
+                        return [];
+                    }
+                    try {
+                        if (definition.type === "device") {
+                            const legacyDevices = await fetchLegacyDevices(siteId);
+                            return legacyDevices.map((item) => ({
+                                ...item,
+                                id: firstNonEmptyString([
+                                    item && item.id,
+                                    item && item.device_id,
+                                    item && item._id,
+                                    item && item.mac
+                                ]),
+                                siteId,
+                                siteName
+                            }));
+                        }
+
+                        if (definition.type === "client") {
+                            const legacyClients = await fetchLegacyKnownClients(siteId);
+                            return legacyClients.map((item) => ({
+                                ...item,
+                                id: firstNonEmptyString([
+                                    item && item.id,
+                                    item && item.clientId,
+                                    item && item.client_id,
+                                    item && item.user_id,
+                                    item && item._id,
+                                    item && item.macAddress,
+                                    item && item.mac
+                                ]),
+                                clientId: firstNonEmptyString([
+                                    item && item.clientId,
+                                    item && item.id,
+                                    item && item.client_id,
+                                    item && item.user_id,
+                                    item && item._id,
+                                    item && item.macAddress,
+                                    item && item.mac
+                                ]),
+                                siteId,
+                                siteName
+                            }));
+                        }
+                    } catch (legacyError) {
+                        return [];
+                    }
+
                     return [];
                 }
             }));
@@ -419,13 +554,55 @@ module.exports = function(RED) {
                 .replace(/\{deviceId\}/g, encodeURIComponent(scoped.resourceId))
                 .replace(/\{clientId\}/g, encodeURIComponent(scoped.resourceId));
 
-            const response = await node.apiRequest({
-                path: detailPath,
-                method: "GET"
-            });
+            let response;
+            try {
+                response = await node.apiRequest({
+                    path: detailPath,
+                    method: "GET"
+                });
+            } catch (error) {
+                if (!shouldUseLegacyNetworkFallback(error)) {
+                    throw error;
+                }
+            }
 
-            if (response.statusCode < 200 || response.statusCode >= 300) {
-                throw new Error(`Failed to load ${deviceType} ${scoped.resourceId} (${response.statusCode})`);
+            if (!response || response.statusCode < 200 || response.statusCode >= 300) {
+                const statusError = new Error(`Failed to load ${deviceType} ${scoped.resourceId} (${response && response.statusCode ? response.statusCode : "n/a"})`);
+                statusError.statusCode = response && response.statusCode ? response.statusCode : undefined;
+                if (!shouldUseLegacyNetworkFallback(statusError)) {
+                    throw statusError;
+                }
+
+                if (definition.type === "device") {
+                    const legacyDevices = await fetchLegacyDevices(scoped.siteId);
+                    return legacyDevices.find((legacyDevice) => {
+                        const candidates = [
+                            legacyDevice && legacyDevice.id,
+                            legacyDevice && legacyDevice.device_id,
+                            legacyDevice && legacyDevice._id,
+                            legacyDevice && legacyDevice.mac
+                        ];
+                        return candidates.some((candidate) => normalizeIdentifierKey(candidate) === normalizeIdentifierKey(scoped.resourceId));
+                    }) || null;
+                }
+
+                if (definition.type === "client") {
+                    const legacyClients = await fetchLegacyKnownClients(scoped.siteId);
+                    return legacyClients.find((legacyClient) => {
+                        const candidates = [
+                            legacyClient && legacyClient.id,
+                            legacyClient && legacyClient.clientId,
+                            legacyClient && legacyClient.client_id,
+                            legacyClient && legacyClient.user_id,
+                            legacyClient && legacyClient._id,
+                            legacyClient && legacyClient.macAddress,
+                            legacyClient && legacyClient.mac
+                        ];
+                        return candidates.some((candidate) => normalizeIdentifierKey(candidate) === normalizeIdentifierKey(scoped.resourceId));
+                    }) || null;
+                }
+
+                throw statusError;
             }
 
             const payload = extractNetworkData(response.payload);

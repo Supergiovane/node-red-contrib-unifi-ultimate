@@ -1,6 +1,16 @@
 # Changelog
 
 
+## 0.1.11
+
+- Network config/runtime: added automatic fallback from official local `/v1` endpoints to legacy local Network endpoints when official routes are unavailable (improves compatibility with older local controller releases, including 7.x-era setups)
+- editor UX: renamed capability field label from `Observable` to `Event` across Access, Network, and Protect device nodes for clearer terminology
+- editor UX: normalized searchable selector widths and refresh-button alignment across device/client selectors in Access, Network Device, Network Presence, Network Control POE, and Protect nodes
+- editor UX: removed the visual `Action options` row label from device-node forms while preserving dynamic capability fields behavior
+- editor UX: updated help/info tip layout so capability help boxes span the full action-options row width
+- editor styling: introduced `unifi-ultimate-info-tip` with blue palette styling for capability help boxes to match node branding
+- node help text: updated wording to match the new UI labels and dynamic-field behavior
+
 ## 0.1.10
 
 - added YouTube tutorial links with icon to README and every node help/editor panel

@@ -100,5 +100,5 @@
     <p>This config node is used by Network Device, Network Presence, and Control POE nodes.</p>
     <p>All UniFi Network requests are executed by this config node. Runtime nodes subscribe through <code>addClient/removeClient</code> and receive updates/events from here.</p>
     <p>Event streams and observation timers are centralized here (shared scheduler per config node), so runtime nodes do not open their own websocket channels or polling timers.</p>
-    <p>The node uses the official Network integration API where available. For switch port/client mapping and PoE enable/disable, it also uses the local Network legacy API endpoints exposed through the UniFi OS proxy.</p>
+    <p>The node uses the official Network integration API where available and falls back automatically to local legacy endpoints when the official <code>/v1</code> routes are not exposed (for example on older local releases). For switch port/client mapping and PoE enable/disable, legacy endpoints are also used where needed.</p>
 </script>

@@ -956,7 +956,7 @@ async function buildObservableFields(deviceType, context) {
     const fields = [
         {
             id: "observable",
-            label: "Observable",
+            label: "Event",
             type: "select",
             reloadOnChange: true,
             options: observableOptions,
