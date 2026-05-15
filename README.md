@@ -23,7 +23,15 @@ Control and monitor `UniFi Network`, `UniFi Protect`, and `UniFi Access` from No
 <a href="https://www.youtube.com/watch?v=ZOq7M5mgUBk&list=PL9Yh1bjbLAYrWKtMlopN0swuQXbdJ8MFJ">
   <img src="resources/logos/youtube-icon.svg" alt="YouTube" width="24" height="18" align="absmiddle">
   Watch news and tutorials on YouTube
+  <br/>
+  <br/>
+  <p align="center">
+    <img src="nodes/readme-assets/unifi-editor-preview.jpeg" alt="UniFi Ultimate editor preview" width="860">
+  </p>
 </a>
+
+<br/>
+<br/>
 
 ## Install
 
