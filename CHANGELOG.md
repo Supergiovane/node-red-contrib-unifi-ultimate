@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.0
+
+- release stable `1.0.0`
+- hardening runtime Node-RED: nel polling doorbell di UniFi Access sono state aggiunte protezioni esplicite sulle Promise async (`.catch(...)`) per evitare unhandled rejections e ridurre il rischio di crash del runtime
+- migliorata la resilienza del bootstrap polling iniziale doorbell con gestione errori dedicata e logging tramite `node.warn(...)`
 
 ## 0.1.11
 

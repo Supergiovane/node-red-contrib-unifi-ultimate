@@ -15,12 +15,9 @@
 
 Control and monitor `UniFi Network`, `UniFi Protect`, and `UniFi Access` from Node-RED without building API requests by hand.
 
-> **Beta notice:** until version `1.0.0`, this package should be considered **BETA** and may include **breaking changes** between releases.  
-> Please [report issues or feedback](https://github.com/Supergiovane/node-red-contrib-unifi-ultimate/issues) to help improve the package.
-
 [View Changelog](CHANGELOG.md)
 
-<a href="https://www.youtube.com/watch?v=ZOq7M5mgUBk&list=PL9Yh1bjbLAYrWKtMlopN0swuQXbdJ8MFJ">
+<a href="https://www.youtube.com/playlist?list=PL9Yh1bjbLAYrWKtMlopN0swuQXbdJ8MFJ">
   <img src="resources/logos/youtube-icon.svg" alt="YouTube" width="24" height="18" align="absmiddle">
   Watch news and tutorials on YouTube
   <br/>

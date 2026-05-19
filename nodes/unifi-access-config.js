@@ -513,13 +513,13 @@ module.exports = function(RED) {
             }
 
             node.doorbellLogPollCursor = Math.floor(Date.now() / 1000) - DOORBELL_LOG_POLL_LOOKBACK_SECONDS;
-            node.runDoorbellLogPoll();
+            node.runDoorbellLogPoll().catch((error) => {
+                node.warn(`Access doorbell log initial poll failed: ${error && error.message ? error.message : error}`);
+            });
             node.doorbellLogPollTimer = setInterval(() => {
-                try {
-                    node.runDoorbellLogPoll();
-                } catch (error) {
+                node.runDoorbellLogPoll().catch((error) => {
                     node.warn(`Access doorbell log poll timer failed: ${error && error.message ? error.message : error}`);
-                }
+                });
             }, DOORBELL_LOG_POLL_INTERVAL_MS);
         };
 
