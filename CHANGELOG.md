@@ -1,12 +1,15 @@
 # Changelog
 
+## 1.0.1
+
+- UniFi Protect Sensor: added numeric observables for `Temperature`, `Humidity`, `Light Level`, and `Battery Level` (in addition to existing event-based observables)
+- UniFi Access: expanded `Receive Events` with official event filters (doorbell, unlock, DPS, emergency, schedule, temporary unlock, visitor status, and remote-view families) while keeping `All` for full stream passthrough
+
 ## 1.0.0
 
 - release stable `1.0.0`
 - hardening runtime Node-RED: nel polling doorbell di UniFi Access sono state aggiunte protezioni esplicite sulle Promise async (`.catch(...)`) per evitare unhandled rejections e ridurre il rischio di crash del runtime
 - migliorata la resilienza del bootstrap polling iniziale doorbell con gestione errori dedicata e logging tramite `node.warn(...)`
-- UniFi Protect Sensor: added numeric observables for `Temperature`, `Humidity`, `Light Level`, and `Battery Level` (in addition to existing event-based observables)
-- UniFi Access: expanded `Receive Events` with official event filters (doorbell, unlock, DPS, emergency, schedule, temporary unlock, visitor status, and remote-view families) while keeping `All` for full stream passthrough
 
 ## 0.1.11
 
@@ -41,7 +44,6 @@
 - updated node help HTML across touched nodes to reflect centralized fetch/event architecture and global POE polling
 - added status timestamp formatting to runtime/config node statuses (`<status> (day X, HH:MM:SS)`)
 - removed dead code paths tied to deprecated POE observe modes (`change` vs `interval`)
-
 
 ## 0.1.7
 
