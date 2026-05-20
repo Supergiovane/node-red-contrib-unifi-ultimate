@@ -138,6 +138,26 @@ const SENSOR_OBSERVABLE_DEFINITIONS = [
         id: "extremeValues",
         label: "Extreme values",
         eventTypes: ["sensorExtremeValues"]
+    },
+    {
+        id: "temperature",
+        label: "Temperature",
+        eventTypes: []
+    },
+    {
+        id: "humidity",
+        label: "Humidity",
+        eventTypes: []
+    },
+    {
+        id: "lightLevel",
+        label: "Light level",
+        eventTypes: []
+    },
+    {
+        id: "batteryLevel",
+        label: "Battery level",
+        eventTypes: []
     }
 ];
 
@@ -948,8 +968,8 @@ function buildAssetFileOptions(files) {
 }
 
 async function buildObservableFields(deviceType, context) {
-    // Observables let the generic "Receive Events" capability expose a simple
-    // boolean output tailored to the selected Protect device family.
+    // Observables let the generic "Receive Events" capability expose a typed
+    // value (boolean or number) tailored to the selected Protect device family.
     const capabilityConfig = normalizeObject(context && context.capabilityConfig);
     const observableOptions = getObservableOptions(deviceType);
     const selectedObservable = resolveSelectedObservable(observableOptions, capabilityConfig.observable);
@@ -965,7 +985,7 @@ async function buildObservableFields(deviceType, context) {
                 ? "Emit all events for the selected Protect device."
                 : selectedObservable
                 ? buildObservableHelpText(deviceType, selectedObservable)
-                : "Select which boolean state should be exposed on msg.payload."
+                : "Select which observable value should be exposed on msg.payload."
         }
     ];
 
@@ -1445,6 +1465,49 @@ function resolveSensorObservableState(sensor, observable, fallbackValue) {
             "isExtremeValueDetected",
             "extremeValueDetected",
             "status.extremeValueDetected"
+        ]),
+        temperature: () => firstDefinedValue(sensor, [
+            "temperature",
+            "status.temperature.value",
+            "status.temperature",
+            "stats.temperature.value",
+            "stats.temperature",
+            "environment.temperature",
+            "sensorTemperature"
+        ]),
+        humidity: () => firstDefinedValue(sensor, [
+            "humidity",
+            "status.humidity.value",
+            "status.humidity",
+            "stats.humidity.value",
+            "stats.humidity",
+            "environment.humidity",
+            "sensorHumidity"
+        ]),
+        lightLevel: () => firstDefinedValue(sensor, [
+            "lightLevel",
+            "light",
+            "lux",
+            "status.lightLevel",
+            "status.light",
+            "status.illuminance",
+            "stats.lightLevel",
+            "stats.light.value",
+            "stats.light",
+            "stats.illuminance.value",
+            "stats.illuminance",
+            "ambientLight"
+        ]),
+        batteryLevel: () => firstDefinedValue(sensor, [
+            "batteryLevel",
+            "batteryPercentage",
+            "batteryPercent",
+            "battery.percentage",
+            "batteryStatus.percentage",
+            "status.batteryLevel",
+            "status.batteryPercentage",
+            "stats.battery.percentage",
+            "stats.batteryLevel"
         ])
     };
 
@@ -1454,6 +1517,10 @@ function resolveSensorObservableState(sensor, observable, fallbackValue) {
 
     if (rawValue === undefined) {
         return fallbackValue;
+    }
+
+    if (["temperature", "humidity", "lightLevel", "batteryLevel"].includes(observable)) {
+        return normalizeNumericState(rawValue, fallbackValue);
     }
 
     return normalizeBooleanState(rawValue, fallbackValue);
@@ -1617,6 +1684,43 @@ function normalizeBooleanState(value, fallbackValue) {
         }
         if (["false", "off", "closed", "inactive", "normal", "ok"].includes(normalized)) {
             return false;
+        }
+    }
+
+    return fallbackValue;
+}
+
+function normalizeNumericState(value, fallbackValue) {
+    if (typeof value === "number") {
+        return Number.isFinite(value)
+            ? value
+            : fallbackValue;
+    }
+
+    if (typeof value === "string") {
+        const normalized = value.trim().replace(",", ".");
+        const match = normalized.match(/-?\d+(\.\d+)?/);
+        if (match) {
+            const parsed = Number.parseFloat(match[0]);
+            if (Number.isFinite(parsed)) {
+                return parsed;
+            }
+        }
+        return fallbackValue;
+    }
+
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+        const nested = firstDefinedValue(value, [
+            "value",
+            "current",
+            "reading",
+            "level",
+            "amount",
+            "percent",
+            "percentage"
+        ]);
+        if (nested !== undefined) {
+            return normalizeNumericState(nested, fallbackValue);
         }
     }
 

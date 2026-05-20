@@ -5,7 +5,8 @@ const {
     composeCapabilityExecution,
     getCapabilityDefinition,
     getDeviceTypeDefinition,
-    matchesEvent
+    matchesEvent,
+    matchesObservable
 } = require("./utils/unifi-access-device-registry");
 const { extractAccessData } = require("./utils/unifi-access-utils");
 
@@ -125,6 +126,14 @@ function appendStatusTimestamp(text) {
     const normalized = String(text === undefined || text === null ? "" : text).trim();
     const suffix = buildStatusTimestampText();
     return normalized ? `${normalized} ${suffix}` : suffix;
+}
+
+function resolveConfiguredObservable(capabilityConfig) {
+    return String(
+        capabilityConfig && capabilityConfig.observable !== undefined
+            ? capabilityConfig.observable
+            : "all"
+    ).trim() || "all";
 }
 
 module.exports = function(RED) {
@@ -434,6 +443,11 @@ module.exports = function(RED) {
                 if (!node.isObserving || !matchesEvent(node.deviceType, node.deviceId, node.currentDevice, eventPayload)) {
                     return;
                 }
+                const capabilityConfig = parseCapabilityConfig(node.capabilityConfig);
+                const observable = resolveConfiguredObservable(capabilityConfig);
+                if (!matchesObservable(eventPayload, observable)) {
+                    return;
+                }
                 const eventName = String(eventPayload.event || "").trim();
 
                 setNodeStatus({ fill: "blue", shape: "ring", text: eventName || "event" });
@@ -449,7 +463,8 @@ module.exports = function(RED) {
                     device: node.currentDevice,
                     unifiAccess: buildBaseMetadata(node.deviceType, node.deviceId, "observe", {
                         source: "events",
-                        eventType: eventName
+                        eventType: eventName,
+                        observable: observable === "all" ? undefined : observable
                     })
                 });
                 sendOutputs(node.send.bind(node), null, eventMsg);

@@ -111,7 +111,7 @@ Common uses:
 - Switch viewer live views.
 - Update supported device properties.
 
-For supported observables, the node can output simple `true/false` values while still keeping the raw UniFi event details available.
+For supported observables, the node can output normalized values while still keeping the raw UniFi event details available (`true/false` for event states, numeric values for sensor metrics like temperature and humidity).
 
 <br/>
 <br/>
@@ -143,6 +143,7 @@ Common uses:
 Most nodes send the result on output 1.
 
 Protect and Access device nodes emit both state and live event messages on the same output pin when `Receive Events` is selected.
+On Access nodes, the `Event` selector can filter the stream to official UniFi Access event families, or use `All` for full passthrough.
 
 Useful metadata is attached to the output message, for example:
 
@@ -296,7 +297,7 @@ Import from `examples/`:
 | Flow file                                                                                    | What it demonstrates                           |
 | -------------------------------------------------------------------------------------------- | ---------------------------------------------- |
 | [examples/unifi-protect-info.json](examples/unifi-protect-info.json)                         | Read Protect camera state                      |
-| [examples/unifi-protect-sensor-observe.json](examples/unifi-protect-sensor-observe.json)     | Receive boolean sensor events                  |
+| [examples/unifi-protect-sensor-observe.json](examples/unifi-protect-sensor-observe.json)     | Receive sensor observables (boolean or numeric) |
 | [examples/unifi-protect-camera-actions.json](examples/unifi-protect-camera-actions.json)     | Snapshot, PTZ presets, and doorbell messages   |
 | [examples/unifi-access-door-control.json](examples/unifi-access-door-control.json)           | Door state, unlock, and temporary lock rule    |
 | [examples/unifi-access-intercom-doorbell.json](examples/unifi-access-intercom-doorbell.json) | Intercom observe, trigger, and cancel doorbell |

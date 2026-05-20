@@ -15,6 +15,85 @@ const DEVICE_TYPE_DEFINITIONS = {
     }
 };
 
+const ALL_OBSERVABLE_VALUE = "all";
+const ALL_OBSERVABLE_OPTION = { value: ALL_OBSERVABLE_VALUE, label: "All" };
+
+// Official UniFi Access events documented in:
+// - 11.2 List of Supported Webhook Events
+// - 11.1 Fetch Notifications [WebSocket] examples
+const ACCESS_OBSERVABLE_DEFINITIONS = [
+    {
+        id: "doorbellIncoming",
+        label: "Doorbell Incoming",
+        eventPatterns: ["access.doorbell.incoming.*"]
+    },
+    {
+        id: "doorbellIncomingRen",
+        label: "Doorbell Incoming (REN)",
+        eventPatterns: ["access.doorbell.incoming.ren"]
+    },
+    {
+        id: "doorbellCompleted",
+        label: "Doorbell Completed",
+        eventPatterns: ["access.doorbell.completed"]
+    },
+    {
+        id: "doorUnlock",
+        label: "Door Unlock",
+        eventPatterns: ["access.door.unlock"]
+    },
+    {
+        id: "dpsStatus",
+        label: "DPS Status",
+        eventPatterns: ["access.device.dps_status"]
+    },
+    {
+        id: "emergencyStatus",
+        label: "Emergency Status",
+        eventPatterns: ["access.device.emergency_status"]
+    },
+    {
+        id: "unlockScheduleActivate",
+        label: "Unlock Schedule Activate",
+        eventPatterns: ["access.unlock_schedule.activate"]
+    },
+    {
+        id: "unlockScheduleDeactivate",
+        label: "Unlock Schedule Deactivate",
+        eventPatterns: ["access.unlock_schedule.deactivate"]
+    },
+    {
+        id: "temporaryUnlockStart",
+        label: "Temporary Unlock Start",
+        eventPatterns: ["access.temporary_unlock.start"]
+    },
+    {
+        id: "temporaryUnlockEnd",
+        label: "Temporary Unlock End",
+        eventPatterns: ["access.temporary_unlock.end"]
+    },
+    {
+        id: "visitorStatusChanged",
+        label: "Visitor Status Changed",
+        eventPatterns: ["access.visitor.status.changed"]
+    },
+    {
+        id: "remoteView",
+        label: "Remote View",
+        eventPatterns: ["access.remote_view"]
+    },
+    {
+        id: "remoteViewChange",
+        label: "Remote View Change",
+        eventPatterns: ["access.remote_view.change"]
+    },
+    {
+        id: "remoteDoorUnlock",
+        label: "Remote Door Unlock",
+        eventPatterns: ["access.data.device.remote_unlock"]
+    }
+];
+
 // Capabilities common to all Access resource families.
 const COMMON_CAPABILITIES = [
     {
@@ -266,6 +345,9 @@ async function getCapabilityOptions(deviceType, capabilityId, context) {
     // Access capability options are currently static, but keep the async shape
     // consistent with the other registries so the editor can treat them equally.
     if (capabilityId === "observe") {
+        const capabilityConfig = normalizeObject(context && context.capabilityConfig);
+        const observableOptions = getAccessObservableOptions();
+        const selectedObservable = resolveSelectedAccessObservable(observableOptions, capabilityConfig.observable);
         return {
             capabilityId,
             fields: [
@@ -273,11 +355,11 @@ async function getCapabilityOptions(deviceType, capabilityId, context) {
                     id: "observable",
                     label: "Event",
                     type: "select",
-                    options: [
-                        { value: "all", label: "All" }
-                    ],
-                    defaultValue: "all",
-                    helpText: "Emit all events for the selected Access device or door."
+                    options: observableOptions,
+                    defaultValue: selectedObservable,
+                    helpText: selectedObservable === ALL_OBSERVABLE_VALUE
+                        ? "Emit all events for the selected Access device or door."
+                        : "Emit only the selected official UniFi Access event type."
                 }
             ]
         };
@@ -496,6 +578,60 @@ function matchesEvent(deviceType, deviceId, currentDevice, eventPayload) {
     return false;
 }
 
+function getAccessObservableOptions() {
+    return [ALL_OBSERVABLE_OPTION].concat(
+        ACCESS_OBSERVABLE_DEFINITIONS.map((definition) => ({
+            value: definition.id,
+            label: definition.label
+        }))
+    );
+}
+
+function resolveSelectedAccessObservable(options, configuredObservable) {
+    const normalized = String(configuredObservable || "").trim();
+    if (normalized && options.some((option) => option.value === normalized)) {
+        return normalized;
+    }
+    return ALL_OBSERVABLE_VALUE;
+}
+
+function normalizeEventName(value) {
+    return String(value || "").trim().toLowerCase();
+}
+
+function matchesObservable(eventPayload, observable) {
+    const selected = String(observable || "").trim();
+    if (!selected || selected === ALL_OBSERVABLE_VALUE) {
+        return true;
+    }
+
+    const definition = ACCESS_OBSERVABLE_DEFINITIONS.find((entry) => entry.id === selected);
+    if (!definition) {
+        return false;
+    }
+
+    const eventName = normalizeEventName(eventPayload && eventPayload.event);
+    if (!eventName) {
+        return false;
+    }
+
+    return definition.eventPatterns.some((pattern) => matchesObservablePattern(eventName, pattern));
+}
+
+function matchesObservablePattern(eventName, pattern) {
+    const normalizedPattern = normalizeEventName(pattern);
+    if (!normalizedPattern) {
+        return false;
+    }
+
+    if (normalizedPattern.endsWith(".*")) {
+        const base = normalizedPattern.slice(0, -2);
+        return eventName === base || eventName.startsWith(`${base}.`);
+    }
+
+    return eventName === normalizedPattern;
+}
+
 function normalizeObject(value) {
     return value && typeof value === "object" && !Array.isArray(value)
         ? value
@@ -511,5 +647,6 @@ module.exports = {
     getDeviceTypeDefinition,
     getDeviceTypes,
     matchesEvent,
+    matchesObservable,
     summarizeDevice
 };

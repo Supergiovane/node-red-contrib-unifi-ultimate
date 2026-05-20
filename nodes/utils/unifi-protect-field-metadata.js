@@ -168,7 +168,7 @@ const TYPE_FIELD_METADATA = {
 };
 
 // Observable metadata powers the "Receive Events" helper text shown in the
-// editor when the user chooses which boolean state to expose.
+// editor when the user chooses which state/metric to expose.
 const OBSERVABLE_METADATA = {
     camera: {
         ring: {
@@ -242,6 +242,26 @@ const OBSERVABLE_METADATA = {
             label: "Extreme Values",
             description: "True while the sensor is reporting an active extreme-values event.",
             source: "official"
+        },
+        temperature: {
+            label: "Temperature",
+            description: "Current ambient temperature reported by the sensor.",
+            source: "official"
+        },
+        humidity: {
+            label: "Humidity",
+            description: "Current relative humidity reported by the sensor.",
+            source: "official"
+        },
+        lightLevel: {
+            label: "Light Level",
+            description: "Current ambient light level reported by the sensor.",
+            source: "inferred"
+        },
+        batteryLevel: {
+            label: "Battery Level",
+            description: "Current battery percentage reported by the sensor.",
+            source: "inferred"
         }
     },
     light: {

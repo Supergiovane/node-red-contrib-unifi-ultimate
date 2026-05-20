@@ -157,7 +157,7 @@ module.exports = function(RED) {
         node.deviceName = resolveDeviceName(config.deviceName);
         node.timeout = Number(config.timeout) > 0 ? Number(config.timeout) : 15000;
         node.currentDevice = null;
-        node.currentObservableValue = false;
+        node.currentObservableValue = undefined;
         node.isObserving = false;
 
         function setNodeStatus(status) {
@@ -223,9 +223,9 @@ module.exports = function(RED) {
             const observable = resolveConfiguredObservable(capabilityConfig);
             if (observable) {
                 // Observables let the node collapse complex Protect payloads into
-                // a stable boolean while preserving the original context in details.raw.
+                // a stable typed value while preserving the original context in details.raw.
                 const observableValue = resolveObservableState(deviceType, payload, observable, node.currentObservableValue);
-                node.currentObservableValue = Boolean(observableValue);
+                node.currentObservableValue = observableValue;
 
                 const outputMsg = {
                     payload: node.currentObservableValue,
@@ -454,11 +454,11 @@ module.exports = function(RED) {
                 const observableScopeId = resolveConfiguredObservableScope(capabilityConfig);
                 if (observable) {
                     // When the user selected an observable, events can update the
-                    // boolean state output directly instead of only the event port.
+                    // state output directly instead of only the event payload.
                     const observation = resolveObservableEventValue(node.deviceType, item, observable, observableScopeId);
                     if (observation.matched) {
                         const resolvedDeviceName = resolveOutputDeviceName(node.currentDevice);
-                        node.currentObservableValue = Boolean(observation.value);
+                        node.currentObservableValue = observation.value;
                         setNodeStatus({ fill: "blue", shape: "ring", text: `${item.type || "event"}` });
                         const stateMsg = {
                             payload: node.currentObservableValue,
