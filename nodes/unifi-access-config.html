@@ -15,7 +15,8 @@
             return this.name || this.host || "Unifi Access Config";
         },
         oneditprepare: function () {
-            const $host = $("#node-config-input-host");
+            const node = this;
+            const $hostInput = $("#node-config-input-host");
             const $apiToken = $("#node-config-input-apiToken");
             const $rejectUnauthorized = $("#node-config-input-rejectUnauthorized");
             const $apiTokenRow = $apiToken.closest(".form-row");
@@ -23,7 +24,7 @@
             const $advancedRow = $("#node-config-row-advanced");
 
             function syncProgressiveRows() {
-                const hasHost = String($host.val() || "").trim() !== "";
+                const hasHost = String($hostInput.val() || node.host || "").trim() !== "";
                 $apiTokenRow.toggle(hasHost);
                 $securityRow.toggle(hasHost);
                 $advancedRow.toggle(hasHost);
@@ -38,7 +39,7 @@
 
             syncProgressiveRows();
 
-            $host.on("change input", function () {
+            $hostInput.on("change input", function () {
                 syncProgressiveRows();
             });
         }

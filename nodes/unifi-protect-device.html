@@ -14,7 +14,8 @@
             inputs: { value: 1 },
             capability: { value: "observe", required: true },
             capabilityConfig: { value: "{}" },
-            timeout: { value: 15000, required: true, validate: RED.validators.number() }
+            autoEmit: { value: false },
+            autoEmitInterval: { value: 60, validate: RED.validators.number() }
         },
         inputs: 1,
         outputs: 1,
@@ -28,8 +29,11 @@
             const selectedCapabilityId = String($("#node-input-capability").val() || this.capability || "observe").trim();
             const selectedCapabilityOpensStream = $("#node-input-capability option:selected").data("opens-stream") === true
                 || $("#node-input-capability option:selected").attr("data-opens-stream") === "true";
+            const selectedCapabilityMethod = String($("#node-input-capability option:selected").data("method") || $("#node-input-capability option:selected").attr("data-method") || "").trim().toUpperCase();
+            const supportsPeriodicEmit = !selectedCapabilityOpensStream && (!selectedCapabilityMethod || selectedCapabilityMethod === "GET");
             // Hide the input pin only when the selected action starts an event stream.
             this.inputs = (selectedCapabilityOpensStream || selectedCapabilityId === "observe") ? 0 : 1;
+            this.autoEmit = supportsPeriodicEmit ? $("#node-input-autoEmit").is(":checked") : false;
 
             const $capabilityConfig = $("#node-input-capabilityConfig");
             const capabilityConfig = {};
@@ -85,6 +89,9 @@
             const $capabilityConfig = $("#node-input-capabilityConfig");
             const $capabilityConfigRow = $("#node-row-capabilityConfig");
             const $capabilityConfigContainer = $("#node-input-capabilityConfigContainer");
+            const $autoEmit = $("#node-input-autoEmit");
+            const $autoEmitRow = $("#node-row-autoEmit");
+            const $autoEmitIntervalRow = $("#node-row-autoEmitInterval");
             const $refresh = $("#node-input-refreshDevices");
             const $deviceTypeRow = $deviceType.closest(".form-row");
             const $deviceIdRow = $deviceId.closest(".form-row");
@@ -95,6 +102,7 @@
             let capabilityOptionsRequestId = 0;
             let suspendChangeHandling = false;
             let isInitializingEditor = true;
+            let restoredPersistedAutoEmit = false;
             let deviceTypeDefinitions = [];
             let capabilityDefinitions = [];
 
@@ -109,12 +117,30 @@
                 const hasDevice = hasSelection($deviceId);
                 const hasCapability = hasSelection($capability);
                 const hasCapabilityFields = $capabilityConfigRow.data("has-fields") === true;
+                const capabilityDefinition = getSelectedCapabilityDefinition();
+                const capabilityMethod = String(capabilityDefinition && capabilityDefinition.method || "").trim().toUpperCase();
+                const supportsPeriodicEmit = capabilityDefinition
+                    && capabilityDefinition.opensEventStream !== true
+                    && (!capabilityMethod || capabilityMethod === "GET");
+                const showPeriodicEmit = Boolean(hasServer && hasDeviceType && hasDevice && hasCapability && supportsPeriodicEmit);
 
                 $deviceTypeRow.toggle(hasServer);
                 $deviceIdRow.toggle(hasServer && hasDeviceType);
                 $capabilityRow.toggle(hasServer && hasDeviceType && hasDevice);
                 $capabilityConfigRow.toggle(hasServer && hasDeviceType && hasDevice && hasCapability && hasCapabilityFields);
                 $advancedRow.toggle(hasServer && hasDeviceType && hasDevice && hasCapability);
+                $autoEmitRow.toggle(showPeriodicEmit);
+                $autoEmitIntervalRow.toggle(showPeriodicEmit && $autoEmit.is(":checked"));
+
+                if (showPeriodicEmit && !restoredPersistedAutoEmit) {
+                    $autoEmit.prop("checked", node.autoEmit === true || node.autoEmit === "true");
+                    restoredPersistedAutoEmit = true;
+                    $autoEmitIntervalRow.toggle($autoEmit.is(":checked"));
+                }
+
+                if (!showPeriodicEmit && !isInitializingEditor) {
+                    $autoEmit.prop("checked", false);
+                }
             }
 
             function parseCapabilityConfig(rawValue) {
@@ -564,6 +590,7 @@
                         $capability.append(
                             $("<option></option>")
                                 .val(item.id)
+                                .attr("data-method", String(item.method || "").trim())
                                 .attr("data-opens-stream", item.opensEventStream === true ? "true" : "false")
                                 .text(item.label)
                         );
@@ -1043,6 +1070,9 @@
                 writeCapabilityConfig();
                 refreshAfterCapabilityChange();
             });
+            $autoEmit.on("change", function () {
+                syncProgressiveRows();
+            });
             $refresh.on("click", function (event) {
                 event.preventDefault();
                 refreshAfterServerChange();
@@ -1095,9 +1125,15 @@
             <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
             <input type="text" id="node-input-name" placeholder="Node name">
         </div>
-        <div class="form-row">
-            <label for="node-input-timeout"><i class="fa fa-clock-o"></i> Timeout</label>
-            <input type="text" id="node-input-timeout" placeholder="15000">
+        <div class="form-row" id="node-row-autoEmit">
+            <label for="node-input-autoEmit"><i class="fa fa-repeat"></i> Repeat</label>
+            <input type="checkbox" id="node-input-autoEmit" style="display:inline-block; width:auto; vertical-align:top;">
+            <span style="margin-left:8px;">Emit periodically</span>
+        </div>
+        <div class="form-row" id="node-row-autoEmitInterval">
+            <label for="node-input-autoEmitInterval"><i class="fa fa-clock-o"></i> Every</label>
+            <input type="number" id="node-input-autoEmitInterval" min="5" step="1" placeholder="60" style="width:120px;">
+            <span style="margin-left:8px;">seconds</span>
         </div>
     </div>
 </script>
@@ -1115,7 +1151,9 @@
     <p>Action highlights: <code>Receive Events</code>, <code>Read Device State</code>, <code>Take Snapshot</code>, <code>Show Doorbell Message</code>, and <code>Read Application Info</code> on <code>NVR</code>.</p>
     <p><code>Receive Events</code> performs an initial fetch and then subscribes to streams managed by the shared Protect config node. The config node keeps websocket channels and forwards matching updates to runtime nodes. In this mode, the input pin is hidden and listening starts automatically after deploy/restart.</p>
     <p>For <code>Sensor</code>, <code>Camera</code>, and <code>Light</code> observables, <code>All</code> emits every event for the selected device. Choosing a specific observable normalizes the main output to a derived value and keeps the original context in <code>msg.details.raw</code>. Event observables emit <code>true/false</code>; sensor metrics such as <code>Temperature</code>, <code>Humidity</code>, <code>Light Level</code>, and <code>Battery Level</code> emit numeric values.</p>
-    <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different item from the list. <b>Timeout</b> controls the request timeout in milliseconds for API calls.</p>
+    <p><b>Emit periodically</b> repeats read-only actions at the selected interval and sends each result to the flow. It is hidden for <code>Receive Events</code> and write actions.</p>
+    <p>Request timeout is handled automatically by the node.</p>
+    <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different item from the list.</p>
 
     <h3>Input</h3>
     <ul>

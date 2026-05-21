@@ -93,9 +93,74 @@ const TYPE_CAPABILITIES = {
             method: "GET",
             path: "/v1/sites/{siteId}/clients",
             mode: "request"
+        },
+        {
+            id: "countOnlineClients",
+            label: "Count Online Clients",
+            description: "Count currently online clients for the selected site.",
+            mode: "custom"
+        },
+        {
+            id: "createGuestVoucher",
+            label: "Create Guest Voucher",
+            description: "Create one or more simple Hotspot guest vouchers.",
+            method: "POST",
+            path: "/v1/sites/{siteId}/hotspot/vouchers",
+            mode: "custom",
+            editor: {
+                fields: [
+                    {
+                        id: "name",
+                        label: "Name",
+                        type: "text",
+                        placeholder: "Guest Voucher",
+                        defaultValue: "Guest Voucher"
+                    },
+                    {
+                        id: "timeLimitMinutes",
+                        label: "Duration (minutes)",
+                        type: "number",
+                        placeholder: "1440",
+                        defaultValue: 1440
+                    },
+                    {
+                        id: "count",
+                        label: "How Many",
+                        type: "number",
+                        placeholder: "1",
+                        defaultValue: 1
+                    }
+                ]
+            },
+            requestComposer: ({ capabilityConfig }) => {
+                const normalizedName = String(capabilityConfig && capabilityConfig.name || "Guest Voucher").trim() || "Guest Voucher";
+                const timeLimitMinutes = resolveIntegerValue(undefined, capabilityConfig && capabilityConfig.timeLimitMinutes, 1) || 1440;
+                const count = resolveIntegerValue(undefined, capabilityConfig && capabilityConfig.count, 1) || 1;
+
+                if (timeLimitMinutes > 1000000) {
+                    throw new Error("Guest voucher duration must be between 1 and 1000000 minutes.");
+                }
+                if (count > 1000) {
+                    throw new Error("Guest voucher count must be between 1 and 1000.");
+                }
+
+                return {
+                    payload: {
+                        name: normalizedName,
+                        timeLimitMinutes,
+                        count
+                    }
+                };
+            }
         }
     ],
     device: [
+        {
+            id: "readSwitchTemperatures",
+            label: "Read Temperatures",
+            description: "Fetch temperature readings exposed by the selected UniFi switch or device. Some models/controllers do not expose temperature data.",
+            mode: "custom"
+        },
         {
             id: "getLatestStatistics",
             label: "Read Latest Statistics",
@@ -103,6 +168,30 @@ const TYPE_CAPABILITIES = {
             method: "GET",
             path: "/v1/sites/{siteId}/devices/{deviceId}/statistics/latest",
             mode: "request"
+        },
+        {
+            id: "readDeviceCpu",
+            label: "Read CPU",
+            description: "Read the selected UniFi device CPU usage percentage.",
+            method: "GET",
+            path: "/v1/sites/{siteId}/devices/{deviceId}/statistics/latest",
+            mode: "custom"
+        },
+        {
+            id: "readDeviceMemory",
+            label: "Read Memory",
+            description: "Read the selected UniFi device memory usage percentage.",
+            method: "GET",
+            path: "/v1/sites/{siteId}/devices/{deviceId}/statistics/latest",
+            mode: "custom"
+        },
+        {
+            id: "readDeviceUptime",
+            label: "Read Uptime",
+            description: "Read the selected UniFi device uptime in seconds.",
+            method: "GET",
+            path: "/v1/sites/{siteId}/devices/{deviceId}/statistics/latest",
+            mode: "custom"
         },
         {
             id: "restartDevice",
@@ -164,6 +253,12 @@ const TYPE_CAPABILITIES = {
         }
     ],
     client: [
+        {
+            id: "isClientOnline",
+            label: "Is Client Online",
+            description: "Return true when the selected client is online.",
+            mode: "custom"
+        },
         {
             id: "authorizeGuestAccess",
             label: "Authorize Guest Access",

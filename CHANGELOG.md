@@ -1,7 +1,13 @@
 # Changelog
 
-## 1.0.1
+## 1.0.2
 
+- UI: removed per-node `Timeout` fields and standardized request timeouts internally
+- Config editors: aligned progressive field visibility with Node-RED stored node values on reopen
+- UniFi Network, Protect, and Access Device: added optional periodic emission for read-only actions, hidden for event streams and write actions
+- UniFi Network config: made the global PoE power polling interval optional and defaulted it to 15 seconds for existing nodes
+- UniFi Network Device: added simple end-user actions for `Is Client Online`, `Count Online Clients`, `Read CPU`, `Read Memory`, `Read Uptime`, and `Create Guest Voucher`
+- UniFi Network Device: added `Read Temperatures`, which normalizes switch/device thermal readings when the controller exposes them and falls back to legacy device stats where available
 - UniFi Protect Sensor: added numeric observables for `Temperature`, `Humidity`, `Light Level`, and `Battery Level` (in addition to existing event-based observables)
 - UniFi Access: expanded `Receive Events` with official event filters (doorbell, unlock, DPS, emergency, schedule, temporary unlock, visitor status, and remote-view families) while keeping `All` for full stream passthrough
 

@@ -10,6 +10,7 @@ const {
 const { extractNetworkData } = require("./utils/unifi-network-utils");
 const UNOFFICIAL_NETWORK_STREAM_CAPABILITY = "observeUnofficialEvents";
 const UNOFFICIAL_POLL_INTERVAL_MS = 3000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
 
 function resolveDeviceType(configuredDeviceType) {
     return String(configuredDeviceType || "").trim();
@@ -44,6 +45,91 @@ function parseCapabilityConfig(value) {
 
 function resolveCapabilityConfig(configuredCapabilityConfig) {
     return parseCapabilityConfig(configuredCapabilityConfig);
+}
+
+function parseBoolean(value) {
+    return value === true || value === "true" || value === 1 || value === "1";
+}
+
+function parseIntervalSeconds(value, fallback) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric < 5) {
+        return fallback;
+    }
+    return Math.trunc(numeric);
+}
+
+function normalizeIdentifierKey(value) {
+    return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function isTruthyOnlineValue(value) {
+    if (value === true) {
+        return true;
+    }
+
+    const normalized = String(value || "").trim().toLowerCase();
+    return normalized === "online" || normalized === "connected" || normalized === "active";
+}
+
+function isFalsyOnlineValue(value) {
+    if (value === false) {
+        return true;
+    }
+
+    const normalized = String(value || "").trim().toLowerCase();
+    return normalized === "offline" || normalized === "disconnected" || normalized === "inactive";
+}
+
+function resolveClientOnlineState(client) {
+    const item = client && typeof client === "object" && !Array.isArray(client)
+        ? client
+        : {};
+
+    if (item.__unifiUltimateOnline === true) {
+        return true;
+    }
+    if (item.__unifiUltimateOnline === false) {
+        return false;
+    }
+    if (item.offline === true) {
+        return false;
+    }
+
+    const negativeCandidates = [
+        item.isOnline,
+        item.online,
+        item.connected,
+        item.isConnected,
+        item.connectionState,
+        item.status,
+        item.state
+    ];
+    if (negativeCandidates.some(isFalsyOnlineValue)) {
+        return false;
+    }
+
+    const positiveCandidates = [
+        item.isOnline,
+        item.online,
+        item.connected,
+        item.isConnected,
+        item.connectionState,
+        item.status,
+        item.state
+    ];
+    return positiveCandidates.some(isTruthyOnlineValue);
+}
+
+function getFirstNonEmptyString(values) {
+    const list = Array.isArray(values) ? values : [];
+    for (const value of list) {
+        const normalized = String(value === undefined || value === null ? "" : value).trim();
+        if (normalized) {
+            return normalized;
+        }
+    }
+    return "";
 }
 
 function buildNodeStatus(deviceType, payload) {
@@ -481,8 +567,12 @@ module.exports = function(RED) {
         node.deviceId = config.deviceId || "";
         node.capability = config.capability || "observe";
         node.capabilityConfig = config.capabilityConfig || "{}";
+        node.autoEmit = parseBoolean(config.autoEmit);
+        node.autoEmitIntervalSeconds = parseIntervalSeconds(config.autoEmitInterval, 60);
+        node.autoEmitTimer = null;
+        node.autoEmitInFlight = false;
         node.deviceName = resolveDeviceName(config.deviceName);
-        node.timeout = Number(config.timeout) > 0 ? Number(config.timeout) : 15000;
+        node.timeout = DEFAULT_REQUEST_TIMEOUT_MS;
         node.currentDevice = null;
         node.isObserving = false;
         node.unofficialLastFingerprint = "";
@@ -572,7 +662,273 @@ module.exports = function(RED) {
             send(outputMsg);
         }
 
-        async function invokeCapability(send) {
+        async function fetchDeviceTemperatures(deviceType, deviceId, capabilityId, send) {
+            if (deviceType !== "device" || typeof node.server.fetchDeviceTemperatures !== "function") {
+                throw new Error("Switch temperature reading is only available for UniFi device resources.");
+            }
+
+            const result = await node.server.fetchDeviceTemperatures(deviceId);
+            const payload = result && result.payload && typeof result.payload === "object"
+                ? result.payload
+                : {};
+            const sourceDevice = result && result.device && typeof result.device === "object"
+                ? result.device
+                : payload;
+            node.currentDevice = sourceDevice;
+            if (payload.deviceName) {
+                node.deviceName = resolveDeviceName(payload.deviceName);
+            }
+
+            const temperatures = Array.isArray(payload.temperatures) ? payload.temperatures : [];
+            const temperatureC = Number(payload.temperatureC);
+            const maxTemperatureC = Number(payload.maxTemperatureC);
+            const outputMsg = {};
+            outputMsg.payload = Number.isFinite(temperatureC) ? temperatureC : null;
+            attachDetails(outputMsg, {
+                device: sourceDevice,
+                temperature: payload,
+                temperatureSources: result && result.sources,
+                unifiNetwork: buildBaseMetadata(deviceType, deviceId, capabilityId, {
+                    source: "request",
+                    temperatureC: Number.isFinite(temperatureC) ? temperatureC : undefined,
+                    maxTemperatureC: Number.isFinite(maxTemperatureC) ? maxTemperatureC : undefined,
+                    temperatureCount: temperatures.length,
+                    hasTemperatures: temperatures.length > 0
+                })
+            });
+            decorateOutputMessage(outputMsg, outputMsg.payload, `request:${capabilityId}`);
+
+            const statusTemperatureC = Number.isFinite(temperatureC) ? temperatureC : maxTemperatureC;
+            const statusText = Number.isFinite(statusTemperatureC)
+                ? `${statusTemperatureC} C`
+                : "no temperature";
+            setNodeStatus({ fill: temperatures.length > 0 ? "green" : "yellow", shape: "dot", text: statusText });
+            send(outputMsg);
+        }
+
+        async function executeConfiguredCapabilityRequest(deviceType, deviceId, capabilityId, capabilityConfig) {
+            const execution = composeCapabilityExecution(deviceType, capabilityId, capabilityConfig);
+            const request = buildCapabilityRequest(deviceType, capabilityId, deviceId, execution.params, node.currentDevice);
+            const response = await node.server.executeNetworkRequest({
+                path: request.path,
+                method: request.method,
+                query: execution.query,
+                headers: execution.headers,
+                payload: execution.payload,
+                timeout: node.timeout
+            });
+
+            if (response.statusCode < 200 || response.statusCode >= 300) {
+                setNodeStatus({ fill: "yellow", shape: "ring", text: `${response.statusCode}` });
+                throw new Error(`UniFi Network request failed with status ${response.statusCode}`);
+            }
+
+            return {
+                request,
+                response,
+                responseData: extractNetworkData(response.payload)
+            };
+        }
+
+        async function fetchClientOnlineState(deviceType, deviceId, capabilityId, send) {
+            if (deviceType !== "client") {
+                throw new Error("Client online state is only available for Client resources.");
+            }
+
+            const scoped = resolveScopedIdentifiers(deviceType, deviceId);
+            let client = await node.server.fetchDeviceByTypeAndId("client", deviceId);
+            let selectedFromList = null;
+            try {
+                const clients = await node.server.fetchDevices("client");
+                const selectedKeys = new Set([
+                    scoped.resourceId,
+                    client && client.id,
+                    client && client.clientId,
+                    client && client.macAddress,
+                    client && client.mac
+                ].map(normalizeIdentifierKey).filter(Boolean));
+                selectedFromList = Array.isArray(clients)
+                    ? clients.find((candidate) => {
+                        const candidateScoped = resolveScopedIdentifiers("client", "", candidate);
+                        if (scoped.siteId && candidateScoped.siteId && scoped.siteId !== candidateScoped.siteId) {
+                            return false;
+                        }
+                        return [
+                            candidateScoped.resourceId,
+                            candidate && candidate.id,
+                            candidate && candidate.clientId,
+                            candidate && candidate.macAddress,
+                            candidate && candidate.mac
+                        ].some((value) => selectedKeys.has(normalizeIdentifierKey(value)));
+                    }) || null
+                    : null;
+            } catch (error) {
+                selectedFromList = null;
+            }
+
+            client = {
+                ...(client && typeof client === "object" && !Array.isArray(client) ? client : {}),
+                ...(selectedFromList && typeof selectedFromList === "object" && !Array.isArray(selectedFromList) ? selectedFromList : {})
+            };
+            node.currentDevice = client;
+
+            const online = resolveClientOnlineState(client);
+            const outputMsg = {};
+            outputMsg.payload = online;
+            attachDetails(outputMsg, {
+                client,
+                unifiNetwork: buildBaseMetadata(deviceType, deviceId, capabilityId, {
+                    source: "request",
+                    online
+                })
+            });
+            decorateOutputMessage(outputMsg, outputMsg.payload, `request:${capabilityId}`);
+
+            setNodeStatus({ fill: online ? "green" : "yellow", shape: "dot", text: online ? "online" : "offline" });
+            send(outputMsg);
+        }
+
+        async function countOnlineClients(deviceType, deviceId, capabilityId, send) {
+            if (deviceType !== "site") {
+                throw new Error("Client count is only available for Site resources.");
+            }
+
+            const site = await node.server.fetchDeviceByTypeAndId("site", deviceId);
+            node.currentDevice = site;
+            const scoped = resolveScopedIdentifiers("site", deviceId, site);
+            const clients = await node.server.fetchDevices("client");
+            const siteClients = Array.isArray(clients)
+                ? clients.filter((client) => {
+                    const clientScoped = resolveScopedIdentifiers("client", "", client);
+                    return !scoped.siteId || clientScoped.siteId === scoped.siteId;
+                })
+                : [];
+            const onlineClients = siteClients.filter(resolveClientOnlineState);
+
+            const outputMsg = {};
+            outputMsg.payload = onlineClients.length;
+            attachDetails(outputMsg, {
+                site,
+                clients: siteClients,
+                onlineClients,
+                unifiNetwork: buildBaseMetadata(deviceType, deviceId, capabilityId, {
+                    source: "request",
+                    onlineClientCount: onlineClients.length,
+                    clientCount: siteClients.length
+                })
+            });
+            decorateOutputMessage(outputMsg, outputMsg.payload, `request:${capabilityId}`);
+
+            setNodeStatus({ fill: "green", shape: "dot", text: `${onlineClients.length} online` });
+            send(outputMsg);
+        }
+
+        async function fetchDeviceSimpleStatistic(deviceType, deviceId, capabilityId, capabilityConfig, send) {
+            if (deviceType !== "device") {
+                throw new Error("Device statistics are only available for UniFi Device resources.");
+            }
+
+            const selectedDevice = await node.server.fetchDeviceByTypeAndId("device", deviceId);
+            node.currentDevice = selectedDevice;
+            const { request, response, responseData } = await executeConfiguredCapabilityRequest(deviceType, deviceId, capabilityId, capabilityConfig);
+            const statistics = responseData && typeof responseData === "object" && !Array.isArray(responseData)
+                ? responseData
+                : {};
+            const metricMap = {
+                readDeviceCpu: {
+                    key: "cpuUtilizationPct",
+                    label: "CPU",
+                    unit: "%"
+                },
+                readDeviceMemory: {
+                    key: "memoryUtilizationPct",
+                    label: "Memory",
+                    unit: "%"
+                },
+                readDeviceUptime: {
+                    key: "uptimeSec",
+                    label: "Uptime",
+                    unit: "s"
+                }
+            };
+            const metric = metricMap[capabilityId];
+            const value = Number(statistics[metric.key]);
+            const payloadValue = Number.isFinite(value) ? value : null;
+
+            const outputMsg = {};
+            outputMsg.payload = payloadValue;
+            attachDetails(outputMsg, {
+                device: selectedDevice,
+                statistics,
+                response: {
+                    statusCode: response.statusCode,
+                    headers: response.headers,
+                    method: request.method,
+                    path: request.path
+                },
+                unifiNetwork: buildBaseMetadata(deviceType, deviceId, capabilityId, {
+                    source: "request",
+                    method: request.method,
+                    path: request.path,
+                    value: payloadValue
+                })
+            });
+            decorateOutputMessage(outputMsg, outputMsg.payload, `request:${capabilityId}`);
+
+            const statusText = payloadValue === null
+                ? `${metric.label} n/a`
+                : `${metric.label} ${payloadValue}${metric.unit}`;
+            setNodeStatus({ fill: payloadValue === null ? "yellow" : "green", shape: "dot", text: statusText });
+            send(outputMsg);
+        }
+
+        async function createGuestVoucher(deviceType, deviceId, capabilityId, capabilityConfig, send) {
+            if (deviceType !== "site") {
+                throw new Error("Guest vouchers are only available for Site resources.");
+            }
+
+            const site = await node.server.fetchDeviceByTypeAndId("site", deviceId);
+            node.currentDevice = site;
+            const { request, response, responseData } = await executeConfiguredCapabilityRequest(deviceType, deviceId, capabilityId, capabilityConfig);
+            const vouchers = Array.isArray(responseData && responseData.vouchers)
+                ? responseData.vouchers
+                : Array.isArray(responseData)
+                    ? responseData
+                    : [];
+            const codes = vouchers
+                .map((voucher) => getFirstNonEmptyString([
+                    voucher && voucher.code,
+                    voucher && voucher.voucherCode,
+                    voucher && voucher.id
+                ]))
+                .filter(Boolean);
+
+            const outputMsg = {};
+            outputMsg.payload = codes.length <= 1 ? (codes[0] || null) : codes;
+            attachDetails(outputMsg, {
+                site,
+                vouchers,
+                voucherCodes: codes,
+                response: {
+                    statusCode: response.statusCode,
+                    headers: response.headers,
+                    method: request.method,
+                    path: request.path
+                },
+                unifiNetwork: buildBaseMetadata(deviceType, deviceId, capabilityId, {
+                    source: "request",
+                    method: request.method,
+                    path: request.path,
+                    voucherCount: vouchers.length
+                })
+            });
+            decorateOutputMessage(outputMsg, outputMsg.payload, `request:${capabilityId}`);
+
+            setNodeStatus({ fill: vouchers.length > 0 ? "green" : "yellow", shape: "dot", text: `${vouchers.length} voucher` });
+            send(outputMsg);
+        }
+
+        async function invokeCapability(send, triggerSource) {
             if (!node.server) {
                 throw new Error("Unifi Network configuration is missing.");
             }
@@ -601,31 +957,38 @@ module.exports = function(RED) {
                     deviceId,
                     capabilityId,
                     send,
-                    capability.mode === "fetch" ? "fetch" : "manual-refresh"
+                    triggerSource || (capability.mode === "fetch" ? "fetch" : "manual-refresh")
                 );
                 return;
             }
 
-            const execution = composeCapabilityExecution(deviceType, capabilityId, capabilityConfig);
-            const request = buildCapabilityRequest(deviceType, capabilityId, deviceId, execution.params, node.currentDevice);
-
-            setNodeStatus({ fill: "blue", shape: "dot", text: `${capability.label}` });
-
-            const response = await node.server.executeNetworkRequest({
-                path: request.path,
-                method: request.method,
-                query: execution.query,
-                headers: execution.headers,
-                payload: execution.payload,
-                timeout: node.timeout
-            });
-
-            if (response.statusCode < 200 || response.statusCode >= 300) {
-                setNodeStatus({ fill: "yellow", shape: "ring", text: `${response.statusCode}` });
-                throw new Error(`UniFi Network request failed with status ${response.statusCode}`);
+            if (capabilityId === "readSwitchTemperatures") {
+                await fetchDeviceTemperatures(deviceType, deviceId, capabilityId, send);
+                return;
             }
 
-            const responseData = extractNetworkData(response.payload);
+            if (capabilityId === "isClientOnline") {
+                await fetchClientOnlineState(deviceType, deviceId, capabilityId, send);
+                return;
+            }
+
+            if (capabilityId === "countOnlineClients") {
+                await countOnlineClients(deviceType, deviceId, capabilityId, send);
+                return;
+            }
+
+            if (capabilityId === "readDeviceCpu" || capabilityId === "readDeviceMemory" || capabilityId === "readDeviceUptime") {
+                await fetchDeviceSimpleStatistic(deviceType, deviceId, capabilityId, capabilityConfig, send);
+                return;
+            }
+
+            if (capabilityId === "createGuestVoucher") {
+                await createGuestVoucher(deviceType, deviceId, capabilityId, capabilityConfig, send);
+                return;
+            }
+
+            setNodeStatus({ fill: "blue", shape: "dot", text: `${capability.label}` });
+            const { request, response, responseData } = await executeConfiguredCapabilityRequest(deviceType, deviceId, capabilityId, capabilityConfig);
             if (responseData && typeof responseData === "object" && !Array.isArray(responseData)) {
                 node.currentDevice = responseData;
             }
@@ -663,6 +1026,15 @@ module.exports = function(RED) {
         function configuredCapabilityOpensEventStream() {
             const capability = resolveConfiguredCapabilityDefinition();
             return Boolean(capability && capability.opensEventStream === true);
+        }
+
+        function configuredCapabilitySupportsAutoEmit() {
+            const capability = resolveConfiguredCapabilityDefinition();
+            return Boolean(
+                capability
+                && capability.opensEventStream !== true
+                && String(capability.method || "").trim().toUpperCase() !== "POST"
+            );
         }
 
         function isUnofficialNetworkStreamCapabilitySelected() {
@@ -717,13 +1089,58 @@ module.exports = function(RED) {
             refreshUnofficialPollingFallback();
         }
 
+        function stopAutoEmitTimer() {
+            if (node.autoEmitTimer) {
+                clearInterval(node.autoEmitTimer);
+                node.autoEmitTimer = null;
+            }
+            node.autoEmitInFlight = false;
+        }
+
+        function shouldStartAutoEmitTimer() {
+            return Boolean(
+                node.server
+                && node.autoEmit
+                && node.deviceType
+                && node.deviceId
+                && configuredCapabilitySupportsAutoEmit()
+            );
+        }
+
+        function runAutoEmit() {
+            if (node.autoEmitInFlight || !shouldStartAutoEmitTimer()) {
+                return;
+            }
+
+            node.autoEmitInFlight = true;
+            invokeCapability(node.send.bind(node), "interval")
+                .catch((error) => {
+                    setNodeStatus({ fill: "red", shape: "ring", text: "auto error" });
+                    node.error(error);
+                })
+                .finally(() => {
+                    node.autoEmitInFlight = false;
+                });
+        }
+
+        function startAutoEmitTimer() {
+            stopAutoEmitTimer();
+            if (!shouldStartAutoEmitTimer()) {
+                return;
+            }
+
+            const intervalMs = node.autoEmitIntervalSeconds * 1000;
+            node.autoEmitTimer = setInterval(runAutoEmit, intervalMs);
+            setNodeStatus({ fill: "grey", shape: "ring", text: `every ${node.autoEmitIntervalSeconds}s` });
+        }
+
         node.on("input", async function(_msg, send, done) {
             send = send || function() {
                 node.send.apply(node, arguments);
             };
 
             try {
-                await invokeCapability(send);
+                await invokeCapability(send, "manual-refresh");
                 if (typeof done === "function") {
                     done();
                 }
@@ -865,6 +1282,8 @@ module.exports = function(RED) {
             startAutoReceive();
         } else if (configuredCapabilityOpensEventStream() && (!node.deviceType || !node.deviceId)) {
             setNodeStatus({ fill: "grey", shape: "ring", text: "set device" });
+        } else if (shouldStartAutoEmitTimer()) {
+            startAutoEmitTimer();
         } else {
             setNodeStatus({ fill: "grey", shape: "ring", text: "ready" });
         }
@@ -872,6 +1291,7 @@ module.exports = function(RED) {
         node.on("close", function(done) {
             try {
                 node.isObserving = false;
+                stopAutoEmitTimer();
                 if (node.server && typeof node.server.removeClient === "function") {
                     node.server.removeClient(node);
                 }

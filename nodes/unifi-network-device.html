@@ -1,4 +1,5 @@
-<link rel="stylesheet" type="text/css" href="resources/node-red-contrib-unifi-ultimate/editor/unifi-ultimate-editor-common.css">
+<link rel="stylesheet" type="text/css"
+    href="resources/node-red-contrib-unifi-ultimate/editor/unifi-ultimate-editor-common.css">
 
 
 <script type="text/javascript">
@@ -14,7 +15,8 @@
             inputs: { value: 1 },
             capability: { value: "observe", required: true },
             capabilityConfig: { value: "{}" },
-            timeout: { value: 15000, required: true, validate: RED.validators.number() }
+            autoEmit: { value: false },
+            autoEmitInterval: { value: 60, validate: RED.validators.number() }
         },
         inputs: 1,
         outputs: 1,
@@ -27,8 +29,11 @@
         oneditsave: function () {
             const selectedCapabilityOpensStream = $("#node-input-capability option:selected").data("opens-stream") === true
                 || $("#node-input-capability option:selected").attr("data-opens-stream") === "true";
+            const selectedCapabilityMethod = String($("#node-input-capability option:selected").data("method") || $("#node-input-capability option:selected").attr("data-method") || "").trim().toUpperCase();
+            const supportsPeriodicEmit = !selectedCapabilityOpensStream && selectedCapabilityMethod !== "POST";
             // Hide the input pin only when the selected action starts an event stream.
             this.inputs = selectedCapabilityOpensStream ? 0 : 1;
+            this.autoEmit = supportsPeriodicEmit ? $("#node-input-autoEmit").is(":checked") : false;
 
             const $capabilityConfig = $("#node-input-capabilityConfig");
             const capabilityConfig = {};
@@ -84,6 +89,10 @@
             const $capabilityConfig = $("#node-input-capabilityConfig");
             const $capabilityConfigRow = $("#node-row-capabilityConfig");
             const $capabilityConfigContainer = $("#node-input-capabilityConfigContainer");
+            const $autoEmit = $("#node-input-autoEmit");
+            const $autoEmitInterval = $("#node-input-autoEmitInterval");
+            const $autoEmitRow = $("#node-row-autoEmit");
+            const $autoEmitIntervalRow = $("#node-row-autoEmitInterval");
             const $refresh = $("#node-input-refreshDevices");
             const $deviceTypeRow = $deviceType.closest(".form-row");
             const $deviceIdRow = $deviceId.closest(".form-row");
@@ -94,6 +103,7 @@
             let capabilityOptionsRequestId = 0;
             let suspendChangeHandling = false;
             let isInitializingEditor = true;
+            let restoredPersistedAutoEmit = false;
             let deviceTypeDefinitions = [];
             let capabilityDefinitions = [];
             let clientTargetsLoading = false;
@@ -110,12 +120,29 @@
                 const hasDevice = hasSelection($deviceId);
                 const hasCapability = hasSelection($capability);
                 const hasCapabilityFields = $capabilityConfigRow.data("has-fields") === true;
+                const capabilityDefinition = getSelectedCapabilityDefinition();
+                const supportsPeriodicEmit = capabilityDefinition
+                    && capabilityDefinition.opensEventStream !== true
+                    && String(capabilityDefinition.method || "").trim().toUpperCase() !== "POST";
+                const showPeriodicEmit = Boolean(hasServer && hasDeviceType && hasDevice && hasCapability && supportsPeriodicEmit);
 
                 $deviceTypeRow.toggle(hasServer);
                 $deviceIdRow.toggle(hasServer && hasDeviceType);
                 $capabilityRow.toggle(hasServer && hasDeviceType && hasDevice);
                 $capabilityConfigRow.toggle(hasServer && hasDeviceType && hasDevice && hasCapability && hasCapabilityFields);
                 $advancedRow.toggle(hasServer && hasDeviceType && hasDevice && hasCapability);
+                $autoEmitRow.toggle(showPeriodicEmit);
+                $autoEmitIntervalRow.toggle(showPeriodicEmit && $autoEmit.is(":checked"));
+
+                if (showPeriodicEmit && !restoredPersistedAutoEmit) {
+                    $autoEmit.prop("checked", node.autoEmit === true || node.autoEmit === "true");
+                    restoredPersistedAutoEmit = true;
+                    $autoEmitIntervalRow.toggle($autoEmit.is(":checked"));
+                }
+
+                if (!showPeriodicEmit && !isInitializingEditor) {
+                    $autoEmit.prop("checked", false);
+                }
             }
 
             function parseCapabilityConfig(rawValue) {
@@ -521,8 +548,32 @@
                     return "Loading clients from " + normalizedDeviceName + ".";
                 }
 
+                if (normalizedLabel === "Count Online Clients") {
+                    return "Counting online clients in " + normalizedDeviceName + ".";
+                }
+
+                if (normalizedLabel === "Create Guest Voucher") {
+                    return "Creating a guest voucher for " + normalizedDeviceName + ".";
+                }
+
                 if (normalizedLabel === "Read Application Info") {
                     return "Reading UniFi Network application information.";
+                }
+
+                if (normalizedLabel === "Read Temperatures") {
+                    return "Reading switch temperature sensors from " + normalizedDeviceName + ".";
+                }
+
+                if (normalizedLabel === "Read CPU") {
+                    return "Reading CPU usage from " + normalizedDeviceName + ".";
+                }
+
+                if (normalizedLabel === "Read Memory") {
+                    return "Reading memory usage from " + normalizedDeviceName + ".";
+                }
+
+                if (normalizedLabel === "Read Uptime") {
+                    return "Reading uptime from " + normalizedDeviceName + ".";
                 }
 
                 if (normalizedLabel === "Restart Device") {
@@ -535,6 +586,10 @@
 
                 if (normalizedLabel === "Authorize Guest Access") {
                     return "Authorizing guest access for " + normalizedDeviceName + ".";
+                }
+
+                if (normalizedLabel === "Is Client Online") {
+                    return "Checking whether " + normalizedDeviceName + " is online.";
                 }
 
                 if (normalizedLabel === "Revoke Guest Access") {
@@ -630,6 +685,7 @@
                             $("<option></option>")
                                 .val(item.id)
                                 .attr("data-mode", String(item.mode || "").trim())
+                                .attr("data-method", String(item.method || "").trim())
                                 .attr("data-opens-stream", item.opensEventStream === true ? "true" : "false")
                                 .text(item.label)
                         );
@@ -1132,6 +1188,9 @@
                 writeCapabilityConfig();
                 refreshAfterCapabilityChange();
             });
+            $autoEmit.on("change", function () {
+                syncProgressiveRows();
+            });
             $refresh.on("click", function (event) {
                 event.preventDefault();
                 refreshAfterServerChange();
@@ -1185,9 +1244,15 @@
             <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
             <input type="text" id="node-input-name" placeholder="Node name">
         </div>
-        <div class="form-row">
-            <label for="node-input-timeout"><i class="fa fa-clock-o"></i> Timeout</label>
-            <input type="text" id="node-input-timeout" placeholder="15000">
+        <div class="form-row" id="node-row-autoEmit">
+            <label for="node-input-autoEmit"><i class="fa fa-repeat"></i> Repeat</label>
+            <input type="checkbox" id="node-input-autoEmit" style="display:inline-block; width:auto; vertical-align:top;">
+            <span style="margin-left:8px;">Emit periodically</span>
+        </div>
+        <div class="form-row" id="node-row-autoEmitInterval">
+            <label for="node-input-autoEmitInterval"><i class="fa fa-clock-o"></i> Every</label>
+            <input type="number" id="node-input-autoEmitInterval" min="5" step="1" placeholder="60" style="width:120px;">
+            <span style="margin-left:8px;">seconds</span>
         </div>
     </div>
 </script>
@@ -1202,11 +1267,18 @@
     <p><b>Resource</b> chooses what you want to work with: Site, UniFi Device, or Client.</p>
     <p><b>Item</b> chooses the specific site, device, or client. Device and client selectors are searchable and open with the complete list before filtering.</p>
     <p><b>Action</b> only shows actions supported by the selected resource. Additional fields appear only when the selected action needs extra input.</p>
-    <p>Action highlights include <code>Read Application Info</code>, <code>Authorize Guest Access</code>, <code>Revoke Guest Access</code>, <code>Restart Device</code>, and <code>Power Cycle Port</code>.</p>
+    <p>Action highlights include <code>Count Online Clients</code>, <code>Create Guest Voucher</code>, <code>Read CPU</code>, <code>Read Memory</code>, <code>Read Uptime</code>, <code>Read Temperatures</code>, <code>Is Client Online</code>, <code>Restart Device</code>, and <code>Power Cycle Port</code>.</p>
     <p><code>Read Application Info</code> is available on the <code>Site</code> resource type and returns Network application metadata.</p>
+    <p><code>Count Online Clients</code> emits the number of online clients as <code>msg.payload</code>. Full client details are available in <code>msg.details.clients</code> and <code>msg.details.onlineClients</code>.</p>
+    <p><code>Create Guest Voucher</code> emits the voucher code as <code>msg.payload</code> when one voucher is created, or an array of codes when more than one is created. Full voucher details are available in <code>msg.details.vouchers</code>.</p>
+    <p><code>Read CPU</code>, <code>Read Memory</code>, and <code>Read Uptime</code> emit a single number as <code>msg.payload</code>. Full statistics are available in <code>msg.details.statistics</code>.</p>
+    <p><code>Read Temperatures</code> is available on <code>UniFi Device</code> resources. It emits the temperature in Celsius as <code>msg.payload</code> when the selected switch/controller exposes thermal sensor data. More details are available in <code>msg.details.temperature</code>. Some UniFi models do not report temperatures.</p>
+    <p><code>Is Client Online</code> emits <code>true</code> or <code>false</code> as <code>msg.payload</code>. Full client details are available in <code>msg.details.client</code>.</p>
     <p><code>Receive Events (Unofficial Stream)</code> uses a non-official websocket endpoint and is marked experimental. The websocket is opened once by the shared Network config node and events are fanned out to subscribed runtime nodes. In this mode, only <code>All</code> is available and the node emits all received Network events because fine-grained filtering is not currently available.</p>
     <p>When selecting a switch port, the port list shows connected clients or downstream UniFi devices when the controller exposes that information.</p>
-    <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different item from the list. <b>Timeout</b> controls the request timeout in milliseconds for API calls.</p>
+    <p><b>Emit periodically</b> repeats read-only actions at the selected interval and sends each result to the flow. It is hidden for event streams and write actions such as restart, PoE power-cycle, guest authorization, and voucher creation.</p>
+    <p>Request timeout is handled automatically by the node.</p>
+    <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different item from the list.</p>
 
     <h3>Input</h3>
     <ul>

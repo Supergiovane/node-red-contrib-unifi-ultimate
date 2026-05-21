@@ -5,6 +5,7 @@ const {
     resolveScopedIdentifiers
 } = require("./utils/unifi-network-device-registry");
 const { extractNetworkData } = require("./utils/unifi-network-utils");
+const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
 
 function normalizeString(value) {
     return String(value || "").trim();
@@ -248,7 +249,7 @@ module.exports = function(RED) {
         node.deviceName = resolveDeviceName(config.deviceName);
         node.portIdx = config.portIdx;
         node.action = config.action || "msgPayload";
-        node.timeout = Number(config.timeout) > 0 ? Number(config.timeout) : 15000;
+        node.timeout = DEFAULT_REQUEST_TIMEOUT_MS;
         node.isPowerObserving = false;
         node.lastObservedPowerW = undefined;
         node.hasObservedPower = false;

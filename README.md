@@ -72,6 +72,10 @@ Use Network nodes to work with:
 Common uses:
 
 - Check whether a client is online.
+- Count online clients for a site.
+- Create simple guest vouchers.
+- Read CPU, memory, and uptime from UniFi devices.
+- Read Temperatures when the selected UniFi device exposes thermal sensor data.
 - Restart a UniFi device.
 - Power-cycle a PoE port.
 - Turn PoE on or off for a selected switch port.
@@ -81,6 +85,7 @@ Editor conveniences:
 
 - Device and client fields are searchable.
 - Port lists show port status and connected clients when UniFi exposes that information.
+- Read-only actions can emit periodically to simulate a simple polling stream.
 - Selecting an item updates the node `Name` automatically.
 
 <br/>
@@ -183,6 +188,31 @@ When `msg.payload` is an object, it also includes `payload.deviceName` with the 
   }
 }
 ```
+
+`Unifi Network Device` action `Read Temperatures` returns:
+
+| Field                              | Type   | Guaranteed | Notes                                                       |
+| ---------------------------------- | ------ | ---------- | ----------------------------------------------------------- |
+| `msg.payload`                      | number | no         | First normalized temperature reading in Celsius.            |
+| `msg.details.temperature`          | object | yes        | Full normalized temperature details and all readings found. |
+| `msg.details.temperatureSources[]` | array  | yes        | Sources used, for example `official` and/or `legacy`.       |
+
+Some switch models and controller versions do not expose temperature data; in that case the action emits `msg.payload = null` and details include `hasTemperatures: false`.
+
+Other simple `Unifi Network Device` actions return compact payloads:
+
+| Action                 | `msg.payload`                   | Details                       |
+| ---------------------- | ------------------------------- | ----------------------------- |
+| `Is Client Online`     | `true` or `false`               | `msg.details.client`          |
+| `Count Online Clients` | online client count             | `msg.details.onlineClients[]` |
+| `Read CPU`             | CPU percentage                  | `msg.details.statistics`      |
+| `Read Memory`          | memory percentage               | `msg.details.statistics`      |
+| `Read Uptime`          | uptime in seconds               | `msg.details.statistics`      |
+| `Create Guest Voucher` | one voucher code, or code array | `msg.details.vouchers[]`      |
+
+For read-only actions on Network, Protect, and Access device nodes, enable `Emit periodically` to send the configured result at a fixed interval without using an Inject node. This option is hidden for event streams and write actions.
+
+Request timeouts are handled internally. Existing nodes do not need timeout settings, and Network PoE power polling uses a 15 second default when the shared config value is left empty.
 
 ### Unifi Network Presence
 
@@ -294,13 +324,13 @@ Power fields for `Unifi Network Control POE`:
 
 Import from `examples/`:
 
-| Flow file                                                                                    | What it demonstrates                           |
-| -------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| [examples/unifi-protect-info.json](examples/unifi-protect-info.json)                         | Read Protect camera state                      |
+| Flow file                                                                                    | What it demonstrates                            |
+| -------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| [examples/unifi-protect-info.json](examples/unifi-protect-info.json)                         | Read Protect camera state                       |
 | [examples/unifi-protect-sensor-observe.json](examples/unifi-protect-sensor-observe.json)     | Receive sensor observables (boolean or numeric) |
-| [examples/unifi-protect-camera-actions.json](examples/unifi-protect-camera-actions.json)     | Snapshot, PTZ presets, and doorbell messages   |
-| [examples/unifi-access-door-control.json](examples/unifi-access-door-control.json)           | Door state, unlock, and temporary lock rule    |
-| [examples/unifi-access-intercom-doorbell.json](examples/unifi-access-intercom-doorbell.json) | Intercom observe, trigger, and cancel doorbell |
+| [examples/unifi-protect-camera-actions.json](examples/unifi-protect-camera-actions.json)     | Snapshot, PTZ presets, and doorbell messages    |
+| [examples/unifi-access-door-control.json](examples/unifi-access-door-control.json)           | Door state, unlock, and temporary lock rule     |
+| [examples/unifi-access-intercom-doorbell.json](examples/unifi-access-intercom-doorbell.json) | Intercom observe, trigger, and cancel doorbell  |
 
 ## Notes
 

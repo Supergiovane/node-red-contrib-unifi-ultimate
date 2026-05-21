@@ -12,8 +12,7 @@
             deviceName: { value: "" },
             pollInterval: { value: 10, required: true, validate: RED.validators.number() },
             onlineHysteresis: { value: 15, required: true, validate: RED.validators.number() },
-            offlineHysteresis: { value: 30, required: true, validate: RED.validators.number() },
-            timeout: { value: 8000, required: true, validate: RED.validators.number() }
+            offlineHysteresis: { value: 30, required: true, validate: RED.validators.number() }
         },
         inputs: 0,
         outputs: 1,
@@ -513,10 +512,6 @@
             <label for="node-input-offlineHysteresis"><i class="fa fa-hourglass-half"></i> Hysteresis (s)</label>
             <input type="text" id="node-input-offlineHysteresis" placeholder="30">
         </div>
-        <div class="form-row">
-            <label for="node-input-timeout"><i class="fa fa-clock-o"></i> Timeout</label>
-            <input type="text" id="node-input-timeout" placeholder="8000">
-        </div>
         <input type="hidden" id="node-input-deviceName">
     </div>
 </script>
@@ -532,8 +527,8 @@
     <p><b>Poll (s)</b> sets this node cadence for presence checks. Scheduling and fetch execution are handled by the shared Network config node.</p>
     <p><b>Connect Hysteresis (s)</b> delays the <code>true</code> output so brief reconnects do not flap.</p>
     <p><b>Hysteresis (s)</b> delays the <code>false</code> output to avoid flapping when the client disconnects briefly.</p>
+    <p>Request timeout is handled automatically by the node.</p>
     <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different client from the list.</p>
-    <p><b>Timeout</b> is the HTTP timeout for each check.</p>
 
     <h3>Input</h3>
     <ul>

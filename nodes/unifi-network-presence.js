@@ -1,6 +1,7 @@
 "use strict";
 
 const { decodeScopedDeviceId } = require("./utils/unifi-network-device-registry");
+const DEFAULT_REQUEST_TIMEOUT_MS = 8000;
 
 function parsePositiveSeconds(value, fallbackValue) {
     const numeric = Number(value);
@@ -87,7 +88,7 @@ module.exports = function(RED) {
         node.pollIntervalSeconds = parsePositiveSeconds(config.pollInterval, 10);
         node.onlineHysteresisSeconds = parseNonNegativeSeconds(config.onlineHysteresis, 15);
         node.offlineHysteresisSeconds = parseNonNegativeSeconds(config.offlineHysteresis, 30);
-        node.timeout = Number(config.timeout) > 0 ? Number(config.timeout) : 8000;
+        node.timeout = DEFAULT_REQUEST_TIMEOUT_MS;
         node.deviceName = resolveDeviceName(config.deviceName);
 
         node.isObserving = false;

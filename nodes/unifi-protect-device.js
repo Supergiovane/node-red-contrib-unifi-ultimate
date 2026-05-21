@@ -8,6 +8,7 @@ const {
     resolveObservableState,
     resolveObservableEventValue
 } = require("./utils/unifi-protect-device-registry");
+const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
 
 function resolveDeviceType(configuredDeviceType) {
     return String(configuredDeviceType || "").trim();
@@ -42,6 +43,18 @@ function parseCapabilityConfig(value) {
 
 function resolveCapabilityConfig(configuredCapabilityConfig) {
     return parseCapabilityConfig(configuredCapabilityConfig);
+}
+
+function parseBoolean(value) {
+    return value === true || value === "true" || value === 1 || value === "1";
+}
+
+function parseIntervalSeconds(value, fallback) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric < 5) {
+        return fallback;
+    }
+    return Math.trunc(numeric);
 }
 
 function buildNodeStatus(deviceType, payload) {
@@ -154,8 +167,12 @@ module.exports = function(RED) {
         node.deviceId = config.deviceId || "";
         node.capability = config.capability || "observe";
         node.capabilityConfig = config.capabilityConfig || "{}";
+        node.autoEmit = parseBoolean(config.autoEmit);
+        node.autoEmitIntervalSeconds = parseIntervalSeconds(config.autoEmitInterval, 60);
+        node.autoEmitTimer = null;
+        node.autoEmitInFlight = false;
         node.deviceName = resolveDeviceName(config.deviceName);
-        node.timeout = Number(config.timeout) > 0 ? Number(config.timeout) : 15000;
+        node.timeout = DEFAULT_REQUEST_TIMEOUT_MS;
         node.currentDevice = null;
         node.currentObservableValue = undefined;
         node.isObserving = false;
@@ -273,7 +290,7 @@ module.exports = function(RED) {
             sendOutputs(send, stateMsg, null);
         }
 
-        async function invokeCapability(send) {
+        async function invokeCapability(send, triggerSource) {
             if (!node.server) {
                 throw new Error("Unifi Protect configuration is missing.");
             }
@@ -303,7 +320,7 @@ module.exports = function(RED) {
 
             if (capability.mode === "observe") {
                 // Manual input on an observe node acts like a forced refresh.
-                await fetchDeviceState(deviceType, deviceId, capabilityConfig, send, "manual-refresh");
+                await fetchDeviceState(deviceType, deviceId, capabilityConfig, send, triggerSource || "manual-refresh");
                 return;
             }
 
@@ -369,6 +386,16 @@ module.exports = function(RED) {
             return resolveCapabilityId(node.capability) === "observe";
         }
 
+        function configuredCapabilitySupportsAutoEmit() {
+            const capability = resolveConfiguredCapabilityDefinition();
+            if (!capability || capability.opensEventStream === true) {
+                return false;
+            }
+
+            const method = String(capability.method || "").trim().toUpperCase();
+            return !method || method === "GET";
+        }
+
         function shouldObserveConfiguredDevice() {
             return node.server && configuredCapabilityOpensEventStream() && node.deviceType && node.deviceId;
         }
@@ -392,13 +419,57 @@ module.exports = function(RED) {
             });
         }
 
+        function stopAutoEmitTimer() {
+            if (node.autoEmitTimer) {
+                clearInterval(node.autoEmitTimer);
+                node.autoEmitTimer = null;
+            }
+            node.autoEmitInFlight = false;
+        }
+
+        function shouldStartAutoEmitTimer() {
+            return Boolean(
+                node.server
+                && node.autoEmit
+                && node.deviceType
+                && node.deviceId
+                && configuredCapabilitySupportsAutoEmit()
+            );
+        }
+
+        function runAutoEmit() {
+            if (node.autoEmitInFlight || !shouldStartAutoEmitTimer()) {
+                return;
+            }
+
+            node.autoEmitInFlight = true;
+            invokeCapability(node.send.bind(node), "interval")
+                .catch((error) => {
+                    setNodeStatus({ fill: "red", shape: "ring", text: "auto error" });
+                    node.error(error);
+                })
+                .finally(() => {
+                    node.autoEmitInFlight = false;
+                });
+        }
+
+        function startAutoEmitTimer() {
+            stopAutoEmitTimer();
+            if (!shouldStartAutoEmitTimer()) {
+                return;
+            }
+
+            node.autoEmitTimer = setInterval(runAutoEmit, node.autoEmitIntervalSeconds * 1000);
+            setNodeStatus({ fill: "grey", shape: "ring", text: `every ${node.autoEmitIntervalSeconds}s` });
+        }
+
         node.on("input", async function(_msg, send, done) {
             send = send || function() {
                 node.send.apply(node, arguments);
             };
 
             try {
-                await invokeCapability(send);
+                await invokeCapability(send, "manual-refresh");
                 if (typeof done === "function") {
                     done();
                 }
@@ -543,10 +614,12 @@ module.exports = function(RED) {
             setNodeStatus({ fill: "yellow", shape: "ring", text: "select device" });
         } else {
             startObservation();
+            startAutoEmitTimer();
         }
 
         node.on("close", function(done) {
             try {
+                stopAutoEmitTimer();
                 if (node.server && typeof node.server.removeClient === "function") {
                     node.server.removeClient(node);
                 }

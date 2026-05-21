@@ -17,7 +17,8 @@
             return this.name || this.host || "Unifi Protect Config";
         },
         oneditprepare: function () {
-            const $host = $("#node-config-input-host");
+            const node = this;
+            const $hostInput = $("#node-config-input-host");
             const $apiKey = $("#node-config-input-apiKey");
             const $rejectUnauthorized = $("#node-config-input-rejectUnauthorized");
             const $apiKeyRow = $apiKey.closest(".form-row");
@@ -25,7 +26,7 @@
             const $advancedRow = $("#node-config-row-advanced");
 
             function syncProgressiveRows() {
-                const hasHost = String($host.val() || "").trim() !== "";
+                const hasHost = String($hostInput.val() || node.host || "").trim() !== "";
                 $apiKeyRow.toggle(hasHost);
                 $securityRow.toggle(hasHost);
                 $advancedRow.toggle(hasHost);
@@ -40,7 +41,7 @@
 
             syncProgressiveRows();
 
-            $host.on("change input", function () {
+            $hostInput.on("change input", function () {
                 syncProgressiveRows();
             });
 

@@ -13,8 +13,7 @@
             deviceId: { value: "", required: true },
             deviceName: { value: "" },
             portIdx: { value: 1, required: true, validate: RED.validators.number() },
-            action: { value: "msgPayload", required: true },
-            timeout: { value: 15000, required: true, validate: RED.validators.number() }
+            action: { value: "msgPayload", required: true }
         },
         inputs: 1,
         outputs: 1,
@@ -1095,10 +1094,6 @@
             <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
             <input type="text" id="node-input-name" placeholder="Node name">
         </div>
-        <div class="form-row">
-            <label for="node-input-timeout"><i class="fa fa-clock-o"></i> Timeout</label>
-            <input type="text" id="node-input-timeout" placeholder="15000">
-        </div>
         <input type="hidden" id="node-input-deviceName">
     </div>
 </script>
@@ -1116,8 +1111,8 @@
     <p><b>Port</b> selects the physical port index. Port labels include connected clients or downstream UniFi devices when available.</p>
     <p><b>Action</b> executes the configured PoE operation. <code>POE controlled by msg.payload</code> maps incoming payloads to PoE mode (<code>true</code> enables PoE, <code>false</code> disables PoE). Enable and Disable update the UniFi port override (<code>poe_mode</code> auto/off). Power Cycle uses the official Network port action. <code>Emit Power Consumption</code> emits power values from the shared observer in the config node.</p>
     <p><b>Power poll interval</b> for emit action is configured globally in <code>Unifi Network Config</code>. This node does not run its own timer.</p>
+    <p>Request timeout is handled automatically by the node.</p>
     <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different switch or client target.</p>
-    <p><b>Timeout</b> controls the request timeout in milliseconds.</p>
 
     <h3>Input</h3>
     <ul>

@@ -1422,6 +1422,294 @@ module.exports = function(RED) {
             };
         }
 
+        function parseTemperatureNumber(value) {
+            if (typeof value === "number" && Number.isFinite(value)) {
+                return value;
+            }
+            if (typeof value === "string") {
+                const normalized = value.trim().replace(",", ".");
+                if (!normalized) {
+                    return undefined;
+                }
+                const parsed = Number.parseFloat(normalized);
+                if (Number.isFinite(parsed)) {
+                    return parsed;
+                }
+            }
+            return undefined;
+        }
+
+        function normalizeTemperatureCelsius(value, unit) {
+            const parsed = parseTemperatureNumber(value);
+            if (!Number.isFinite(parsed)) {
+                return undefined;
+            }
+
+            const normalizedUnit = normalizeString(unit).toLowerCase();
+            let celsius = parsed;
+            if (["f", "fahrenheit"].includes(normalizedUnit)) {
+                celsius = (parsed - 32) * 5 / 9;
+            } else if (["k", "kelvin"].includes(normalizedUnit)) {
+                celsius = parsed - 273.15;
+            }
+
+            return Math.round(celsius * 10) / 10;
+        }
+
+        function normalizeTemperatureLabel(key, fallbackLabel) {
+            const explicit = normalizeString(fallbackLabel);
+            const raw = explicit || normalizeString(key) || "temperature";
+            const compact = raw
+                .replace(/([a-z])([A-Z])/g, "$1 $2")
+                .replace(/[_-]+/g, " ")
+                .replace(/\b(temp|temperature|celsius|fahrenheit|kelvin)\b/ig, " ")
+                .replace(/\s{2,}/g, " ")
+                .trim();
+
+            if (!compact) {
+                return "Temperature";
+            }
+
+            return compact
+                .split(" ")
+                .map((part) => {
+                    const upper = part.toUpperCase();
+                    if (["CPU", "PHY", "SFP", "PSU", "PCB"].includes(upper)) {
+                        return upper;
+                    }
+                    return part.charAt(0).toUpperCase() + part.slice(1);
+                })
+                .join(" ");
+        }
+
+        function isTemperatureKey(key) {
+            const normalized = normalizeString(key);
+            return /(^|[_\-.])temp(erature)?($|[_\-.])/i.test(normalized)
+                || /Temperature$/.test(normalized)
+                || /^temp(erature)?$/i.test(normalized);
+        }
+
+        function collectTemperatureReadings(source, sourceName) {
+            const readings = [];
+            const seen = new Set();
+
+            function addReading(name, rawValue, unit, key, path) {
+                const valueC = normalizeTemperatureCelsius(rawValue, unit);
+                if (!Number.isFinite(valueC)) {
+                    return;
+                }
+
+                const label = normalizeTemperatureLabel(key, name);
+                const normalizedPath = normalizeString(path || key || label);
+                const dedupeKey = `${sourceName}:${label.toLowerCase()}:${valueC}:${normalizedPath.toLowerCase()}`;
+                if (seen.has(dedupeKey)) {
+                    return;
+                }
+                seen.add(dedupeKey);
+                readings.push({
+                    name: label,
+                    valueC,
+                    unit: "C",
+                    source: sourceName,
+                    key: normalizedPath || undefined
+                });
+            }
+
+            function walk(value, path, depth) {
+                if (!value || typeof value !== "object" || depth > 5) {
+                    return;
+                }
+
+                if (Array.isArray(value)) {
+                    value.forEach((entry, index) => walk(entry, `${path}[${index}]`, depth + 1));
+                    return;
+                }
+
+                const objectName = firstNonEmptyString([
+                    value.name,
+                    value.label,
+                    value.type,
+                    value.sensor,
+                    value.description
+                ]);
+                const objectDescriptor = firstNonEmptyString([
+                    value.type,
+                    value.sensor,
+                    value.category,
+                    value.metric,
+                    value.kind,
+                    objectName
+                ]);
+                const objectUnit = firstNonEmptyString([
+                    value.unit,
+                    value.units,
+                    value.scale
+                ]);
+                if ((objectName && isTemperatureKey(objectName)) || isTemperatureKey(objectDescriptor) || isTemperatureKey(path)) {
+                    [
+                        value.value,
+                        value.current,
+                        value.currentValue,
+                        value.temperature,
+                        value.temp
+                    ].forEach((candidate) => addReading(objectName || objectDescriptor, candidate, objectUnit, objectDescriptor || objectName, path));
+                }
+
+                Object.entries(value).forEach(([key, entryValue]) => {
+                    const entryPath = path ? `${path}.${key}` : key;
+                    const keyLooksLikeTemperature = isTemperatureKey(key);
+                    if (keyLooksLikeTemperature) {
+                        if (entryValue && typeof entryValue === "object") {
+                            const nestedUnit = firstNonEmptyString([
+                                entryValue.unit,
+                                entryValue.units,
+                                entryValue.scale,
+                                objectUnit
+                            ]);
+                            [
+                                entryValue.value,
+                                entryValue.current,
+                                entryValue.currentValue,
+                                entryValue.celsius,
+                                entryValue.c,
+                                entryValue.temperature,
+                                entryValue.temp
+                            ].forEach((candidate) => addReading(objectName || key, candidate, nestedUnit, key, entryPath));
+                        } else {
+                            addReading(objectName || key, entryValue, objectUnit, key, entryPath);
+                        }
+                    }
+
+                    if (entryValue && typeof entryValue === "object") {
+                        walk(entryValue, entryPath, depth + 1);
+                    }
+                });
+            }
+
+            walk(source, "", 0);
+            return readings;
+        }
+
+        function buildSelectedDeviceKeySet(deviceId, device) {
+            const scopedDevice = resolveScopedIdentifiers("device", deviceId, device);
+            const selectedDevice = device && typeof device === "object" && !Array.isArray(device)
+                ? device
+                : {};
+            const selectedDeviceKeys = new Set();
+            [
+                scopedDevice.resourceId,
+                selectedDevice.id,
+                selectedDevice.deviceId,
+                selectedDevice.device_id,
+                selectedDevice._id,
+                selectedDevice.macAddress,
+                selectedDevice.mac,
+                selectedDevice.mac_address,
+                selectedDevice.serial,
+                selectedDevice.serialNumber
+            ].forEach((value) => addIdentifierKeys(selectedDeviceKeys, value));
+            return {
+                scopedDevice,
+                selectedDevice,
+                selectedDeviceKeys
+            };
+        }
+
+        function findMatchingLegacyDevice(legacyDevices, selectedDeviceKeys) {
+            return (Array.isArray(legacyDevices) ? legacyDevices : []).find((legacyDevice) => {
+                return [
+                    legacyDevice && legacyDevice.device_id,
+                    legacyDevice && legacyDevice.id,
+                    legacyDevice && legacyDevice._id,
+                    legacyDevice && legacyDevice.mac,
+                    legacyDevice && legacyDevice.macAddress,
+                    legacyDevice && legacyDevice.serial,
+                    legacyDevice && legacyDevice.serialNumber
+                ].some((value) => {
+                    const rawKey = normalizeString(value).toLowerCase();
+                    const compactKey = normalizeIdentifierKey(value);
+                    return selectedDeviceKeys.has(rawKey) || selectedDeviceKeys.has(compactKey);
+                });
+            }) || null;
+        }
+
+        node.fetchDeviceTemperatures = async (deviceId) => {
+            const device = await node.fetchDeviceByTypeAndId("device", deviceId);
+            const {
+                scopedDevice,
+                selectedDevice,
+                selectedDeviceKeys
+            } = buildSelectedDeviceKeySet(deviceId, device);
+
+            const sources = [];
+            const officialReadings = collectTemperatureReadings(device, "official");
+            if (officialReadings.length > 0) {
+                sources.push("official");
+            }
+
+            let legacyDevice = null;
+            let legacyReadings = [];
+            if (scopedDevice.siteId) {
+                try {
+                    const legacyDevices = await fetchLegacyDevices(scopedDevice.siteId);
+                    legacyDevice = findMatchingLegacyDevice(legacyDevices, selectedDeviceKeys);
+                    legacyReadings = collectTemperatureReadings(legacyDevice, "legacy");
+                    if (legacyReadings.length > 0) {
+                        sources.push("legacy");
+                    }
+                } catch (error) {
+                    legacyDevice = null;
+                    legacyReadings = [];
+                }
+            }
+
+            const dedupe = new Set();
+            const temperatures = officialReadings.concat(legacyReadings).filter((reading) => {
+                const key = `${normalizeString(reading.name).toLowerCase()}:${reading.valueC}`;
+                if (dedupe.has(key)) {
+                    return false;
+                }
+                dedupe.add(key);
+                return true;
+            });
+            const maxTemperatureC = temperatures.reduce((max, reading) => {
+                const value = Number(reading && reading.valueC);
+                if (!Number.isFinite(value)) {
+                    return max;
+                }
+                return Number.isFinite(max) ? Math.max(max, value) : value;
+            }, NaN);
+            const primaryTemperatureC = temperatures.length > 0
+                ? Number(temperatures[0].valueC)
+                : NaN;
+            const deviceName = firstNonEmptyString([
+                selectedDevice.name,
+                selectedDevice.displayName,
+                selectedDevice.hostname,
+                legacyDevice && legacyDevice.name,
+                legacyDevice && legacyDevice.hostname,
+                scopedDevice.resourceId
+            ]);
+
+            return {
+                device: {
+                    ...selectedDevice,
+                    ...(legacyDevice ? { legacyDevice } : {})
+                },
+                sources,
+                payload: {
+                    deviceId,
+                    siteId: scopedDevice.siteId || undefined,
+                    resourceId: scopedDevice.resourceId || undefined,
+                    deviceName: deviceName || undefined,
+                    hasTemperatures: temperatures.length > 0,
+                    temperatureC: Number.isFinite(primaryTemperatureC) ? primaryTemperatureC : undefined,
+                    maxTemperatureC: Number.isFinite(maxTemperatureC) ? maxTemperatureC : undefined,
+                    temperatures
+                }
+            };
+        };
+
         node.fetchDevicePorts = async (deviceId) => {
             const device = await node.fetchDeviceByTypeAndId("device", deviceId);
             const ports = extractDevicePorts(device);
