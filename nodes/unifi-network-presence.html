@@ -15,10 +15,10 @@
             offlineHysteresis: { value: 30, required: true, validate: RED.validators.number() }
         },
         inputs: 0,
-        outputs: 1,
+        outputs: 2,
         icon: "unifi-u-logo-light-network.svg",
         paletteLabel: "Presence Detection",
-        outputLabels: ["presence"],
+        outputLabels: ["presence", "error"],
         label: function () {
             return this.name || "Presence Detection";
         },
@@ -535,18 +535,36 @@
         <li>No input pin in this mode: checks run automatically at startup and then on the configured cadence through the shared config scheduler.</li>
     </ul>
 
-    <h3>Output</h3>
-    <ul>
-        <li>The node emits a new message when the debounced presence state changes.</li>
-        <li><code>msg.payload</code>: <code>true</code> when present, <code>false</code> when absent.</li>
-        <li><code>msg.present</code>: same boolean presence value.</li>
-        <li><code>msg.topic</code>: node name from the editor.</li>
-        <li><code>msg.deviceName</code>: remembered selected client name.</li>
-        <li><code>msg.eventName</code>: reason/source that produced the message.</li>
-        <li><code>msg.details.client</code>: last known client object when available.</li>
-        <li><code>msg.details.unifiNetworkPresence</code>: metadata including site/client ids and hysteresis settings.</li>
-    </ul>
-    <p>Example output:</p>
+    <h3>Outputs</h3>
+    <dl class="message-properties">
+        <dt>Output 1 — presence</dt>
+        <dd>Emitted when the debounced presence state changes.</dd>
+        <dt class="optional">msg.payload</dt>
+        <dd><code>true</code> when the client is present, <code>false</code> when absent.</dd>
+        <dt class="optional">msg.present</dt>
+        <dd>Same boolean presence value as <code>msg.payload</code>.</dd>
+        <dt class="optional">msg.topic</dt>
+        <dd>Node name from the editor.</dd>
+        <dt class="optional">msg.deviceName</dt>
+        <dd>Remembered name of the selected client.</dd>
+        <dt class="optional">msg.eventName</dt>
+        <dd>Reason or source that produced the message.</dd>
+        <dt class="optional">msg.details.client</dt>
+        <dd>Last known client object when available.</dd>
+        <dt class="optional">msg.details.unifiNetworkPresence</dt>
+        <dd>Metadata including site/client ids and hysteresis settings.</dd>
+    </dl>
+    <dl class="message-properties">
+        <dt>Output 2 — error</dt>
+        <dd>Emitted when a presence poll fails (API error, timeout, or configuration problem). The node status also turns red. Errors are additionally forwarded to any connected <code>catch</code> node.</dd>
+        <dt class="optional">msg.payload</dt>
+        <dd><code>null</code></dd>
+        <dt class="optional">msg.topic</dt>
+        <dd>Node name from the editor.</dd>
+        <dt class="optional">msg.error.message</dt>
+        <dd>Human-readable error description.</dd>
+    </dl>
+    <p>Example output (pin 1):</p>
     <pre><code>{
   "topic": "iPhone Massimo Presence",
   "deviceName": "iPhone-Massimo",
@@ -560,5 +578,11 @@
       "reason": "connected"
     }
   }
+}</code></pre>
+    <p>Example output (pin 2 — error):</p>
+    <pre><code>{
+  "topic": "iPhone Massimo Presence",
+  "payload": null,
+  "error": { "message": "Presence polling failed" }
 }</code></pre>
 </script>

@@ -16,10 +16,10 @@
             action: { value: "msgPayload", required: true }
         },
         inputs: 1,
-        outputs: 1,
+        outputs: 2,
         icon: "unifi-u-logo-light-network.svg",
         paletteLabel: "Control POE",
-        outputLabels: ["result"],
+        outputLabels: ["result", "error"],
         label: function () {
             return this.name || "Control POE";
         },
@@ -1122,18 +1122,35 @@
         <li>For all other actions, input message properties are ignored.</li>
     </ul>
 
-    <h3>Output</h3>
-    <ul>
-        <li>The node emits a new message after the configured action completes.</li>
-        <li><code>msg.payload</code>: API response payload.</li>
-        <li><code>msg.topic</code>: node name from the editor.</li>
-        <li><code>msg.deviceName</code>: remembered selected switch/client name.</li>
-        <li><code>msg.eventName</code>: action that produced the message.</li>
-        <li><code>msg.details.unifiNetworkPoe</code>: metadata with device/site/action/port.</li>
-        <li><code>msg.details.unifiNetworkPoe.portPowerW</code>: current PoE power draw (watts) for the selected port when available.</li>
-        <li><code>msg.payload.powerConsumptionSwitchTotal</code>: sum of PoE power draw of all switch ports (watts) when available.</li>
-        <li>Power-consumption emit actions produce <code>msg.payload.portPowerW</code> and include <code>msg.payload.powerChanged</code>.</li>
-    </ul>
+    <h3>Outputs</h3>
+    <dl class="message-properties">
+        <dt>Output 1 — result</dt>
+        <dd>Emitted after the configured action completes successfully.</dd>
+        <dt class="optional">msg.payload</dt>
+        <dd>API response payload.</dd>
+        <dt class="optional">msg.topic</dt>
+        <dd>Node name from the editor.</dd>
+        <dt class="optional">msg.deviceName</dt>
+        <dd>Remembered name of the selected switch or client.</dd>
+        <dt class="optional">msg.eventName</dt>
+        <dd>Action that produced the message.</dd>
+        <dt class="optional">msg.details.unifiNetworkPoe</dt>
+        <dd>Metadata with device, site, action, and port details. Includes <code>portPowerW</code> for the selected port when available.</dd>
+        <dt class="optional">msg.payload.powerConsumptionSwitchTotal</dt>
+        <dd>Sum of PoE power draw for all switch ports (watts) when available.</dd>
+        <dt class="optional">msg.payload.portPowerW / msg.payload.powerChanged</dt>
+        <dd>Available in power-consumption emit messages.</dd>
+    </dl>
+    <dl class="message-properties">
+        <dt>Output 2 — error</dt>
+        <dd>Emitted when the action fails (API error, timeout, or configuration problem). The node status also turns red. Errors are additionally forwarded to any connected <code>catch</code> node.</dd>
+        <dt class="optional">msg.payload</dt>
+        <dd><code>null</code></dd>
+        <dt class="optional">msg.topic</dt>
+        <dd>Node name from the editor.</dd>
+        <dt class="optional">msg.error.message</dt>
+        <dd>Human-readable error description.</dd>
+    </dl>
     <p><b>Power fields (guaranteed vs optional)</b></p>
     <table style="width:100%; border-collapse:collapse;">
         <thead>
@@ -1166,7 +1183,7 @@
             </tr>
         </tbody>
     </table>
-    <p>Example output:</p>
+    <p>Example output (pin 1):</p>
     <pre><code>{
   "topic": "POE Soffitta Port 2",
   "deviceName": "Soffitta",
@@ -1188,5 +1205,11 @@
       "powerConsumptionSwitchTotal": 36.4
     }
   }
+}</code></pre>
+    <p>Example output (pin 2 — error):</p>
+    <pre><code>{
+  "topic": "POE Soffitta Port 2",
+  "payload": null,
+  "error": { "message": "Missing switch device id." }
 }</code></pre>
 </script>

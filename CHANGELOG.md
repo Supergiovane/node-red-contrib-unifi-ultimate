@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.3
+
+- All nodes now have a **second output for errors**. When something goes wrong — connection problem, action not supported, timeout — the error message comes out of the second output instead of silently failing. Connect it to a debug node to see what happened, or wire it to a notification in your flow.
+
 ## 1.0.2
 
 - UI: removed per-node `Timeout` fields and standardized request timeouts internally

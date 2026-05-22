@@ -18,10 +18,10 @@
             autoEmitInterval: { value: 60, validate: RED.validators.number() }
         },
         inputs: 1,
-        outputs: 1,
+        outputs: 2,
         icon: "unifi-u-logo-light-protect.svg",
         paletteLabel: "PROTECT",
-        outputLabels: ["result"],
+        outputLabels: ["result", "error"],
         label: function () {
             return this.name || this.deviceId || "Unifi Protect";
         },
@@ -1162,16 +1162,32 @@
         <li>Input message properties are ignored by this node.</li>
     </ul>
 
-    <h3>Output</h3>
-    <ul>
-        <li>A single output pin emits state and event messages for the selected device.</li>
-        <li><code>msg.topic</code>: node name from the editor.</li>
-        <li><code>msg.deviceName</code>: remembered/observed selected device name.</li>
-        <li><code>msg.eventName</code>: trigger/event that produced the message.</li>
-        <li><code>msg.details.unifiProtect</code>: standardized metadata for the device and selected capability.</li>
-        <li><code>msg.details.raw</code>: raw event/context payload when available.</li>
-    </ul>
-    <p>Example output:</p>
+    <h3>Outputs</h3>
+    <dl class="message-properties">
+        <dt>Output 1 — result</dt>
+        <dd>Emits state and live event messages for the selected device. When <code>Receive Events</code> is active, both state and event messages use this pin.</dd>
+        <dt class="optional">msg.topic</dt>
+        <dd>Node name from the editor.</dd>
+        <dt class="optional">msg.deviceName</dt>
+        <dd>Remembered/observed name of the selected device.</dd>
+        <dt class="optional">msg.eventName</dt>
+        <dd>Trigger or event that produced the message.</dd>
+        <dt class="optional">msg.details.unifiProtect</dt>
+        <dd>Standardized metadata for the device and selected capability.</dd>
+        <dt class="optional">msg.details.raw</dt>
+        <dd>Raw event or context payload when available.</dd>
+    </dl>
+    <dl class="message-properties">
+        <dt>Output 2 — error</dt>
+        <dd>Emitted when the action fails (API error, timeout, or configuration problem). The node status also turns red. Errors are additionally forwarded to any connected <code>catch</code> node.</dd>
+        <dt class="optional">msg.payload</dt>
+        <dd><code>null</code></dd>
+        <dt class="optional">msg.topic</dt>
+        <dd>Node name from the editor.</dd>
+        <dt class="optional">msg.error.message</dt>
+        <dd>Human-readable error description.</dd>
+    </dl>
+    <p>Example output (pin 1):</p>
     <pre><code>{
   "topic": "Front Door Camera",
   "deviceName": "Front Door Camera",
@@ -1193,5 +1209,11 @@
       "source": "events"
     }
   }
+}</code></pre>
+    <p>Example output (pin 2 — error):</p>
+    <pre><code>{
+  "topic": "Front Door Camera",
+  "payload": null,
+  "error": { "message": "Request timed out" }
 }</code></pre>
 </script>

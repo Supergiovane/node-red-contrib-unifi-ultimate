@@ -5,6 +5,16 @@ const {
     resolveScopedIdentifiers
 } = require("./utils/unifi-network-device-registry");
 const { extractNetworkData } = require("./utils/unifi-network-utils");
+const {
+    buildStatusTimestampText,
+    appendStatusTimestamp,
+    resolveNodeName,
+    resolveDeviceName,
+    extractDeviceNameFromPayload,
+    attachDeviceNameToPayload,
+    attachDetails,
+    buildErrorOutputMessage
+} = require("./utils/common-utils");
 const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
 
 function normalizeString(value) {
@@ -118,73 +128,6 @@ function resolvePayloadBoolean(value) {
     }
 
     return null;
-}
-
-function resolveNodeName(value) {
-    return String(value || "").trim();
-}
-
-function resolveDeviceName(value) {
-    return String(value || "").trim();
-}
-
-function extractDeviceNameFromPayload(payload) {
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-        return "";
-    }
-
-    return resolveDeviceName(
-        payload.name
-        || payload.displayName
-        || payload.hostname
-        || payload.alias
-        || payload.full_name
-        || payload.macAddress
-        || payload.id
-    );
-}
-
-function attachDeviceNameToPayload(payload, deviceName) {
-    if (!deviceName) {
-        return payload;
-    }
-
-    if (payload && typeof payload === "object" && !Array.isArray(payload)) {
-        return {
-            ...payload,
-            deviceName
-        };
-    }
-
-    return payload;
-}
-
-function attachDetails(outputMsg, details) {
-    if (!outputMsg || typeof outputMsg !== "object" || Array.isArray(outputMsg)) {
-        return;
-    }
-    if (!details || typeof details !== "object" || Array.isArray(details)) {
-        return;
-    }
-
-    outputMsg.details = {
-        ...(outputMsg.details && typeof outputMsg.details === "object" && !Array.isArray(outputMsg.details)
-            ? outputMsg.details
-            : {}),
-        ...details
-    };
-}
-
-function buildStatusTimestampText() {
-    const now = new Date();
-    const time = now.toTimeString().split(" ")[0];
-    return `(day ${now.getDate()}, ${time})`;
-}
-
-function appendStatusTimestamp(text) {
-    const normalized = String(text === undefined || text === null ? "" : text).trim();
-    const suffix = buildStatusTimestampText();
-    return normalized ? `${normalized} ${suffix}` : suffix;
 }
 
 function resolveNumericPortIndex(value) {
@@ -821,6 +764,7 @@ module.exports = function(RED) {
                 }
             } catch (error) {
                 setNodeStatus({ fill: "red", shape: "ring", text: "error" });
+                node.send([null, buildErrorOutputMessage(error, node.name)]);
                 if (typeof done === "function") {
                     done(error);
                 } else {

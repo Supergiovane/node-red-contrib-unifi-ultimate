@@ -8,6 +8,18 @@ const {
     resolveObservableState,
     resolveObservableEventValue
 } = require("./utils/unifi-protect-device-registry");
+const {
+    parseBoolean,
+    parseIntervalSeconds,
+    buildStatusTimestampText,
+    appendStatusTimestamp,
+    resolveNodeName,
+    resolveDeviceName,
+    extractDeviceNameFromPayload,
+    attachDeviceNameToPayload,
+    attachDetails,
+    buildErrorOutputMessage
+} = require("./utils/common-utils");
 const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
 
 function resolveDeviceType(configuredDeviceType) {
@@ -45,18 +57,6 @@ function resolveCapabilityConfig(configuredCapabilityConfig) {
     return parseCapabilityConfig(configuredCapabilityConfig);
 }
 
-function parseBoolean(value) {
-    return value === true || value === "true" || value === 1 || value === "1";
-}
-
-function parseIntervalSeconds(value, fallback) {
-    const numeric = Number(value);
-    if (!Number.isFinite(numeric) || numeric < 5) {
-        return fallback;
-    }
-    return Math.trunc(numeric);
-}
-
 function buildNodeStatus(deviceType, payload) {
     const label = payload && payload.name ? payload.name : deviceType;
     const state = payload && payload.state ? payload.state : "ready";
@@ -73,70 +73,6 @@ function requiresDeviceSpecificCapabilityValidation(deviceType, capabilityId) {
         "setDoorbellMessage",
         "disableMicPermanently"
     ].includes(String(capabilityId || "").trim());
-}
-
-function resolveNodeName(value) {
-    return String(value || "").trim();
-}
-
-function resolveDeviceName(value) {
-    return String(value || "").trim();
-}
-
-function extractDeviceNameFromPayload(payload) {
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-        return "";
-    }
-
-    return resolveDeviceName(
-        payload.name
-        || payload.displayName
-        || payload.alias
-        || payload.full_name
-        || payload.id
-    );
-}
-
-function attachDeviceNameToPayload(payload, deviceName) {
-    if (!deviceName) {
-        return payload;
-    }
-
-    if (payload && typeof payload === "object" && !Array.isArray(payload)) {
-        return {
-            ...payload,
-            deviceName
-        };
-    }
-
-    return payload;
-}
-
-function attachDetails(outputMsg, details) {
-    if (!details || typeof details !== "object" || Array.isArray(details)) {
-        return;
-    }
-
-    const currentDetails = outputMsg.details && typeof outputMsg.details === "object" && !Array.isArray(outputMsg.details)
-        ? outputMsg.details
-        : {};
-
-    outputMsg.details = {
-        ...currentDetails,
-        ...details
-    };
-}
-
-function buildStatusTimestampText() {
-    const now = new Date();
-    const time = now.toTimeString().split(" ")[0];
-    return `(day ${now.getDate()}, ${time})`;
-}
-
-function appendStatusTimestamp(text) {
-    const normalized = String(text === undefined || text === null ? "" : text).trim();
-    const suffix = buildStatusTimestampText();
-    return normalized ? `${normalized} ${suffix}` : suffix;
 }
 
 function resolveConfiguredObservable(capabilityConfig) {
@@ -446,6 +382,7 @@ module.exports = function(RED) {
             invokeCapability(node.send.bind(node), "interval")
                 .catch((error) => {
                     setNodeStatus({ fill: "red", shape: "ring", text: "auto error" });
+                    node.send([null, buildErrorOutputMessage(error, node.name)]);
                     node.error(error);
                 })
                 .finally(() => {
@@ -475,6 +412,7 @@ module.exports = function(RED) {
                 }
             } catch (error) {
                 setNodeStatus({ fill: "red", shape: "ring", text: "error" });
+                node.send([null, buildErrorOutputMessage(error, node.name)]);
                 if (typeof done === "function") {
                     done(error);
                 } else {

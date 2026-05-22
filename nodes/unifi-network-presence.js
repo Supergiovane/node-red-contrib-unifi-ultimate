@@ -1,6 +1,15 @@
 "use strict";
 
 const { decodeScopedDeviceId } = require("./utils/unifi-network-device-registry");
+const {
+    buildStatusTimestampText,
+    appendStatusTimestamp,
+    resolveNodeName,
+    resolveDeviceName,
+    extractDeviceNameFromPayload,
+    attachDetails,
+    buildErrorOutputMessage
+} = require("./utils/common-utils");
 const DEFAULT_REQUEST_TIMEOUT_MS = 8000;
 
 function parsePositiveSeconds(value, fallbackValue) {
@@ -23,58 +32,6 @@ function parseNonNegativeSeconds(value, fallbackValue) {
 
 function resolveClientId(configuredClientId) {
     return String(configuredClientId || "").trim();
-}
-
-function resolveNodeName(value) {
-    return String(value || "").trim();
-}
-
-function resolveDeviceName(value) {
-    return String(value || "").trim();
-}
-
-function extractDeviceNameFromClient(client) {
-    if (!client || typeof client !== "object" || Array.isArray(client)) {
-        return "";
-    }
-
-    return resolveDeviceName(
-        client.name
-        || client.displayName
-        || client.hostname
-        || client.alias
-        || client.full_name
-        || client.macAddress
-        || client.id
-    );
-}
-
-function attachDetails(outputMsg, details) {
-    if (!outputMsg || typeof outputMsg !== "object" || Array.isArray(outputMsg)) {
-        return;
-    }
-    if (!details || typeof details !== "object" || Array.isArray(details)) {
-        return;
-    }
-
-    outputMsg.details = {
-        ...(outputMsg.details && typeof outputMsg.details === "object" && !Array.isArray(outputMsg.details)
-            ? outputMsg.details
-            : {}),
-        ...details
-    };
-}
-
-function buildStatusTimestampText() {
-    const now = new Date();
-    const time = now.toTimeString().split(" ")[0];
-    return `(day ${now.getDate()}, ${time})`;
-}
-
-function appendStatusTimestamp(text) {
-    const normalized = String(text === undefined || text === null ? "" : text).trim();
-    const suffix = buildStatusTimestampText();
-    return normalized ? `${normalized} ${suffix}` : suffix;
 }
 
 module.exports = function(RED) {
@@ -125,7 +82,7 @@ module.exports = function(RED) {
         }
 
         function resolveOutputDeviceName(payload) {
-            const extracted = extractDeviceNameFromClient(payload) || extractDeviceNameFromClient(node.lastKnownClient);
+            const extracted = extractDeviceNameFromPayload(payload) || extractDeviceNameFromPayload(node.lastKnownClient);
             if (extracted) {
                 node.deviceName = extracted;
                 return extracted;
@@ -290,7 +247,9 @@ module.exports = function(RED) {
 
             setNodeStatus({ fill: "red", shape: "ring", text: "error" });
             const errorMessage = String(snapshot && (snapshot.error || snapshot.message) || "Presence polling failed");
-            node.error(new Error(errorMessage));
+            const presenceError = new Error(errorMessage);
+            node.send([null, buildErrorOutputMessage(presenceError, node.name)]);
+            node.error(presenceError);
         }
 
         async function requestPresenceSnapshot(source) {
@@ -341,6 +300,8 @@ module.exports = function(RED) {
                     done();
                 }
             } catch (error) {
+                setNodeStatus({ fill: "red", shape: "ring", text: "error" });
+                node.send([null, buildErrorOutputMessage(error, node.name)]);
                 if (typeof done === "function") {
                     done(error);
                 } else {
@@ -388,6 +349,7 @@ module.exports = function(RED) {
                 processPresenceSnapshot(snapshot);
             }).catch((error) => {
                 setNodeStatus({ fill: "red", shape: "ring", text: "error" });
+                node.send([null, buildErrorOutputMessage(error, node.name)]);
                 node.error(error);
             });
         }

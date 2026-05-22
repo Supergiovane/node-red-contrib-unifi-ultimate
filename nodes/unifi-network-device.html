@@ -19,10 +19,10 @@
             autoEmitInterval: { value: 60, validate: RED.validators.number() }
         },
         inputs: 1,
-        outputs: 1,
+        outputs: 2,
         icon: "unifi-u-logo-light-network.svg",
         paletteLabel: "NETWORK",
-        outputLabels: ["result"],
+        outputLabels: ["result", "error"],
         label: function () {
             return this.name || this.deviceId || "Unifi Network";
         },
@@ -1287,16 +1287,32 @@
         <li>Input message properties are ignored by this node.</li>
     </ul>
 
-    <h3>Output</h3>
-    <ul>
-        <li>Output 1 emits a new message containing the current state or primary capability response.</li>
-        <li><code>msg.payload</code> contains the response payload.</li>
-        <li><code>msg.topic</code>: node name from the editor.</li>
-        <li><code>msg.deviceName</code>: remembered/observed selected item name.</li>
-        <li><code>msg.eventName</code>: trigger/event that produced the message.</li>
-        <li><code>msg.details.unifiNetwork</code>: standardized metadata for the selected item and capability.</li>
-    </ul>
-    <p>Example output:</p>
+    <h3>Outputs</h3>
+    <dl class="message-properties">
+        <dt>Output 1 — result</dt>
+        <dd>Emitted when the action completes successfully.</dd>
+        <dt class="optional">msg.payload</dt>
+        <dd>Response payload from the UniFi API.</dd>
+        <dt class="optional">msg.topic</dt>
+        <dd>Node name from the editor.</dd>
+        <dt class="optional">msg.deviceName</dt>
+        <dd>Remembered/observed name of the selected item.</dd>
+        <dt class="optional">msg.eventName</dt>
+        <dd>Trigger or event that produced the message.</dd>
+        <dt class="optional">msg.details.unifiNetwork</dt>
+        <dd>Standardized metadata for the selected item and capability.</dd>
+    </dl>
+    <dl class="message-properties">
+        <dt>Output 2 — error</dt>
+        <dd>Emitted when the action fails (API error, timeout, or configuration problem). The node status also turns red. Errors are additionally forwarded to any connected <code>catch</code> node.</dd>
+        <dt class="optional">msg.payload</dt>
+        <dd><code>null</code></dd>
+        <dt class="optional">msg.topic</dt>
+        <dd>Node name from the editor.</dd>
+        <dt class="optional">msg.error.message</dt>
+        <dd>Human-readable error description.</dd>
+    </dl>
+    <p>Example output (pin 1):</p>
     <pre><code>{
   "topic": "Switch Soffitta",
   "deviceName": "Soffitta",
@@ -1315,5 +1331,11 @@
       "source": "request"
     }
   }
+}</code></pre>
+    <p>Example output (pin 2 — error):</p>
+    <pre><code>{
+  "topic": "Switch Soffitta",
+  "payload": null,
+  "error": { "message": "Request timed out" }
 }</code></pre>
 </script>

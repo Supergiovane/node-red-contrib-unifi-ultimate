@@ -13,7 +13,7 @@
 
 # node-red-contrib-unifi-ultimate
 
-Control and monitor `UniFi Network`, `UniFi Protect`, and `UniFi Access` from Node-RED without building API requests by hand.
+Control and monitor your **UniFi Network**, **UniFi Protect**, and **UniFi Access** devices directly from Node-RED — no technical knowledge required.
 
 [View Changelog](CHANGELOG.md)
 
@@ -41,16 +41,16 @@ In Node-RED:
 
 ## Quick Start
 
-1. Add the config node for your UniFi application: `Unifi Network Config`, `Unifi Protect Config`, or `Unifi Access Config`.
-2. Enter the UniFi host/IP and API credentials.
-3. Add the matching device or utility node.
-4. Select the item to control or monitor.
+1. Add a config node for your UniFi product: **Unifi Network Config**, **Unifi Protect Config**, or **Unifi Access Config**.
+2. Enter your UniFi controller address and login credentials.
+3. Add the matching node to your flow.
+4. Select the device you want to control or monitor.
 5. Select the action.
-6. Deploy.
-7. Send any message into the node to run the configured action.
+6. Click **Deploy**.
+7. Send any message into the node to run the action.
 
-For most actions, the incoming message is only a trigger and the node uses the item/action configured in the editor.  
-Exception: in `Unifi Network Control POE`, action `POE controlled by msg.payload` uses `msg.payload` (`true` = enable PoE, `false` = disable PoE).
+> **Tip:** For most actions, the incoming message is just a trigger — the node uses the device and action you configured in the editor.  
+> The only exception is **Control POE** with the *POE controlled by incoming message* action: send `true` to turn PoE on and `false` to turn it off.
 
 <br/>
 <br/>
@@ -60,33 +60,24 @@ Exception: in `Unifi Network Control POE`, action `POE controlled by msg.payload
   </a>
 </p>
 
-Use Network nodes to work with:
+Use **Network** nodes to work with:
 
 - sites
 - UniFi devices such as switches and access points
-- clients such as phones, computers, and IoT devices
-- switch ports
-- PoE control
-- client presence
+- connected clients such as phones, computers, and IoT devices
+- switch ports and PoE control
+- client presence detection
 
-Common uses:
+Things you can do:
 
-- Check whether a client is online.
-- Count online clients for a site.
-- Create simple guest vouchers.
-- Read CPU, memory, and uptime from UniFi devices.
-- Read Temperatures when the selected UniFi device exposes thermal sensor data.
+- Check whether a device or phone is connected to your network.
+- Count how many clients are currently online.
+- Create guest Wi-Fi vouchers.
+- Read CPU usage, memory, and uptime from a switch or access point.
+- Read the temperature of a switch (where supported).
 - Restart a UniFi device.
-- Power-cycle a PoE port.
-- Turn PoE on or off for a selected switch port.
-- Select a client and let the PoE node find the connected switch and port when the information is available.
-
-Editor conveniences:
-
-- Device and client fields are searchable.
-- Port lists show port status and connected clients when UniFi exposes that information.
-- Read-only actions can emit periodically to simulate a simple polling stream.
-- Selecting an item updates the node `Name` automatically.
+- Power-cycle or turn on/off a PoE port.
+- Let the PoE node automatically find which port a client is connected to.
 
 <br/>
 <br/>
@@ -96,27 +87,23 @@ Editor conveniences:
   </a>
 </p>
 
-Use Protect nodes to work with:
+Use **Protect** nodes to work with:
 
 - cameras
-- sensors
+- sensors (motion, contact, temperature, humidity, leak)
 - lights
 - chimes
 - viewers
-- live views
-- NVR information
+- NVR
 
-Common uses:
+Things you can do:
 
-- Receive motion, ring, contact, tamper, leak, and battery events.
+- Receive motion, ring, contact, tamper, leak, and low-battery alerts.
 - Read the current state of a camera or sensor.
-- Take camera snapshots.
-- Control PTZ cameras.
-- Show doorbell messages.
-- Switch viewer live views.
-- Update supported device properties.
-
-For supported observables, the node can output normalized values while still keeping the raw UniFi event details available (`true/false` for event states, numeric values for sensor metrics like temperature and humidity).
+- Take a camera snapshot.
+- Control PTZ cameras (move to preset, start/stop patrol).
+- Display a custom message on a doorbell screen.
+- Switch a viewer to a different live feed.
 
 <br/>
 <br/>
@@ -126,218 +113,52 @@ For supported observables, the node can output normalized values while still kee
   </a>
 </p>
 
-Use Access nodes to work with:
+Use **Access** nodes to work with:
 
 - doors
-- Access devices
-- door events
-- lock rules
-- emergency mode
+- Access devices (hubs, intercoms)
+- door events (unlock, ring, DPS, emergency)
+- lock rules and schedules
 - doorbell actions
 
-Common uses:
+Things you can do:
 
-- Unlock a door.
-- Read or set a temporary lock rule.
+- Unlock a door remotely.
+- Set a temporary unlock window with a custom duration.
 - Enable lockdown or evacuation mode.
-- Receive Access events.
-- Trigger or cancel an intercom doorbell action.
+- Receive door events in real time.
+- Trigger or cancel an intercom doorbell.
 
 ## Outputs
 
-Most nodes send the result on output 1.
+Every node has **two outputs**:
 
-Protect and Access device nodes emit both state and live event messages on the same output pin when `Receive Events` is selected.
-On Access nodes, the `Event` selector can filter the stream to official UniFi Access event families, or use `All` for full passthrough.
+| Output | When it fires |
+| ------ | ------------- |
+| **1 — result** | The action completed successfully. The result is available in `msg.payload`. |
+| **2 — error** | Something went wrong (connection problem, timeout, unsupported action). |
 
-Useful metadata is attached to the output message, for example:
+When an error occurs, the node status turns red and the error message comes out of the second output. Connect it to a **debug** node to see what happened, or wire it to any notification logic in your flow.
 
-- `msg.topic` (node `Name` from the editor)
-- `msg.deviceName` (remembered/observed client or device name)
-- `msg.eventName` (event/trigger that produced the output message)
-- `msg.details.unifiNetwork`
-- `msg.details.unifiNetworkPresence`
-- `msg.details.unifiNetworkPoe`
-- `msg.details.unifiProtect`
-- `msg.details.unifiAccess`
-
-When `msg.payload` is an object, it also includes `payload.deviceName` with the same value.
-
-## Output Examples
-
-### Unifi Network Device
-
-```json
-{
-  "topic": "Switch Soffitta",
-  "deviceName": "Soffitta",
-  "eventName": "request:readState",
-  "payload": {
-    "id": "8c072de0-d71d-37bd-a6f5-eac67c95a314",
-    "name": "Soffitta",
-    "state": "READY",
-    "deviceName": "Soffitta"
-  },
-  "details": {
-    "unifiNetwork": {
-      "nodeType": "device",
-      "deviceType": "device",
-      "capability": "readState",
-      "source": "request"
-    }
-  }
-}
-```
-
-`Unifi Network Device` action `Read Temperatures` returns:
-
-| Field                              | Type   | Guaranteed | Notes                                                       |
-| ---------------------------------- | ------ | ---------- | ----------------------------------------------------------- |
-| `msg.payload`                      | number | no         | First normalized temperature reading in Celsius.            |
-| `msg.details.temperature`          | object | yes        | Full normalized temperature details and all readings found. |
-| `msg.details.temperatureSources[]` | array  | yes        | Sources used, for example `official` and/or `legacy`.       |
-
-Some switch models and controller versions do not expose temperature data; in that case the action emits `msg.payload = null` and details include `hasTemperatures: false`.
-
-Other simple `Unifi Network Device` actions return compact payloads:
-
-| Action                 | `msg.payload`                   | Details                       |
-| ---------------------- | ------------------------------- | ----------------------------- |
-| `Is Client Online`     | `true` or `false`               | `msg.details.client`          |
-| `Count Online Clients` | online client count             | `msg.details.onlineClients[]` |
-| `Read CPU`             | CPU percentage                  | `msg.details.statistics`      |
-| `Read Memory`          | memory percentage               | `msg.details.statistics`      |
-| `Read Uptime`          | uptime in seconds               | `msg.details.statistics`      |
-| `Create Guest Voucher` | one voucher code, or code array | `msg.details.vouchers[]`      |
-
-For read-only actions on Network, Protect, and Access device nodes, enable `Emit periodically` to send the configured result at a fixed interval without using an Inject node. This option is hidden for event streams and write actions.
-
-Request timeouts are handled internally. Existing nodes do not need timeout settings, and Network PoE power polling uses a 15 second default when the shared config value is left empty.
-
-### Unifi Network Presence
-
-```json
-{
-  "topic": "iPhone Massimo Presence",
-  "deviceName": "iPhone-Massimo",
-  "eventName": "connected",
-  "payload": true,
-  "present": true,
-  "details": {
-    "unifiNetworkPresence": {
-      "nodeType": "presence",
-      "source": "poll",
-      "reason": "connected"
-    }
-  }
-}
-```
-
-### Unifi Network Control POE
-
-```json
-{
-  "topic": "POE Soffitta Port 2",
-  "deviceName": "Soffitta",
-  "eventName": "request:enable",
-  "payload": {
-    "status": "ok",
-    "deviceName": "Soffitta",
-    "portIdx": 2,
-    "portName": "Port 2",
-    "portPowerW": 2.6,
-    "powerConsumptionSwitchTotal": 36.4
-  },
-  "details": {
-    "unifiNetworkPoe": {
-      "nodeType": "poe-control",
-      "action": "enable",
-      "portIdx": 2,
-      "portPowerW": 2.6,
-      "powerConsumptionSwitchTotal": 36.4
-    }
-  }
-}
-```
-
-Power fields for `Unifi Network Control POE`:
-
-| Field                                                     | Type   | Guaranteed | Notes                                                                    |
-| --------------------------------------------------------- | ------ | ---------- | ------------------------------------------------------------------------ |
-| `msg.payload.portIdx`                                     | number | yes        | Selected port index.                                                     |
-| `msg.payload.portName`                                    | string | yes        | Selected port display name.                                              |
-| `msg.payload.portPowerW`                                  | number | no         | Current PoE power draw for the selected port (W), when UniFi exposes it. |
-| `msg.payload.powerConsumptionSwitchTotal`                 | number | no         | Sum of all port PoE consumptions on the switch (W), when available.      |
-| `msg.details.unifiNetworkPoe.portPowerW`                  | number | no         | Same value as `msg.payload.portPowerW`.                                  |
-| `msg.details.unifiNetworkPoe.powerConsumptionSwitchTotal` | number | no         | Same value as `msg.payload.powerConsumptionSwitchTotal`.                 |
-
-### Unifi Protect Device
-
-```json
-{
-  "topic": "Front Door Camera",
-  "deviceName": "Front Door Camera",
-  "eventName": "smartDetectZone",
-  "payload": {
-    "device": {
-      "id": "camera-id"
-    },
-    "event": {
-      "type": "smartDetectZone"
-    },
-    "deviceName": "Front Door Camera"
-  },
-  "details": {
-    "unifiProtect": {
-      "nodeType": "device",
-      "deviceType": "camera",
-      "capability": "observe",
-      "source": "events"
-    }
-  }
-}
-```
-
-### Unifi Access Device
-
-```json
-{
-  "topic": "Main Door",
-  "deviceName": "Main Door",
-  "eventName": "door.unlock",
-  "payload": {
-    "event": "door.unlock",
-    "deviceName": "Main Door"
-  },
-  "details": {
-    "unifiAccess": {
-      "nodeType": "device",
-      "deviceType": "door",
-      "capability": "observe",
-      "source": "events"
-    }
-  }
-}
-```
+**Repeat periodically** — for read actions, you can tick *Emit periodically* in the node editor to have the node send the result automatically at a fixed interval, without needing an Inject node.
 
 ## Example Flows
 
 Import from `examples/`:
 
-| Flow file                                                                                    | What it demonstrates                            |
-| -------------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| [examples/unifi-protect-info.json](examples/unifi-protect-info.json)                         | Read Protect camera state                       |
-| [examples/unifi-protect-sensor-observe.json](examples/unifi-protect-sensor-observe.json)     | Receive sensor observables (boolean or numeric) |
-| [examples/unifi-protect-camera-actions.json](examples/unifi-protect-camera-actions.json)     | Snapshot, PTZ presets, and doorbell messages    |
-| [examples/unifi-access-door-control.json](examples/unifi-access-door-control.json)           | Door state, unlock, and temporary lock rule     |
-| [examples/unifi-access-intercom-doorbell.json](examples/unifi-access-intercom-doorbell.json) | Intercom observe, trigger, and cancel doorbell  |
+| Flow file | What it demonstrates |
+| --------- | -------------------- |
+| [examples/unifi-protect-info.json](examples/unifi-protect-info.json) | Read the state of a Protect camera |
+| [examples/unifi-protect-sensor-observe.json](examples/unifi-protect-sensor-observe.json) | Receive sensor events (motion, temperature, humidity, …) |
+| [examples/unifi-protect-camera-actions.json](examples/unifi-protect-camera-actions.json) | Take snapshots, move PTZ, show doorbell messages |
+| [examples/unifi-access-door-control.json](examples/unifi-access-door-control.json) | Door state, remote unlock, temporary lock rule |
+| [examples/unifi-access-intercom-doorbell.json](examples/unifi-access-intercom-doorbell.json) | Intercom — receive ring, trigger and cancel doorbell |
 
 ## Notes
 
-- You need valid API credentials for the UniFi application you want to use.
-- Some actions depend on what the selected UniFi device supports.
-- UniFi API behavior can vary between application versions.
-- For safety, actions exposed by the nodes are intentionally limited to known supported operations.
+- You need valid login credentials for the UniFi application you want to use.
+- Some actions are only available on specific device models.
+- UniFi behavior can vary between application versions.
 
 [npm-version-image]: https://img.shields.io/npm/v/node-red-contrib-unifi-ultimate.svg
 [npm-url]: https://www.npmjs.com/package/node-red-contrib-unifi-ultimate
