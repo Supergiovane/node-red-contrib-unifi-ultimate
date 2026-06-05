@@ -3,10 +3,13 @@
 const http = require("http");
 const https = require("https");
 const { maybeParseBody } = require("./http-response-utils");
+const { normalizePort, applyPortToHost } = require("./common-utils");
 
-function normalizeHost(value) {
+function normalizeHost(value, port) {
     // Access controllers usually live on port 12445. Accept bare hosts, host:port
-    // pairs and IPv6 literals, then normalize everything to one safe form.
+    // pairs and IPv6 literals, then normalize everything to one safe form. The
+    // dedicated port field (when set) fills in a missing port before the 12445
+    // default is applied.
     let host = String(value || "").trim();
     if (!host) {
         return "";
@@ -19,6 +22,8 @@ function normalizeHost(value) {
     if (!host) {
         return "";
     }
+
+    host = applyPortToHost(host, port);
 
     if (host.startsWith("[") && host.includes("]")) {
         return host.includes("]:") ? host : `${host}:12445`;
@@ -36,8 +41,8 @@ function normalizeHost(value) {
     return host;
 }
 
-function buildBaseUrlFromHost(value) {
-    const host = normalizeHost(value);
+function buildBaseUrlFromHost(value, port) {
+    const host = normalizeHost(value, port);
     if (!host) {
         return "";
     }
@@ -174,6 +179,8 @@ function normalizeAccessCollection(payload) {
 
 module.exports = {
     buildBaseUrlFromHost,
+    normalizePort,
+    applyPortToHost,
     buildQueryString,
     doRequest,
     buildRequestHeaders,

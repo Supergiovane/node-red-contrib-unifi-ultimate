@@ -2,6 +2,7 @@
 
 const {
     buildBaseUrlFromHost,
+    normalizePort,
     buildQueryString,
     doRequest,
     buildRequestHeaders,
@@ -24,7 +25,8 @@ module.exports = function(RED) {
         const node = this;
         node.name = config.name;
         node.host = String(config.host || "").trim();
-        node.baseUrl = buildBaseUrlFromHost(node.host);
+        node.port = normalizePort(config.port);
+        node.baseUrl = buildBaseUrlFromHost(node.host, node.port);
         node.authHeader = (config.authHeader || "X-API-Key").trim() || "X-API-Key";
         node.rejectUnauthorized = config.rejectUnauthorized !== false && config.rejectUnauthorized !== "false";
         node.nodeClients = [];

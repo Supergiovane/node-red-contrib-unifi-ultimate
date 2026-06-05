@@ -7,6 +7,16 @@
         defaults: {
             name: { value: "Unifi Network Config" },
             host: { value: "", required: true },
+            port: {
+                value: "",
+                required: false,
+                validate: function (value) {
+                    if (value === undefined || value === null || value === "") {
+                        return true;
+                    }
+                    return /^\d+$/.test(String(value)) && Number(value) >= 1 && Number(value) <= 65535;
+                }
+            },
             rejectUnauthorized: { value: false },
             powerObservationIntervalSeconds: {
                 value: 15,
@@ -28,9 +38,11 @@
         oneditprepare: function () {
             const node = this;
             const $hostInput = $("#node-config-input-host");
+            const $port = $("#node-config-input-port");
             const $apiKey = $("#node-config-input-apiKey");
             const $rejectUnauthorized = $("#node-config-input-rejectUnauthorized");
             const $powerObservationIntervalSeconds = $("#node-config-input-powerObservationIntervalSeconds");
+            const $portRow = $port.closest(".form-row");
             const $apiKeyRow = $apiKey.closest(".form-row");
             const $securityRow = $rejectUnauthorized.closest(".form-row");
             const $powerObservationRow = $powerObservationIntervalSeconds.closest(".form-row");
@@ -38,6 +50,7 @@
 
             function syncProgressiveRows() {
                 const hasHost = String($hostInput.val() || node.host || "").trim() !== "";
+                $portRow.toggle(hasHost);
                 $apiKeyRow.toggle(hasHost);
                 $securityRow.toggle(hasHost);
                 $powerObservationRow.toggle(hasHost);
@@ -74,6 +87,10 @@
         <input type="text" id="node-config-input-host" placeholder="192.168.1.10">
     </div>
     <div class="form-row">
+        <label for="node-config-input-port"><i class="fa fa-plug"></i> Port</label>
+        <input type="text" id="node-config-input-port" placeholder="443 (default)">
+    </div>
+    <div class="form-row">
         <label for="node-config-input-apiKey"><i class="fa fa-key"></i> API Key</label>
         <input type="password" id="node-config-input-apiKey" placeholder="Paste your UniFi Network API key">
     </div>
@@ -101,6 +118,7 @@
 
     <h3>Configuration</h3>
     <p><b>Controller</b> accepts the UniFi OS host or IP address. The node builds the local UniFi Network proxy URL automatically.</p>
+    <p><b>Port</b> is optional. Leave it empty to use the default <code>443</code>. Set it when your UniFi OS server listens on a custom port (for example <code>11443</code>). A port embedded directly in the Controller field (<code>host:port</code>) takes precedence over this field.</p>
     <p><b>API Key</b> is required for authentication and is sent as <code>X-API-Key</code>.</p>
     <p><b>Security</b> controls certificate verification. Disable it only when your controller uses a self-signed certificate.</p>
     <p><b>Power Poll (s)</b> is the global polling interval used by all <code>Control POE</code> nodes when action is <code>Emit Power Consumption</code>. It is optional and defaults to 15 seconds.</p>

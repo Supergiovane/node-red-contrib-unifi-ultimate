@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.4
+
+- UniFi Network, Protect, and Access config: added an optional **Port** field so you can connect to controllers that listen on a custom port instead of the default (for example UniFi OS server on `11443`). Leave it empty to keep the previous default (`443` for Network/Protect, `12445` for Access). A port written directly in the Controller field (`host:port`) still takes precedence. (#10)
+
 ## 1.0.3
 
 - All nodes now have a **second output for errors**. When something goes wrong — connection problem, action not supported, timeout — the error message comes out of the second output instead of silently failing. Connect it to a debug node to see what happened, or wire it to a notification in your flow.

@@ -3,6 +3,7 @@
 const http = require("http");
 const https = require("https");
 const { maybeParseBody } = require("./http-response-utils");
+const { normalizePort, applyPortToHost } = require("./common-utils");
 
 function normalizeHost(value) {
     // Accept either a bare host or a full URL from the editor and reduce it to
@@ -17,8 +18,8 @@ function normalizeHost(value) {
     return host.trim().replace(/\/+$/, "");
 }
 
-function buildBaseUrlFromHost(value) {
-    const host = normalizeHost(value);
+function buildBaseUrlFromHost(value, port) {
+    const host = applyPortToHost(normalizeHost(value), port);
     if (!host) {
         return "";
     }
@@ -156,6 +157,8 @@ function normalizeNetworkCollection(payload) {
 
 module.exports = {
     buildBaseUrlFromHost,
+    normalizePort,
+    applyPortToHost,
     buildQueryString,
     doRequest,
     buildRequestHeaders,

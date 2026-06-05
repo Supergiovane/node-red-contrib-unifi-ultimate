@@ -2,6 +2,8 @@
 
 const {
     buildBaseUrlFromHost,
+    normalizePort,
+    applyPortToHost,
     buildQueryString,
     doRequest,
     buildRequestHeaders,
@@ -75,7 +77,8 @@ module.exports = function(RED) {
         const node = this;
         node.name = config.name;
         node.host = String(config.host || "").trim();
-        node.baseUrl = buildBaseUrlFromHost(node.host);
+        node.port = normalizePort(config.port);
+        node.baseUrl = buildBaseUrlFromHost(node.host, node.port);
         node.rejectUnauthorized = config.rejectUnauthorized !== false && config.rejectUnauthorized !== "false";
         node.powerObservationIntervalSeconds = normalizePowerObserverIntervalSeconds(config.powerObservationIntervalSeconds);
         node.nodeClients = [];
@@ -642,10 +645,13 @@ module.exports = function(RED) {
         };
 
         node.buildUnofficialNetworkWebSocketUrl = () => {
-            const normalizedHost = String(node.host || "")
-                .trim()
-                .replace(/^https?:\/\//i, "")
-                .replace(/\/.*$/, "");
+            const normalizedHost = applyPortToHost(
+                String(node.host || "")
+                    .trim()
+                    .replace(/^https?:\/\//i, "")
+                    .replace(/\/.*$/, ""),
+                node.port
+            );
             if (!normalizedHost) {
                 throw new Error("The configured host is empty or invalid.");
             }

@@ -12,6 +12,57 @@ function parseIntervalSeconds(value, fallback) {
     return Math.trunc(numeric);
 }
 
+function normalizePort(value) {
+    // Accept a TCP port from the editor and reduce it to a clean "1".."65535"
+    // string, or empty when missing/invalid so callers can fall back to defaults.
+    if (value === undefined || value === null) {
+        return "";
+    }
+
+    const str = String(value).trim();
+    if (!str || !/^\d+$/.test(str)) {
+        return "";
+    }
+
+    const num = Number(str);
+    if (!Number.isInteger(num) || num < 1 || num > 65535) {
+        return "";
+    }
+
+    return String(num);
+}
+
+function hostHasExplicitPort(host) {
+    if (!host) {
+        return false;
+    }
+
+    if (host.startsWith("[")) {
+        // IPv6 literal: a port is only present when "]:" appears (e.g. [::1]:443).
+        return host.includes("]:");
+    }
+
+    // Bare host or IPv4: a single trailing :<digits> is a port.
+    return (host.match(/:/g) || []).length === 1 && /:\d+$/.test(host);
+}
+
+function applyPortToHost(host, port) {
+    // Combine a normalized host with the dedicated port field. A port already
+    // embedded in the host string always wins, so the separate field only fills
+    // the gap when the host carries none.
+    const normalizedHost = String(host || "").trim();
+    if (!normalizedHost) {
+        return "";
+    }
+
+    const normalizedPort = normalizePort(port);
+    if (!normalizedPort || hostHasExplicitPort(normalizedHost)) {
+        return normalizedHost;
+    }
+
+    return `${normalizedHost}:${normalizedPort}`;
+}
+
 function buildStatusTimestampText() {
     const now = new Date();
     const time = now.toTimeString().split(" ")[0];
@@ -93,6 +144,8 @@ function buildErrorOutputMessage(error, nodeName) {
 module.exports = {
     parseBoolean,
     parseIntervalSeconds,
+    normalizePort,
+    applyPortToHost,
     buildStatusTimestampText,
     appendStatusTimestamp,
     resolveNodeName,

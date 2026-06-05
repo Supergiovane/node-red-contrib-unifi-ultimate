@@ -3,6 +3,8 @@
 const {
     parseBoolean,
     parseIntervalSeconds,
+    normalizePort,
+    applyPortToHost,
     buildStatusTimestampText,
     appendStatusTimestamp,
     resolveNodeName,
@@ -37,6 +39,35 @@ describe("parseIntervalSeconds", () => {
     test("accepts string numeric >= 5", () => expect(parseIntervalSeconds("20", 60)).toBe(20));
     test("returns fallback for Infinity", () => expect(parseIntervalSeconds(Infinity, 60)).toBe(60));
     test("returns fallback for NaN", () => expect(parseIntervalSeconds(NaN, 60)).toBe(60));
+});
+
+describe("normalizePort", () => {
+    test("returns numeric string for valid port", () => expect(normalizePort(11443)).toBe("11443"));
+    test("accepts string numeric port", () => expect(normalizePort("443")).toBe("443"));
+    test("trims surrounding whitespace", () => expect(normalizePort("  8443  ")).toBe("8443"));
+    test("accepts lowest valid port", () => expect(normalizePort(1)).toBe("1"));
+    test("accepts highest valid port", () => expect(normalizePort(65535)).toBe("65535"));
+    test("returns empty for 0", () => expect(normalizePort(0)).toBe(""));
+    test("returns empty for out-of-range port", () => expect(normalizePort(70000)).toBe(""));
+    test("returns empty for negative", () => expect(normalizePort(-1)).toBe(""));
+    test("returns empty for non-numeric string", () => expect(normalizePort("abc")).toBe(""));
+    test("returns empty for decimal", () => expect(normalizePort("443.5")).toBe(""));
+    test("returns empty for empty string", () => expect(normalizePort("")).toBe(""));
+    test("returns empty for null", () => expect(normalizePort(null)).toBe(""));
+    test("returns empty for undefined", () => expect(normalizePort(undefined)).toBe(""));
+});
+
+describe("applyPortToHost", () => {
+    test("appends port when host has none", () => expect(applyPortToHost("192.168.1.10", 11443)).toBe("192.168.1.10:11443"));
+    test("appends port to hostname", () => expect(applyPortToHost("controller.local", "8443")).toBe("controller.local:8443"));
+    test("keeps existing host:port over port field", () => expect(applyPortToHost("192.168.1.10:443", 11443)).toBe("192.168.1.10:443"));
+    test("returns host unchanged when port is empty", () => expect(applyPortToHost("192.168.1.10", "")).toBe("192.168.1.10"));
+    test("returns host unchanged when port is invalid", () => expect(applyPortToHost("192.168.1.10", "abc")).toBe("192.168.1.10"));
+    test("appends port to IPv6 literal without port", () => expect(applyPortToHost("[::1]", 11443)).toBe("[::1]:11443"));
+    test("keeps IPv6 literal with explicit port", () => expect(applyPortToHost("[::1]:443", 11443)).toBe("[::1]:443"));
+    test("trims host whitespace", () => expect(applyPortToHost("  host  ", 443)).toBe("host:443"));
+    test("returns empty for empty host", () => expect(applyPortToHost("", 443)).toBe(""));
+    test("returns empty for null host", () => expect(applyPortToHost(null, 443)).toBe(""));
 });
 
 describe("buildStatusTimestampText", () => {
