@@ -52,6 +52,8 @@ In Node-RED:
 > **Tip:** For most actions, the incoming message is just a trigger — the node uses the device and action you configured in the editor.  
 > The only exception is **Control POE** with the *POE controlled by incoming message* action: send `true` to turn PoE on and `false` to turn it off.
 
+> **Custom port:** Each config node has an optional **Port** field. Leave it empty to use the default (`443` for Network/Protect, `12445` for Access). Set it when your controller listens on a custom port — for example a **UniFi OS server** that uses `11443`. A port written directly in the controller address (`host:port`) takes precedence over this field.
+
 <br/>
 <br/>
 <p align="left">
