@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.5
+
+- UniFi Network, Protect, and Access config: fixed self-signed certificate handling. The connection failed with `DEPTH_ZERO_SELF_SIGNED_CERT` (for example on UniFi OS / UXG controllers) because the **Security** option was easy to misread. The checkbox is now **Allow self-signed certificate**, enabled by default — matching the way UniFi controllers normally present their certificate. Uncheck it only when your controller uses a CA-signed certificate and you want strict verification. Existing nodes keep their previous behaviour (the setting is still stored as `rejectUnauthorized`). (#10)
+
 ## 1.0.4
 
 - UniFi Network, Protect, and Access config: added an optional **Port** field so you can connect to controllers that listen on a custom port instead of the default (for example UniFi OS server on `11443`). Leave it empty to keep the previous default (`443` for Network/Protect, `12445` for Access). A port written directly in the Controller field (`host:port`) still takes precedence. (#10)

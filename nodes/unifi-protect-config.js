@@ -28,7 +28,9 @@ module.exports = function(RED) {
         node.port = normalizePort(config.port);
         node.baseUrl = buildBaseUrlFromHost(node.host, node.port);
         node.authHeader = (config.authHeader || "X-API-Key").trim() || "X-API-Key";
-        node.rejectUnauthorized = config.rejectUnauthorized !== false && config.rejectUnauthorized !== "false";
+        // UniFi controllers almost always use self-signed certificates, so accept
+        // them unless the user explicitly opted into strict verification.
+        node.rejectUnauthorized = config.rejectUnauthorized === true || config.rejectUnauthorized === "true";
         node.nodeClients = [];
         node.wsDevices = null;
         node.wsEvents = null;

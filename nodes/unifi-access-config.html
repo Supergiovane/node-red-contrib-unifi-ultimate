@@ -29,11 +29,17 @@
             const $hostInput = $("#node-config-input-host");
             const $port = $("#node-config-input-port");
             const $apiToken = $("#node-config-input-apiToken");
-            const $rejectUnauthorized = $("#node-config-input-rejectUnauthorized");
+            const $allowSelfSigned = $("#node-config-input-allowSelfSigned");
             const $portRow = $port.closest(".form-row");
             const $apiTokenRow = $apiToken.closest(".form-row");
-            const $securityRow = $rejectUnauthorized.closest(".form-row");
+            const $securityRow = $allowSelfSigned.closest(".form-row");
             const $advancedRow = $("#node-config-row-advanced");
+
+            // The stored field is rejectUnauthorized, but the checkbox is shown as
+            // its inverse ("Allow self-signed certificate") because UniFi
+            // controllers almost always use self-signed certificates. Default to
+            // allowing them when no explicit strict value was saved.
+            $allowSelfSigned.prop("checked", node.rejectUnauthorized !== true && node.rejectUnauthorized !== "true");
 
             function syncProgressiveRows() {
                 const hasHost = String($hostInput.val() || node.host || "").trim() !== "";
@@ -55,6 +61,10 @@
             $hostInput.on("change input", function () {
                 syncProgressiveRows();
             });
+        },
+        oneditsave: function () {
+            // Persist the inverse of the "Allow self-signed certificate" checkbox.
+            this.rejectUnauthorized = !$("#node-config-input-allowSelfSigned").prop("checked");
         }
     });
 </script>
@@ -82,9 +92,9 @@
         <input type="password" id="node-config-input-apiToken" placeholder="Paste your UniFi Access token">
     </div>
     <div class="form-row">
-        <label for="node-config-input-rejectUnauthorized"><i class="fa fa-lock"></i> Security</label>
-        <input type="checkbox" id="node-config-input-rejectUnauthorized" style="display:inline-block; width:auto; vertical-align:top;">
-        <span style="margin-left:8px;">Secure connection only</span>
+        <label for="node-config-input-allowSelfSigned"><i class="fa fa-lock"></i> Security</label>
+        <input type="checkbox" id="node-config-input-allowSelfSigned" style="display:inline-block; width:auto; vertical-align:top;">
+        <span style="margin-left:8px;">Allow self-signed certificate</span>
     </div>
     <div id="node-config-row-advanced" class="unifi-ultimate-advanced">
         <div class="form-row">
@@ -103,7 +113,7 @@
     <p><b>Controller</b> accepts the UniFi Access host or <code>host:port</code>. If you omit the port, the node uses the default UniFi Access port automatically.</p>
     <p><b>Port</b> is optional. Leave it empty to use the default <code>12445</code>. Set it when your UniFi Access controller listens on a custom port. A port embedded directly in the Controller field (<code>host:port</code>) takes precedence over this field.</p>
     <p><b>API Token</b> is the bearer token used for authentication.</p>
-    <p><b>Security</b> controls certificate verification. Disable it only when your controller uses a self-signed certificate.</p>
+    <p><b>Security</b> &mdash; <b>Allow self-signed certificate</b> is enabled by default because UniFi controllers almost always present a self-signed certificate. Leave it checked for UniFi Access setups. Uncheck it only if your controller serves a certificate signed by a trusted certificate authority and you want strict verification.</p>
     <p><b>Name</b> is the config node name shown in the editor.</p>
 
     <h3>Usage</h3>

@@ -54,6 +54,8 @@ In Node-RED:
 
 > **Custom port:** Each config node has an optional **Port** field. Leave it empty to use the default (`443` for Network/Protect, `12445` for Access). Set it when your controller listens on a custom port — for example a **UniFi OS server** that uses `11443`. A port written directly in the controller address (`host:port`) takes precedence over this field.
 
+> **Self-signed certificates:** Each config node has an **Allow self-signed certificate** option, enabled by default. UniFi controllers almost always present a self-signed certificate, so keep it checked for UniFi OS / UXG setups. Uncheck it only if your controller uses a certificate signed by a trusted certificate authority and you want strict verification.
+
 <br/>
 <br/>
 <p align="left">

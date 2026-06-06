@@ -40,13 +40,19 @@
             const $hostInput = $("#node-config-input-host");
             const $port = $("#node-config-input-port");
             const $apiKey = $("#node-config-input-apiKey");
-            const $rejectUnauthorized = $("#node-config-input-rejectUnauthorized");
+            const $allowSelfSigned = $("#node-config-input-allowSelfSigned");
             const $powerObservationIntervalSeconds = $("#node-config-input-powerObservationIntervalSeconds");
             const $portRow = $port.closest(".form-row");
             const $apiKeyRow = $apiKey.closest(".form-row");
-            const $securityRow = $rejectUnauthorized.closest(".form-row");
+            const $securityRow = $allowSelfSigned.closest(".form-row");
             const $powerObservationRow = $powerObservationIntervalSeconds.closest(".form-row");
             const $advancedRow = $("#node-config-row-advanced");
+
+            // The stored field is rejectUnauthorized, but the checkbox is shown as
+            // its inverse ("Allow self-signed certificate") because UniFi
+            // controllers almost always use self-signed certificates. Default to
+            // allowing them when no explicit strict value was saved.
+            $allowSelfSigned.prop("checked", node.rejectUnauthorized !== true && node.rejectUnauthorized !== "true");
 
             function syncProgressiveRows() {
                 const hasHost = String($hostInput.val() || node.host || "").trim() !== "";
@@ -68,6 +74,10 @@
             $hostInput.on("change input", function () {
                 syncProgressiveRows();
             });
+        },
+        oneditsave: function () {
+            // Persist the inverse of the "Allow self-signed certificate" checkbox.
+            this.rejectUnauthorized = !$("#node-config-input-allowSelfSigned").prop("checked");
         }
     });
 </script>
@@ -95,9 +105,9 @@
         <input type="password" id="node-config-input-apiKey" placeholder="Paste your UniFi Network API key">
     </div>
     <div class="form-row">
-        <label for="node-config-input-rejectUnauthorized"><i class="fa fa-lock"></i> Security</label>
-        <input type="checkbox" id="node-config-input-rejectUnauthorized" style="display:inline-block; width:auto; vertical-align:top;">
-        <span style="margin-left:8px;">Secure connection only</span>
+        <label for="node-config-input-allowSelfSigned"><i class="fa fa-lock"></i> Security</label>
+        <input type="checkbox" id="node-config-input-allowSelfSigned" style="display:inline-block; width:auto; vertical-align:top;">
+        <span style="margin-left:8px;">Allow self-signed certificate</span>
     </div>
     <div class="form-row">
         <label for="node-config-input-powerObservationIntervalSeconds"><i class="fa fa-repeat"></i> Power Poll (s)</label>
@@ -120,7 +130,7 @@
     <p><b>Controller</b> accepts the UniFi OS host or IP address. The node builds the local UniFi Network proxy URL automatically.</p>
     <p><b>Port</b> is optional. Leave it empty to use the default <code>443</code>. Set it when your UniFi OS server listens on a custom port (for example <code>11443</code>). A port embedded directly in the Controller field (<code>host:port</code>) takes precedence over this field.</p>
     <p><b>API Key</b> is required for authentication and is sent as <code>X-API-Key</code>.</p>
-    <p><b>Security</b> controls certificate verification. Disable it only when your controller uses a self-signed certificate.</p>
+    <p><b>Security</b> &mdash; <b>Allow self-signed certificate</b> is enabled by default because UniFi controllers almost always present a self-signed certificate. Leave it checked for UniFi OS / UXG setups. Uncheck it only if your controller serves a certificate signed by a trusted certificate authority and you want strict verification.</p>
     <p><b>Power Poll (s)</b> is the global polling interval used by all <code>Control POE</code> nodes when action is <code>Emit Power Consumption</code>. It is optional and defaults to 15 seconds.</p>
     <p><b>Name</b> is the config node name shown in the editor.</p>
 
