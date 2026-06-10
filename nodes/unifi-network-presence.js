@@ -45,10 +45,14 @@ module.exports = function(RED) {
         node.pollIntervalSeconds = parsePositiveSeconds(config.pollInterval, 10);
         node.onlineHysteresisSeconds = parseNonNegativeSeconds(config.onlineHysteresis, 15);
         node.offlineHysteresisSeconds = parseNonNegativeSeconds(config.offlineHysteresis, 30);
+        // Optional "resend" timer: when > 0 the last saved presence value is
+        // re-emitted on this cadence even if it has not changed. 0 disables it.
+        node.repeatIntervalSeconds = parseNonNegativeSeconds(config.repeatInterval, 0);
         node.timeout = DEFAULT_REQUEST_TIMEOUT_MS;
         node.deviceName = resolveDeviceName(config.deviceName);
 
         node.isObserving = false;
+        node.repeatTimer = null;
         node.currentPresence = null;
         node.lastConnectedAt = 0;
         node.firstOnlineDetectedAt = 0;
@@ -108,6 +112,7 @@ module.exports = function(RED) {
                 pollIntervalSeconds: node.pollIntervalSeconds,
                 onlineHysteresisSeconds: node.onlineHysteresisSeconds,
                 offlineHysteresisSeconds: node.offlineHysteresisSeconds,
+                repeatIntervalSeconds: node.repeatIntervalSeconds,
                 ...(extra || {})
             };
         }
@@ -289,6 +294,33 @@ module.exports = function(RED) {
             }
         }
 
+        function resendCurrentPresence() {
+            // Re-emit the last debounced presence value without polling again.
+            // Skip until a value has actually been determined at least once.
+            if (node.currentPresence === null) {
+                return;
+            }
+            const clientId = resolveClientId(node.clientId);
+            if (!clientId) {
+                return;
+            }
+            emitPresence(node.currentPresence, clientId, "repeat", "repeat");
+        }
+
+        function stopRepeatTimer() {
+            if (node.repeatTimer) {
+                clearInterval(node.repeatTimer);
+                node.repeatTimer = null;
+            }
+        }
+
+        function startRepeatTimer() {
+            stopRepeatTimer();
+            if (node.repeatIntervalSeconds > 0) {
+                node.repeatTimer = setInterval(resendCurrentPresence, node.repeatIntervalSeconds * 1000);
+            }
+        }
+
         node.on("input", async function(_msg, send, done) {
             send = send || function() {
                 node.send.apply(node, arguments);
@@ -344,6 +376,7 @@ module.exports = function(RED) {
                 node.server.addClient(node);
             }
             startObservation();
+            startRepeatTimer();
             updateStatus();
             requestPresenceSnapshot("startup").then((snapshot) => {
                 processPresenceSnapshot(snapshot);
@@ -356,6 +389,7 @@ module.exports = function(RED) {
 
         node.on("close", function(done) {
             try {
+                stopRepeatTimer();
                 stopObservation();
                 if (node.server && typeof node.server.removeClient === "function") {
                     node.server.removeClient(node);

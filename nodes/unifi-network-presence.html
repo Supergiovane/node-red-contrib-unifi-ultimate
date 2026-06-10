@@ -12,7 +12,8 @@
             deviceName: { value: "" },
             pollInterval: { value: 10, required: true, validate: RED.validators.number() },
             onlineHysteresis: { value: 15, required: true, validate: RED.validators.number() },
-            offlineHysteresis: { value: 30, required: true, validate: RED.validators.number() }
+            offlineHysteresis: { value: 30, required: true, validate: RED.validators.number() },
+            repeatInterval: { value: 0, required: false, validate: RED.validators.number() }
         },
         inputs: 0,
         outputs: 2,
@@ -512,6 +513,10 @@
             <label for="node-input-offlineHysteresis"><i class="fa fa-hourglass-half"></i> Hysteresis (s)</label>
             <input type="text" id="node-input-offlineHysteresis" placeholder="30">
         </div>
+        <div class="form-row">
+            <label for="node-input-repeatInterval"><i class="fa fa-clock-o"></i> Resend (s)</label>
+            <input type="text" id="node-input-repeatInterval" placeholder="0 = off">
+        </div>
         <input type="hidden" id="node-input-deviceName">
     </div>
 </script>
@@ -527,6 +532,7 @@
     <p><b>Poll (s)</b> sets this node cadence for presence checks. Scheduling and fetch execution are handled by the shared Network config node.</p>
     <p><b>Connect Hysteresis (s)</b> delays the <code>true</code> output so brief reconnects do not flap.</p>
     <p><b>Hysteresis (s)</b> delays the <code>false</code> output to avoid flapping when the client disconnects briefly.</p>
+    <p><b>Resend (s)</b> optionally re-emits the last saved presence value on a fixed cadence, even when it has not changed. Leave it at <code>0</code> to disable (default). Repeated messages carry <code>msg.eventName = "repeat"</code> so you can tell them apart from state changes.</p>
     <p>Request timeout is handled automatically by the node.</p>
     <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different client from the list.</p>
 

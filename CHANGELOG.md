@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.7
+
+- UniFi Network **Presence Detection**: added an optional **Resend (s)** field. When set above `0`, the node re-emits the last known presence value on that cadence even when it has not changed — useful to keep a dashboard or home-automation system in sync. Resent messages carry `msg.eventName = "repeat"` (and `source: "repeat"` in the metadata) so they can be told apart from real state changes. Leave it at `0` to disable (default), preserving the previous behaviour.
+
 ## 1.0.6
 
 - New **Restart** node (UniFi Network): performs one of two mutually exclusive bulk actions on a saved, editable list of devices. **Restart devices** reboots every selected switch/AP; **Power cycle PoE ports** power-cycles every port currently delivering PoE on the selected switches. By default switches and access points are pre-selected (gateways/consoles/cloud keys are listed but unchecked); you can add or remove any device. The node emits a single summary message on Output 1 with per-device (and per-port) results.

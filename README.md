@@ -75,6 +75,7 @@ Use **Network** nodes to work with:
 Things you can do:
 
 - Check whether a device or phone is connected to your network.
+- Re-send the current presence state at a fixed interval with the Presence node's **Resend** field (e.g. to keep a dashboard or home-automation system in sync).
 - Count how many clients are currently online.
 - Create guest Wi-Fi vouchers.
 - Read CPU usage, memory, and uptime from a switch or access point.
@@ -145,7 +146,7 @@ Every node has **two outputs**:
 
 When an error occurs, the node status turns red and the error message comes out of the second output. Connect it to a **debug** node to see what happened, or wire it to any notification logic in your flow.
 
-**Repeat periodically** — for read actions, you can tick *Emit periodically* in the node editor to have the node send the result automatically at a fixed interval, without needing an Inject node.
+**Repeat periodically** — for read actions, you can tick *Emit periodically* in the node editor to have the node send the result automatically at a fixed interval, without needing an Inject node. The **Presence Detection** node offers a similar **Resend (s)** field: set it above `0` to re-emit the last known presence value on that cadence (even when unchanged). Resent messages carry `msg.eventName = "repeat"` so you can tell them apart from real state changes; leave it at `0` to disable.
 
 ## Example Flows
 
