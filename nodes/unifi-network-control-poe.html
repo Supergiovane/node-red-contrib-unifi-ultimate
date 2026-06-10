@@ -1107,7 +1107,7 @@
     <p><b>Connection</b> selects the shared UniFi Network config node.</p>
     <p><b>Search by</b> chooses how to target the port: select <code>Switch + Port</code> directly, or select a <code>Client</code> and let the node fill in the connected switch and port.</p>
     <p><b>Switch</b> selects the adopted UniFi switch. The selector is searchable.</p>
-    <p><b>Client</b> lists clients with known switch and port mapping. The selector is searchable.</p>
+    <p><b>Client</b> lists clients with known switch and port mapping. The selector is searchable and shows the user-defined client name (e.g. "iPhone di Massimo") when set, otherwise the device hostname.</p>
     <p><b>Port</b> selects the physical port index. Port labels include connected clients or downstream UniFi devices when available.</p>
     <p><b>Action</b> executes the configured PoE operation. <code>POE controlled by msg.payload</code> maps incoming payloads to PoE mode (<code>true</code> enables PoE, <code>false</code> disables PoE). Enable and Disable update the UniFi port override (<code>poe_mode</code> auto/off). Power Cycle uses the official Network port action. <code>Emit Power Consumption</code> emits power values from the shared observer in the config node.</p>
     <p><b>Power poll interval</b> for emit action is configured globally in <code>Unifi Network Config</code>. This node does not run its own timer.</p>

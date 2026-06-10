@@ -523,7 +523,7 @@
 
     <h3>Configuration</h3>
     <p><b>Connection</b> selects the shared UniFi Network config node.</p>
-    <p><b>Client</b> selects the client to track. The selector is searchable and opens with the complete list before filtering.</p>
+    <p><b>Client</b> selects the client to track. The selector is searchable and opens with the complete list before filtering. Each entry shows the user-defined client name (e.g. "iPhone di Massimo") when set, otherwise the device hostname. Known-but-offline clients are included too and marked with an <code>(offline)</code> label, so you can pick a target even while it is disconnected.</p>
     <p><b>Poll (s)</b> sets this node cadence for presence checks. Scheduling and fetch execution are handled by the shared Network config node.</p>
     <p><b>Connect Hysteresis (s)</b> delays the <code>true</code> output so brief reconnects do not flap.</p>
     <p><b>Hysteresis (s)</b> delays the <code>false</code> output to avoid flapping when the client disconnects briefly.</p>
