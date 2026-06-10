@@ -82,6 +82,7 @@ Things you can do:
 - Restart a UniFi device.
 - Power-cycle or turn on/off a PoE port.
 - Let the PoE node automatically find which port a client is connected to.
+- Restart a whole list of switches/APs at once, or power-cycle all their active PoE ports, with the **Restart** node.
 
 <br/>
 <br/>

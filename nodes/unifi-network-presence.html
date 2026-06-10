@@ -362,7 +362,7 @@
                             || item.online === false
                             || String(item.state || "").toLowerCase() === "offline";
                         const stateSuffix = isOffline
-                            ? ""
+                            ? " (offline)"
                             : (item.state ? " [" + item.state + "]" : "");
                         const $option = $("<option></option>")
                             .val(item.id)

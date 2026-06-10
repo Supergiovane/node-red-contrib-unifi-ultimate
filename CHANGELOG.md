@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.6
+
+- New **Restart** node (UniFi Network): performs one of two mutually exclusive bulk actions on a saved, editable list of devices. **Restart devices** reboots every selected switch/AP; **Power cycle PoE ports** power-cycles every port currently delivering PoE on the selected switches. By default switches and access points are pre-selected (gateways/consoles/cloud keys are listed but unchecked); you can add or remove any device. The node emits a single summary message on Output 1 with per-device (and per-port) results.
+- UniFi Network client lists now show the **user-defined name** (e.g. "iPhone di Massimo") instead of the device-reported hostname when an alias is set. This applies wherever clients are listed, including the **Presence Detection** and **Control POE** node editors.
+- UniFi Network **Presence Detection**: the client selector now marks **offline** clients with an explicit `(offline)` label so known-but-disconnected devices are easier to spot when choosing a target.
+
 ## 1.0.5
 
 - UniFi Network, Protect, and Access config: fixed self-signed certificate handling. The connection failed with `DEPTH_ZERO_SELF_SIGNED_CERT` (for example on UniFi OS / UXG controllers) because the **Security** option was easy to misread. The checkbox is now **Allow self-signed certificate**, enabled by default — matching the way UniFi controllers normally present their certificate. Uncheck it only when your controller uses a CA-signed certificate and you want strict verification. Existing nodes keep their previous behaviour (the setting is still stored as `rejectUnauthorized`). (#10)

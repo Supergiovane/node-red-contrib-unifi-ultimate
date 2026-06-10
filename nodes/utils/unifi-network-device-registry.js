@@ -679,7 +679,17 @@ function summarizeDevice(deviceType, device) {
         || item.status === "OFFLINE"
         || item.status === "offline"
         || String(item.state || "").trim().toLowerCase() === "offline";
-    const clientName = stripOfflineTag(String(item.hostname || item.name || item.displayName || item.macAddress || resourceId || "Client"));
+    // Prefer the user-defined alias (e.g. "iPhone di Massimo") over the
+    // device-reported hostname, matching the legacy known-client summary.
+    const clientName = stripOfflineTag(String(
+        item.name
+        || item.displayName
+        || item.display_name
+        || item.hostname
+        || item.macAddress
+        || resourceId
+        || "Client"
+    ));
 
     return {
         id: scopedId,

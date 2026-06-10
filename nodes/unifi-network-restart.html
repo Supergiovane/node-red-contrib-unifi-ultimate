@@ -1,0 +1,373 @@
+<link rel="stylesheet" type="text/css" href="resources/node-red-contrib-unifi-ultimate/editor/unifi-ultimate-editor-common.css">
+
+
+<script type="text/javascript">
+    RED.nodes.registerType("unifi-network-restart", {
+        category: "Unifi Ultimate",
+        color: "#CFE8FB",
+        defaults: {
+            name: { value: "" },
+            server: { value: "", type: "unifi-network-config", required: true },
+            operation: { value: "restartDevices", required: true },
+            deviceIds: { value: "[]" },
+            deviceNames: { value: "{}" }
+        },
+        inputs: 1,
+        outputs: 2,
+        icon: "unifi-u-logo-light-network.svg",
+        paletteLabel: "Restart",
+        outputLabels: ["result", "error"],
+        label: function () {
+            return this.name || "Restart";
+        },
+        oneditsave: function () {
+            const selected = [];
+            const names = {};
+            $("#unifi-restart-device-list input[type='checkbox']:checked").each(function () {
+                const id = String($(this).attr("data-id") || "").trim();
+                if (!id) {
+                    return;
+                }
+                selected.push(id);
+                names[id] = String($(this).attr("data-name") || "").trim() || id;
+            });
+
+            $("#node-input-deviceIds").val(JSON.stringify(selected));
+            $("#node-input-deviceNames").val(JSON.stringify(names));
+        },
+        oneditprepare: function () {
+            const node = this;
+            const $server = $("#node-input-server");
+            const $operation = $("#node-input-operation");
+            const $listRow = $("#node-row-deviceList");
+            const $list = $("#unifi-restart-device-list");
+            const $count = $("#unifi-restart-selected-count");
+            const $filter = $("#unifi-restart-filter");
+            const $refresh = $("#node-input-refreshDevices");
+            const $status = $("#unifi-restart-list-status");
+
+            let loadedServerId = "";
+            let loadingPromise = null;
+
+            function parseStoredIds() {
+                try {
+                    const parsed = JSON.parse(String(node.deviceIds || "[]"));
+                    return Array.isArray(parsed) ? parsed.map(function (id) { return String(id || "").trim(); }).filter(Boolean) : [];
+                } catch (error) {
+                    return [];
+                }
+            }
+
+            function hasSelection($field) {
+                return String($field.val() || "").trim() !== "";
+            }
+
+            function requestJson(url) {
+                return new Promise(function (resolve, reject) {
+                    $.getJSON(url, function (data) {
+                        resolve(data);
+                    }).fail(function (xhr) {
+                        reject(xhr);
+                    });
+                });
+            }
+
+            // Gateways, consoles and cloud keys are not switches/APs, so they are
+            // available in the list but never checked by default.
+            function isGatewayLike(item) {
+                const raw = item && item.raw && typeof item.raw === "object" ? item.raw : {};
+                const type = String(raw.type || "").trim().toLowerCase();
+                if (["udm", "ugw", "uxg", "ucg", "uck"].indexOf(type) !== -1) {
+                    return true;
+                }
+                const haystack = [
+                    item && item.name,
+                    item && item.state,
+                    raw.model,
+                    raw.modelName,
+                    raw.type
+                ].map(function (value) { return String(value || "").toLowerCase(); }).join(" ");
+                return /dream|gateway|\budm\b|\buxg\b|\bucg\b|\bugw\b|cloud ?key|\buck\b|console/.test(haystack);
+            }
+
+            function updateSelectedCount() {
+                const total = $("#unifi-restart-device-list input[type='checkbox']").length;
+                const checked = $("#unifi-restart-device-list input[type='checkbox']:checked").length;
+                $count.text(checked + " / " + total + " selected");
+            }
+
+            function renderDevices(items) {
+                const storedIds = parseStoredIds();
+                const hasStoredSelection = storedIds.length > 0;
+                const storedSet = {};
+                storedIds.forEach(function (id) { storedSet[id] = true; });
+
+                $list.empty();
+
+                if (!Array.isArray(items) || items.length === 0) {
+                    $list.append($("<div class='unifi-restart-empty'></div>").text("No UniFi Network devices found."));
+                    updateSelectedCount();
+                    return;
+                }
+
+                items
+                    .slice()
+                    .sort(function (a, b) {
+                        return String(a.name || a.id).localeCompare(String(b.name || b.id));
+                    })
+                    .forEach(function (item) {
+                        const id = String(item.id || "").trim();
+                        if (!id) {
+                            return;
+                        }
+                        const name = String(item.name || id).trim();
+                        const model = String(item.state || "").trim();
+                        const checked = hasStoredSelection ? Boolean(storedSet[id]) : !isGatewayLike(item);
+
+                        const $row = $("<label class='unifi-restart-device-row'></label>");
+                        const $checkbox = $("<input type='checkbox'>")
+                            .attr("data-id", id)
+                            .attr("data-name", name)
+                            .prop("checked", checked);
+                        $checkbox.on("change", updateSelectedCount);
+
+                        $row.append($checkbox);
+                        $row.append($("<span class='unifi-restart-device-name'></span>").text(name));
+                        if (model) {
+                            $row.append($("<span class='unifi-restart-device-model'></span>").text(model));
+                        }
+                        $list.append($row);
+                    });
+
+                applyFilter();
+                updateSelectedCount();
+            }
+
+            function applyFilter() {
+                const term = String($filter.val() || "").trim().toLowerCase();
+                $("#unifi-restart-device-list .unifi-restart-device-row").each(function () {
+                    const text = String($(this).text() || "").toLowerCase();
+                    $(this).toggle(term === "" || text.indexOf(term) !== -1);
+                });
+            }
+
+            function loadDevices(force) {
+                const serverId = String($server.val() || "").trim();
+                if (!serverId || serverId === "_ADD_") {
+                    $list.empty();
+                    $status.text("");
+                    updateSelectedCount();
+                    return Promise.resolve();
+                }
+
+                if (!force && serverId === loadedServerId && loadingPromise) {
+                    return loadingPromise;
+                }
+
+                $status.text("Loading devices...");
+                loadedServerId = serverId;
+                loadingPromise = requestJson("unifiNetwork/devices?serverId=" + encodeURIComponent(serverId) + "&deviceType=device")
+                    .then(function (devices) {
+                        renderDevices(devices);
+                        $status.text("");
+                    })
+                    .catch(function (xhr) {
+                        $list.empty();
+                        const message = xhr && xhr.responseJSON && xhr.responseJSON.error
+                            ? xhr.responseJSON.error
+                            : "Unable to load devices.";
+                        $status.text(message);
+                        updateSelectedCount();
+                    });
+                return loadingPromise;
+            }
+
+            function syncRows() {
+                $listRow.toggle(hasSelection($server));
+            }
+
+            // Wire up controls.
+            $operation.val(this.operation || "restartDevices");
+
+            $filter.on("input", applyFilter);
+
+            $("#unifi-restart-select-all").on("click", function (event) {
+                event.preventDefault();
+                $("#unifi-restart-device-list .unifi-restart-device-row:visible input[type='checkbox']").prop("checked", true);
+                updateSelectedCount();
+            });
+
+            $("#unifi-restart-select-none").on("click", function (event) {
+                event.preventDefault();
+                $("#unifi-restart-device-list .unifi-restart-device-row:visible input[type='checkbox']").prop("checked", false);
+                updateSelectedCount();
+            });
+
+            $refresh.on("click", function (event) {
+                event.preventDefault();
+                loadDevices(true);
+            });
+
+            $server.on("change", function () {
+                syncRows();
+                loadDevices(false);
+            });
+
+            syncRows();
+            loadDevices(false);
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="unifi-network-restart">
+    <div class="form-row unifi-ultimate-product-logo-row">
+        <img class="unifi-ultimate-product-logo" src="resources/node-red-contrib-unifi-ultimate/logos/unifi-network-black.svg" alt="UniFi Network logo" onerror="this.closest('.unifi-ultimate-product-logo-row').style.display='none';">
+    </div>
+    <div class="form-row">
+        <label for="node-input-server"><i class="fa fa-cog"></i> Connection</label>
+        <input type="text" id="node-input-server">
+    </div>
+    <div class="form-row">
+        <label for="node-input-operation"><i class="fa fa-power-off"></i> Operation</label>
+        <select id="node-input-operation">
+            <option value="restartDevices">Restart devices</option>
+            <option value="powerCyclePoe">Power cycle PoE ports</option>
+        </select>
+    </div>
+    <div class="form-row" id="node-row-deviceList" style="display:none;">
+        <label style="vertical-align:top;"><i class="fa fa-list"></i> Devices</label>
+        <div class="unifi-restart-device-panel">
+            <div class="unifi-restart-toolbar">
+                <input type="text" id="unifi-restart-filter" placeholder="Filter devices...">
+                <a href="#" id="unifi-restart-select-all" class="editor-button">All</a>
+                <a href="#" id="unifi-restart-select-none" class="editor-button">None</a>
+                <a href="#" id="node-input-refreshDevices" class="editor-button" title="Reload devices" aria-label="Reload devices"><i class="fa fa-refresh"></i></a>
+            </div>
+            <div id="unifi-restart-device-list" class="unifi-restart-device-list"></div>
+            <div class="unifi-restart-list-footer">
+                <span id="unifi-restart-selected-count">0 / 0 selected</span>
+                <span id="unifi-restart-list-status" class="unifi-restart-list-status"></span>
+            </div>
+        </div>
+    </div>
+    <div class="form-row">
+        <div class="unifi-ultimate-card unifi-ultimate-warning">
+            <strong>This action is disruptive.</strong>
+            <div><b>Restart devices</b> reboots every selected switch/AP. <b>Power cycle PoE ports</b> drops power on each active PoE port of the selected switches, disconnecting attached devices.</div>
+        </div>
+    </div>
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Node name">
+    </div>
+    <input type="hidden" id="node-input-deviceIds">
+    <input type="hidden" id="node-input-deviceNames">
+</script>
+
+<script type="text/html" data-help-name="unifi-network-restart">
+    <p>Restarts a list of UniFi Network devices, or power-cycles their PoE ports, in a single batch.</p>
+
+    <h3>Configuration</h3>
+    <p><b>Connection</b> selects the shared UniFi Network config node.</p>
+    <p><b>Operation</b> chooses one of two mutually exclusive actions:</p>
+    <ul>
+        <li><code>Restart devices</code> — reboots each selected device (UniFi <code>RESTART</code> action).</li>
+        <li><code>Power cycle PoE ports</code> — power-cycles every port currently delivering PoE on each selected device (UniFi <code>POWER_CYCLE</code> action). Devices with no active PoE ports are skipped.</li>
+    </ul>
+    <p><b>Devices</b> lists every adopted UniFi Network device. By default switches and access points are pre-selected; gateways, consoles and cloud keys are listed but unchecked. Add or remove devices freely — the selection is saved with the node. Use <code>All</code>/<code>None</code> and the filter box to manage long lists.</p>
+
+    <h3>Input</h3>
+    <ul>
+        <li>Any incoming message triggers the configured operation on the saved device list.</li>
+        <li>Input message properties are ignored.</li>
+    </ul>
+
+    <h3>Outputs</h3>
+    <dl class="message-properties">
+        <dt>Output 1 — result</dt>
+        <dd>A single summary message emitted after the whole batch completes.</dd>
+        <dt class="optional">msg.payload.operation</dt>
+        <dd><code>restartDevices</code> or <code>powerCyclePoe</code>.</dd>
+        <dt class="optional">msg.payload.total / succeeded / failed</dt>
+        <dd>Counts across all selected devices.</dd>
+        <dt class="optional">msg.payload.results</dt>
+        <dd>Per-device outcome (<code>ok</code>, device name, site/resource ids, errors). For PoE mode each entry also includes the per-port results.</dd>
+        <dt class="optional">msg.topic</dt>
+        <dd>Node name from the editor.</dd>
+    </dl>
+    <dl class="message-properties">
+        <dt>Output 2 — error</dt>
+        <dd>Emitted only on a setup failure (missing config or empty device selection). Per-device API errors are reported inside the Output 1 summary, not here.</dd>
+    </dl>
+</script>
+
+<style>
+    .unifi-restart-device-panel {
+        display: inline-block;
+        width: 70%;
+        vertical-align: top;
+    }
+    .unifi-restart-toolbar {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        margin-bottom: 6px;
+    }
+    .unifi-restart-toolbar #unifi-restart-filter {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+    .unifi-restart-device-list {
+        max-height: 220px;
+        overflow-y: auto;
+        border: 1px solid var(--red-ui-form-input-border-color, #ccc);
+        border-radius: 4px;
+        padding: 4px 6px;
+        background: var(--red-ui-form-input-background, #fff);
+    }
+    /* Node-RED styles every `.form-row label` as a fixed-width inline-block,
+       which would tile our rows into a grid. Override it explicitly. */
+    #unifi-restart-device-list .unifi-restart-device-row {
+        display: flex !important;
+        align-items: center;
+        gap: 8px;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 3px 2px;
+        font-weight: normal;
+        cursor: pointer;
+        box-sizing: border-box;
+        vertical-align: top;
+    }
+    #unifi-restart-device-list .unifi-restart-device-row input[type='checkbox'] {
+        margin: 0 !important;
+        width: auto !important;
+        flex: 0 0 auto;
+    }
+    #unifi-restart-device-list .unifi-restart-device-name {
+        flex: 1 1 auto;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    #unifi-restart-device-list .unifi-restart-device-model {
+        flex: 0 0 auto;
+        opacity: 0.6;
+        font-size: 0.85em;
+        white-space: nowrap;
+    }
+    .unifi-restart-list-footer {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 4px;
+        font-size: 0.85em;
+        opacity: 0.8;
+    }
+    .unifi-restart-list-status {
+        color: var(--red-ui-text-color-error, #b30000);
+    }
+    .unifi-restart-empty {
+        opacity: 0.6;
+        padding: 6px 2px;
+    }
+</style>
