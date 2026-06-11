@@ -50,7 +50,7 @@ In Node-RED:
 7. Send any message into the node to run the action.
 
 > **Tip:** For most actions, the incoming message is just a trigger — the node uses the device and action you configured in the editor.  
-> The only exception is **Control POE** with the *POE controlled by incoming message* action: send `true` to turn PoE on and `false` to turn it off.
+> The only exception is **Clients Control** with a *controlled by msg.payload* action: send `true` to enable (PoE or the port) and `false` to disable it, on every target in its list.
 
 > **Custom port:** Each config node has an optional **Port** field. Leave it empty to use the default (`443` for Network/Protect, `12445` for Access). Set it when your controller listens on a custom port — for example a **UniFi OS server** that uses `11443`. A port written directly in the controller address (`host:port`) takes precedence over this field.
 
@@ -81,8 +81,9 @@ Things you can do:
 - Read CPU usage, memory, and uptime from a switch or access point.
 - Read the temperature of a switch (where supported).
 - Restart a UniFi device.
-- Power-cycle or turn on/off a PoE port.
-- Let the PoE node automatically find which port a client is connected to.
+- Control a **list of clients/ports** at once with the **Clients Control** node: pick targets by switch+port or by client (its uplink switch/port is resolved automatically) and apply one action to all of them, getting a single summary message back.
+- Switch PoE on/off or power-cycle it, and **enable/disable the whole switch port** (the UniFi *Port State* toggle), driven by the editor or by `msg.payload`.
+- Let **Clients Control** automatically find which switch port a client is connected to.
 - Restart a whole list of switches/APs at once, or power-cycle all their active PoE ports, with the **Restart** node.
 
 <br/>
