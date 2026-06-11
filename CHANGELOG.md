@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.8
+
+> ⚠️ **Breaking changes** — see the marked items below. The internal node type id is unchanged (`unifi-network-control-poe`), so existing nodes keep working and single-target nodes migrate automatically to a one-entry list, but the **POE node output shape changed** and the **client list contents changed**.
+
+- **Control POE → renamed to "Clients Control"** and reworked to control a **list of targets** instead of a single one. Pick a target (a switch port, or a client whose uplink switch/port is resolved automatically) and use **Add to list**; the configured action runs on every target in the list. Existing single-target nodes are migrated automatically. The palette/editor label changes but the node type id is unchanged, so wiring is preserved.
+- New **Control** selector on the Clients Control node:
+  - `PoE` — the existing PoE actions (PoE controlled by `msg.payload`, Enable PoE, Disable PoE, Power Cycle, and Emit Power Consumption — the latter only with a single target).
+  - `Enable/Disable port` — administratively enables or disables the whole switch port, exactly like the UniFi **Port State** toggle. Disabling cuts all traffic and PoE on the port. Implemented through the UniFi port override `forward` field (verified against the controller): Disable writes the same bundle as the UI (`forward=disabled` + VLAN block + native cleared + port security on); Enable reverts a disabled port and restores VLAN/native, leaving already-enabled ports untouched.
+- 🔴 **Breaking — POE/port output is now a single summary message.** Output 1 emits `{ action, total, ok, failed, results[] }` (one entry per target, each with `ok` or `error`) instead of the raw API response. Flows that read fields such as `msg.payload.portIdx` from the old single-target node must be updated. The `Emit Power Consumption` action keeps its original per-port message shape.
+- 🔴 **Breaking — Client list resolution rewritten.** The Client picker now resolves the attached switch and port from the authoritative UniFi uplink data (each device's own uplink, and each wired client's `sw_mac`/`sw_port`), mirroring the UniFi UI. As a result: UniFi devices (APs, downstream switches, LTE failover, …) are now listed **by name**; switches are no longer shown as bogus clients with wrong ports; entries show the user-defined name (or MAC when none). Wi‑Fi‑only clients (no switch port) are no longer listed, since they cannot be PoE/port controlled.
+- UniFi Network **Restart**: fixed the **Devices** filter box, which did not filter the list (a CSS `!important` rule overrode jQuery's inline hide). Filtering now works, and the `All`/`None` buttons act only on the visible (matching) devices.
+- Clients Control editor: grouped the target picker (Search by / Switch / Client / Port / Add) into a distinct boxed area, and the **Client** field now opens empty so reopening the node no longer triggers a pointless switch/port lookup.
+
 ## 1.0.7
 
 - UniFi Network **Presence Detection**: added an optional **Resend (s)** field. When set above `0`, the node re-emits the last known presence value on that cadence even when it has not changed — useful to keep a dashboard or home-automation system in sync. Resent messages carry `msg.eventName = "repeat"` (and `source: "repeat"` in the metadata) so they can be told apart from real state changes. Leave it at `0` to disable (default), preserving the previous behaviour.

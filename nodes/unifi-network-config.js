@@ -2753,23 +2753,23 @@ module.exports = function(RED) {
         };
 
         node.fetchClientsWithAttachment = async () => {
-            let clients = [];
-            let devices = [];
+            // Build the picker list from the two authoritative legacy sources:
+            //  - stat/device -> each UniFi device's own uplink (parent switch + port)
+            //  - stat/sta    -> each wired client's sw_mac + sw_port
+            // The parent switch identity/name comes from the official device list,
+            // so both clients and UniFi devices (APs, LTE failover, downstream
+            // switches) are listed by name with the correct parent port.
+            let officialDevices = [];
             try {
-                clients = await node.fetchDevices("client");
+                officialDevices = await node.fetchDevices("device");
             } catch (error) {
-                clients = [];
-            }
-            try {
-                devices = await node.fetchDevices("device");
-            } catch (error) {
-                devices = [];
+                officialDevices = [];
             }
 
-            const deviceNameByScopedId = new Map();
             const deviceNameByKey = new Map();
             const deviceScopedIdByKey = new Map();
-            devices.forEach((entry) => {
+            const siteIds = new Set();
+            officialDevices.forEach((entry) => {
                 const item = entry && typeof entry === "object" && !Array.isArray(entry)
                     ? entry
                     : null;
@@ -2782,13 +2782,14 @@ module.exports = function(RED) {
                 if (!scopedId) {
                     return;
                 }
+                if (siteId) {
+                    siteIds.add(siteId);
+                }
                 const summary = summarizeDevice("device", item);
                 const deviceName = normalizeString(summary.name || resourceId || scopedId);
-                deviceNameByScopedId.set(scopedId, deviceName);
                 [
                     item.id,
                     item.deviceId,
-                    item.device_id,
                     item.macAddress,
                     item.mac_address,
                     item.mac,
@@ -2807,215 +2808,105 @@ module.exports = function(RED) {
                 });
             });
 
-            function resolveAttachedDeviceId(attachment) {
-                const rawKey = normalizeString(attachment && attachment.resourceId).toLowerCase();
-                const compactKey = normalizeIdentifierKey(attachment && attachment.resourceId);
-                return deviceScopedIdByKey.get(rawKey)
+            function resolveParentDevice(parentMac, fallbackName) {
+                const rawKey = normalizeString(parentMac).toLowerCase();
+                const compactKey = normalizeIdentifierKey(parentMac);
+                const scopedId = deviceScopedIdByKey.get(rawKey)
                     || deviceScopedIdByKey.get(compactKey)
-                    || encodeScopedDeviceId(attachment && attachment.siteId, attachment && attachment.resourceId);
-            }
-
-            function resolveAttachedDeviceName(attachment, attachedDeviceId) {
-                const rawKey = normalizeString(attachment && attachment.resourceId).toLowerCase();
-                const compactKey = normalizeIdentifierKey(attachment && attachment.resourceId);
-                return firstNonEmptyString([
-                    deviceNameByScopedId.get(attachedDeviceId),
+                    || "";
+                const name = firstNonEmptyString([
                     deviceNameByKey.get(rawKey),
                     deviceNameByKey.get(compactKey),
-                    attachment && attachment.resourceId
+                    fallbackName,
+                    parentMac
                 ]);
+                return { scopedId, name };
             }
 
-            const attachedClients = clients
-                .map((entry) => {
-                    const item = entry && typeof entry === "object" && !Array.isArray(entry)
-                        ? entry
-                        : null;
-                    if (!item) {
-                        return null;
-                    }
-
-                    const fallbackClientId = firstNonEmptyString([
-                        item.id,
-                        item.clientId,
-                        item.deviceId,
-                        item.macAddress
-                    ]);
-                    const attachment = resolveClientUplinkAttachment(item, fallbackClientId);
-                    if (!attachment) {
-                        return null;
-                    }
-
-                    const clientSummary = summarizeDevice("client", item);
-                    const attachedDeviceId = resolveAttachedDeviceId(attachment);
-                    if (!attachedDeviceId) {
-                        return null;
-                    }
-
-                    const attachedDeviceName = resolveAttachedDeviceName(attachment, attachedDeviceId);
-
-                    return {
-                        ...clientSummary,
-                        attachment: {
-                            deviceId: attachedDeviceId,
-                            portIdx: attachment.portIdx,
-                            deviceName: attachedDeviceName
-                        }
-                    };
-                })
-                .filter(Boolean);
-
-            const siteIds = new Set();
-            clients.forEach((client) => {
-                const siteId = normalizeString(client && (client.siteId || client.site_id));
-                if (siteId) {
-                    siteIds.add(siteId);
-                }
-            });
-            devices.forEach((device) => {
-                const siteId = normalizeString(device && (device.siteId || device.site_id));
-                if (siteId) {
-                    siteIds.add(siteId);
-                }
-            });
-
-            const legacyClients = [];
-            const legacyDevices = [];
-            await Promise.all(Array.from(siteIds).map(async (siteId) => {
-                try {
-                    const [siteClients, siteDevices] = await Promise.all([
-                        fetchLegacyKnownClients(siteId),
-                        fetchLegacyDevices(siteId)
-                    ]);
-                    legacyClients.push(...siteClients);
-                    legacyDevices.push(...siteDevices);
-                } catch (error) {
-                }
-            }));
-
-            const legacyClientsByKey = new Map();
-            legacyClients.forEach((legacyClient) => {
-                [
-                    legacyClient && legacyClient.macAddress,
-                    legacyClient && legacyClient.mac,
-                    legacyClient && legacyClient.id,
-                    legacyClient && legacyClient.clientId
-                ].forEach((value) => {
-                    const compactKey = normalizeIdentifierKey(value);
-                    if (compactKey && !legacyClientsByKey.has(compactKey)) {
-                        legacyClientsByKey.set(compactKey, legacyClient);
-                    }
-                });
-            });
-
-            const seenClientIds = new Set();
-            attachedClients.forEach((client) => {
-                [
-                    client && client.id,
-                    client && client.resourceId,
-                    client && client.macAddress,
-                    client && client.raw && client.raw.macAddress,
-                    client && client.raw && client.raw.mac
-                ].forEach((value) => {
-                    const rawKey = normalizeString(value);
-                    const compactKey = normalizeIdentifierKey(value);
-                    if (rawKey) {
-                        seenClientIds.add(rawKey);
-                    }
-                    if (compactKey) {
-                        seenClientIds.add(compactKey);
-                    }
-                });
-            });
-
-            function addLegacyAttachedClient(legacyClient, attachment) {
-                const attachedDeviceId = resolveAttachedDeviceId(attachment);
-                if (!attachedDeviceId) {
+            const attachedClients = [];
+            const seenKeys = new Set();
+            function addEndpoint(endpoint, fallbackParentName) {
+                const normalizedPort = parsePortIndex(endpoint && endpoint.portIdx);
+                const parentMac = normalizeString(endpoint && endpoint.parentMac);
+                if (!Number.isInteger(normalizedPort) || !parentMac) {
                     return;
                 }
-
-                const siteId = normalizeString(legacyClient && legacyClient.siteId || attachment && attachment.siteId);
-                const normalizedClient = buildLegacyClientSummary(legacyClient, siteId);
-                const clientSummary = summarizeDevice("client", normalizedClient);
-                const clientKeys = [
-                    clientSummary.id,
-                    clientSummary.resourceId,
-                    normalizedClient.macAddress,
-                    normalizedClient.mac,
-                    normalizedClient.id
-                ].flatMap((value) => {
-                    const rawKey = normalizeString(value);
-                    const compactKey = normalizeIdentifierKey(value);
-                    return [rawKey, compactKey].filter(Boolean);
-                });
-                if (clientKeys.some((key) => seenClientIds.has(key))) {
+                const parent = resolveParentDevice(parentMac, fallbackParentName);
+                if (!parent.scopedId) {
+                    // The port lives on a switch we do not know how to address.
                     return;
                 }
-                clientKeys.forEach((key) => seenClientIds.add(key));
+                const endpointId = firstNonEmptyString([endpoint && endpoint.id, endpoint && endpoint.name]);
+                const dedupeKey = normalizeIdentifierKey(endpointId);
+                if (!endpointId || !dedupeKey || seenKeys.has(dedupeKey)) {
+                    return;
+                }
+                seenKeys.add(dedupeKey);
 
+                const online = endpoint && endpoint.online === true;
                 attachedClients.push({
-                    ...clientSummary,
+                    id: endpointId,
+                    name: stripOfflineTag(firstNonEmptyString([endpoint && endpoint.name, endpointId])) || endpointId,
+                    isOnline: online,
+                    online,
+                    offline: !online,
+                    state: online ? "online" : "offline",
                     attachment: {
-                        deviceId: attachedDeviceId,
-                        portIdx: attachment.portIdx,
-                        deviceName: resolveAttachedDeviceName(attachment, attachedDeviceId)
+                        deviceId: parent.scopedId,
+                        portIdx: normalizedPort,
+                        deviceName: parent.name
                     }
                 });
             }
 
-            legacyClients.forEach((legacyClient) => {
-                const siteId = normalizeString(legacyClient && legacyClient.siteId);
-                const attachment = resolveLegacyClientAttachment(legacyClient, siteId);
-                if (!attachment) {
-                    return;
+            await Promise.all(Array.from(siteIds).map(async (siteId) => {
+                let legacyDevices = [];
+                let legacyStations = [];
+                try {
+                    legacyDevices = await fetchLegacyDevices(siteId);
+                } catch (error) {
+                    legacyDevices = [];
+                }
+                try {
+                    legacyStations = await fetchLegacySiteCollection(siteId, "/stat/sta");
+                } catch (error) {
+                    legacyStations = [];
                 }
 
-                addLegacyAttachedClient(legacyClient, attachment);
-            });
-
-            legacyDevices.forEach((legacyDevice) => {
-                const siteId = normalizeString(legacyDevice && legacyDevice.siteId);
-                const deviceResourceId = firstNonEmptyString([
-                    legacyDevice && legacyDevice.mac,
-                    legacyDevice && legacyDevice.device_id,
-                    legacyDevice && legacyDevice.id,
-                    legacyDevice && legacyDevice._id
-                ]);
-                const ports = Array.isArray(legacyDevice && legacyDevice.port_table)
-                    ? legacyDevice.port_table
-                    : [];
-
-                ports.forEach((port) => {
-                    const lastConnection = port && port.last_connection && typeof port.last_connection === "object"
-                        ? port.last_connection
+                // UniFi devices addressed by their own uplink to the parent port.
+                legacyDevices.forEach((device) => {
+                    const uplink = device && device.uplink && typeof device.uplink === "object" && !Array.isArray(device.uplink)
+                        ? device.uplink
                         : null;
-                    const clientMac = firstNonEmptyString([
-                        lastConnection && lastConnection.mac,
-                        lastConnection && lastConnection.macAddress,
-                        lastConnection && lastConnection.mac_address
-                    ]);
-                    const portIdx = parsePortIndex(port && port.port_idx);
-                    if (!siteId || !deviceResourceId || !clientMac || !Number.isInteger(portIdx)) {
+                    if (!uplink) {
                         return;
                     }
-
-                    const clientKey = normalizeIdentifierKey(clientMac);
-                    const knownClient = legacyClientsByKey.get(clientKey) || {};
-                    const legacyClient = {
-                        ...knownClient,
-                        mac: knownClient.mac || knownClient.macAddress || clientMac,
-                        ip: knownClient.ip || knownClient.ipAddress || lastConnection.ip,
-                        ipAddress: knownClient.ipAddress || knownClient.ip || lastConnection.ip,
-                        __unifiUltimateOnline: lastConnection.connected === true,
-                        siteId
-                    };
-                    const attachment = {
-                        siteId,
-                        resourceId: deviceResourceId,
-                        portIdx
-                    };
-                    addLegacyAttachedClient(legacyClient, attachment);
+                    addEndpoint({
+                        id: firstNonEmptyString([device.mac, device._id, device.device_id, device.id]),
+                        name: firstNonEmptyString([device.name, device.hostname, device.mac]),
+                        online: device.state === 1 || device.state === "1",
+                        parentMac: uplink.uplink_mac,
+                        portIdx: uplink.uplink_remote_port
+                    }, uplink.uplink_device_name);
                 });
+
+                // Wired clients addressed by their switch uplink (sw_mac/sw_port).
+                legacyStations.forEach((station) => {
+                    if (!station || station.is_wired === false) {
+                        return;
+                    }
+                    addEndpoint({
+                        id: firstNonEmptyString([station.mac, station._id, station.user_id]),
+                        name: firstNonEmptyString([station.name, station.hostname, station.mac]),
+                        online: true,
+                        parentMac: station.sw_mac,
+                        portIdx: station.sw_port
+                    });
+                });
+            }));
+
+            attachedClients.sort((a, b) => {
+                return String(a.name || a.id).localeCompare(String(b.name || b.id));
             });
 
             return attachedClients;

@@ -10,39 +10,37 @@
             server: { value: "", type: "unifi-network-config", required: true },
             selectionMode: { value: "switchPort", required: true },
             clientLookupId: { value: "" },
-            deviceId: { value: "", required: true },
+            deviceId: { value: "" },
             deviceName: { value: "" },
-            portIdx: { value: 1, required: true, validate: RED.validators.number() },
-            action: { value: "msgPayload", required: true }
+            portIdx: { value: 1 },
+            controlType: { value: "poe", required: true },
+            action: { value: "msgPayload", required: true },
+            targets: {
+                value: "[]",
+                validate: function (value) {
+                    try {
+                        const parsed = JSON.parse(value || "[]");
+                        return Array.isArray(parsed) && parsed.length > 0;
+                    } catch (error) {
+                        return false;
+                    }
+                }
+            }
         },
         inputs: 1,
         outputs: 2,
         icon: "unifi-u-logo-light-network.svg",
-        paletteLabel: "Control POE",
+        paletteLabel: "Clients Control",
         outputLabels: ["result", "error"],
         label: function () {
-            return this.name || "Control POE";
+            return this.name || "Clients Control";
         },
         oneditsave: function () {
+            // The clients list is persisted through the hidden #node-input-targets
+            // field. Here we only keep the dynamic input-pin visibility in sync:
+            // the streaming power-observation action accepts no input trigger.
             const actionValue = String($("#node-input-action").val() || "").trim().toLowerCase();
             const opensObservation = ["emitpowerconsumption"].includes(actionValue);
-            const selectionMode = String($("#node-input-selectionMode").val() || "switchPort").trim();
-
-            if (selectionMode === "client") {
-                const $selectedClient = $("#node-input-clientLookupId option:selected");
-                const derivedDeviceId = String($selectedClient.attr("data-attached-device-id") || "").trim();
-                const derivedPortIdx = String($selectedClient.attr("data-attached-port-idx") || "").trim();
-                if (derivedDeviceId && derivedPortIdx !== "") {
-                    $("#node-input-deviceId").val(derivedDeviceId);
-                    $("#node-input-portIdx").val(derivedPortIdx);
-                    this.deviceId = derivedDeviceId;
-                    const numericPortIdx = Number(derivedPortIdx);
-                    this.portIdx = Number.isFinite(numericPortIdx)
-                        ? Math.trunc(numericPortIdx)
-                        : derivedPortIdx;
-                }
-            }
-
             this.inputs = opensObservation ? 0 : 1;
         },
         oneditprepare: function () {
@@ -54,6 +52,8 @@
             const $deviceId = $("#node-input-deviceId");
             const $clientLookupId = $("#node-input-clientLookupId");
             const $portIdx = $("#node-input-portIdx");
+            const $controlType = $("#node-input-controlType");
+            const $controlTypeRow = $("#node-row-controlType");
             const $action = $("#node-input-action");
             const $refreshDevices = $("#node-input-refreshDevices");
             const $refreshClients = $("#node-input-refreshClients");
@@ -64,6 +64,11 @@
             const $actionRow = $action.closest(".form-row");
             const $warningRow = $(".unifi-ultimate-warning").closest(".form-row");
             const $advancedRow = $("#node-row-advanced");
+            const $addTarget = $("#node-input-addTarget");
+            const $addRow = $("#node-row-addTarget");
+            const $pickerBox = $("#node-row-picker");
+            const $targetsRow = $("#node-row-targets");
+            let targetList = [];
             let suspendChangeHandling = false;
             let isInitializingEditor = true;
             let clientTargetsPopulated = false;
@@ -83,16 +88,190 @@
                 const hasSwitch = hasSelection($deviceId);
                 const hasPort = hasSelection($portIdx);
                 const hasClient = hasSelection($clientLookupId);
-                const hasTarget = mode === "client" ? hasClient : (hasSwitch && hasPort);
+                // A "current selection" is what the Add button would append; the
+                // action and downstream rows depend on the accumulated list.
+                const hasCurrentSelection = mode === "client" ? hasClient : (hasSwitch && hasPort);
+                const hasList = targetList.length > 0;
                 const hasAction = hasSelection($action);
 
+                $pickerBox.toggle(hasServer);
                 $selectionModeRow.toggle(hasServer);
                 $rowSwitch.toggle(hasServer && mode === "switchPort");
                 $rowPort.toggle(hasServer && mode === "switchPort" && hasSwitch);
                 $rowClient.toggle(hasServer && mode === "client");
-                $actionRow.toggle(hasServer && hasTarget);
-                $warningRow.toggle(hasServer && hasTarget && hasAction);
-                $advancedRow.toggle(hasServer && hasTarget && hasAction);
+                $addRow.toggle(hasServer && hasCurrentSelection);
+                $targetsRow.toggle(hasServer);
+                $controlTypeRow.toggle(hasServer && hasList);
+                $actionRow.toggle(hasServer && hasList);
+                $warningRow.toggle(hasServer && hasList && hasAction);
+                $advancedRow.toggle(hasServer && hasList && hasAction);
+            }
+
+            function targetKey(target) {
+                return String(target.deviceId) + "|" + String(target.portIdx);
+            }
+
+            function persistTargets() {
+                $("#node-input-targets").val(JSON.stringify(targetList));
+            }
+
+            function getCurrentSelectionTarget() {
+                if (getSelectionMode() === "client") {
+                    const $selected = $clientLookupId.find("option:selected");
+                    const deviceId = String($selected.attr("data-attached-device-id") || "").trim();
+                    const portRaw = String($selected.attr("data-attached-port-idx") || "").trim();
+                    const clientId = String($clientLookupId.val() || "").trim();
+                    const portIdx = Number(portRaw);
+                    if (!deviceId || portRaw === "" || !Number.isFinite(portIdx) || !clientId) {
+                        return null;
+                    }
+                    const clientName = String($selected.attr("data-client-name") || "").trim();
+                    const switchName = String($selected.attr("data-attached-device-name") || "Switch").trim();
+                    return {
+                        deviceId: deviceId,
+                        portIdx: portIdx,
+                        clientId: clientId,
+                        name: (clientName || clientId) + " → " + switchName + " p" + portIdx
+                    };
+                }
+
+                const deviceId = String($deviceId.val() || "").trim();
+                const portRaw = String($portIdx.val() || "").trim();
+                const portIdx = Number(portRaw);
+                if (!deviceId || deviceId === "_ADD_" || portRaw === "" || !Number.isFinite(portIdx)) {
+                    return null;
+                }
+                const deviceName = getSelectedDeviceName() || deviceId;
+                return {
+                    deviceId: deviceId,
+                    portIdx: portIdx,
+                    clientId: "",
+                    name: deviceName + " p" + portIdx
+                };
+            }
+
+            function renderTargetList() {
+                const $list = $("#unifi-poe-target-list");
+                $list.empty();
+
+                if (targetList.length === 0) {
+                    $list.append(
+                        $("<div class='unifi-poe-target-empty'></div>")
+                            .text("No clients added yet. Pick a target above and click \"Add to list\".")
+                    );
+                } else {
+                    targetList.forEach(function (target, index) {
+                        const $row = $("<div class='unifi-poe-target-row'></div>");
+                        $row.append(
+                            $("<span class='unifi-poe-target-name'></span>")
+                                .text(target.name || (target.deviceId + " p" + target.portIdx))
+                        );
+                        $row.append($("<span class='unifi-poe-target-meta'></span>").text("p" + target.portIdx));
+                        const $remove = $("<a href='#' class='unifi-poe-target-remove' title='Remove'><i class='fa fa-times'></i></a>");
+                        $remove.on("click", function (event) {
+                            event.preventDefault();
+                            targetList.splice(index, 1);
+                            renderTargetList();
+                            syncPowerActionAvailability();
+                            refreshSummary();
+                        });
+                        $row.append($remove);
+                        $list.append($row);
+                    });
+                }
+
+                $("#unifi-poe-target-count").text(targetList.length + " selected");
+                persistTargets();
+            }
+
+            function addCurrentTarget() {
+                const target = getCurrentSelectionTarget();
+                if (!target) {
+                    RED.notify("Select a switch port or a client first.", "warning");
+                    return;
+                }
+                if (targetList.some(function (existing) { return targetKey(existing) === targetKey(target); })) {
+                    RED.notify("That port is already in the list.", "info");
+                    return;
+                }
+
+                targetList.push(target);
+                renderTargetList();
+                syncPowerActionAvailability();
+                refreshSummary();
+            }
+
+            function syncPowerActionAvailability() {
+                // The streaming "Emit Power Consumption" action only makes sense
+                // for a single target, so it is disabled for lists of 0 or 2+.
+                const $option = $action.find("option[value='emitPowerConsumption']");
+                const allowed = targetList.length === 1;
+                $option.prop("disabled", !allowed);
+                if (!allowed && getSelectedActionValue() === "emitpowerconsumption") {
+                    $action.val("msgPayload");
+                    refreshActionUi();
+                }
+            }
+
+            function initTargetList() {
+                let stored = [];
+                try {
+                    if (Array.isArray(node.targets)) {
+                        stored = node.targets;
+                    } else if (typeof node.targets === "string" && node.targets.trim()) {
+                        stored = JSON.parse(node.targets);
+                    }
+                } catch (error) {
+                    stored = [];
+                }
+                if (!Array.isArray(stored)) {
+                    stored = [];
+                }
+
+                const seen = {};
+                targetList = stored.map(function (entry) {
+                    if (!entry || typeof entry !== "object") {
+                        return null;
+                    }
+                    const deviceId = String(entry.deviceId || "").trim();
+                    const portIdx = Number(entry.portIdx);
+                    if (!deviceId || !Number.isFinite(portIdx)) {
+                        return null;
+                    }
+                    return {
+                        deviceId: deviceId,
+                        portIdx: portIdx,
+                        clientId: String(entry.clientId || "").trim(),
+                        name: String(entry.name || "").trim()
+                    };
+                }).filter(function (entry) {
+                    if (!entry) {
+                        return false;
+                    }
+                    const key = targetKey(entry);
+                    if (seen[key]) {
+                        return false;
+                    }
+                    seen[key] = true;
+                    return true;
+                });
+
+                // Migrate a legacy single-target node into a one-entry list.
+                if (targetList.length === 0) {
+                    const legacyDeviceId = String(node.deviceId || "").trim();
+                    const legacyPortRaw = String(node.portIdx === undefined || node.portIdx === null ? "" : node.portIdx).trim();
+                    const legacyPort = Number(legacyPortRaw);
+                    if (legacyDeviceId && legacyPortRaw !== "" && Number.isFinite(legacyPort)) {
+                        targetList.push({
+                            deviceId: legacyDeviceId,
+                            portIdx: legacyPort,
+                            clientId: String(node.clientLookupId || "").trim(),
+                            name: String(node.deviceName || "").trim() || (legacyDeviceId + " p" + legacyPort)
+                        });
+                    }
+                }
+
+                persistTargets();
             }
 
             function setClientWaitOverlay(visible, message) {
@@ -125,6 +304,38 @@
 
             function getSelectedActionValue() {
                 return String($action.val() || node.action || "msgPayload").trim().toLowerCase();
+            }
+
+            function getControlType() {
+                return String($controlType.val() || node.controlType || "poe").trim() === "port" ? "port" : "poe";
+            }
+
+            function renderActionOptions() {
+                // The action list depends on the chosen control domain. PoE keeps
+                // its full set; port mode only enables/disables the switch port.
+                const controlType = getControlType();
+                const current = String($action.val() || node.action || "msgPayload").trim();
+                const options = controlType === "port"
+                    ? [
+                        ["msgPayload", "Port controlled by msg.payload"],
+                        ["enable", "Enable port"],
+                        ["disable", "Disable port"]
+                    ]
+                    : [
+                        ["msgPayload", "POE controlled by msg.payload"],
+                        ["enable", "Enable PoE"],
+                        ["disable", "Disable PoE"],
+                        ["cycle", "Power Cycle"],
+                        ["emitPowerConsumption", "Emit Power Consumption"]
+                    ];
+
+                $action.empty();
+                options.forEach(function (option) {
+                    $action.append($("<option></option>").val(option[0]).text(option[1]));
+                });
+
+                const hasCurrent = options.some(function (option) { return option[0] === current; });
+                $action.val(hasCurrent ? current : "msgPayload");
             }
 
             function selectedActionObservesPower() {
@@ -675,42 +886,25 @@
                 refreshSummary();
             }
 
-            function renderSavedClientSelection() {
-                const savedClientId = String(node.clientLookupId || "").trim();
-                const savedClientName = String(node.deviceName || "").trim();
-                const savedDeviceId = String(node.deviceId || "").trim();
-                const savedPortIdx = String(node.portIdx || "").trim();
+            function renderEmptyClientSelection() {
+                // Open with an empty Client picker: restoring a saved client would
+                // trigger a pointless switch/port resolution on every open. The
+                // configured targets already live in the list, and the picker is
+                // only used to add new ones.
                 suspendChangeHandling = true;
                 try {
                     $clientLookupId.empty();
                     $clientLookupId.append($("<option></option>").val("").text("Choose a client target"));
-                    if (savedClientId) {
-                        const label = savedClientName || savedClientId;
-                        const $savedOption = $("<option></option>")
-                            .val(savedClientId)
-                            .text(label)
-                            .attr("data-client-name", label);
-                        if (savedDeviceId) {
-                            $savedOption.attr("data-attached-device-id", savedDeviceId);
-                        }
-                        if (savedPortIdx !== "") {
-                            $savedOption.attr("data-attached-port-idx", savedPortIdx);
-                        }
-                        $clientLookupId.append($savedOption);
-                        $clientLookupId.val(savedClientId);
-                    } else {
-                        $clientLookupId.val("");
-                    }
+                    $clientLookupId.val("");
                 } finally {
                     suspendChangeHandling = false;
                 }
 
                 clientTargetsLoading = false;
-                clientTargetsPopulated = savedClientId !== "";
+                clientTargetsPopulated = false;
                 makeSelectSearchable($clientLookupId, "Search clients");
                 bindLazyClientLookupLoad();
                 updateDerivedTargetFieldsState();
-                rememberSelectedTargetName();
                 refreshSummary();
             }
 
@@ -842,58 +1036,6 @@
                 return clientsRequestPromise;
             }
 
-            function applySelectedClientTarget(options) {
-                const settings = options && typeof options === "object" ? options : {};
-                const shouldSyncName = settings.syncName === true;
-                const $selected = $clientLookupId.find("option:selected");
-                const targetDeviceId = String($selected.attr("data-attached-device-id") || "").trim();
-                const targetPortIdx = String($selected.attr("data-attached-port-idx") || "").trim();
-                if (!targetDeviceId || targetPortIdx === "") {
-                    rememberSelectedTargetName();
-                    if (shouldSyncName) {
-                        syncNameFromSelection();
-                    }
-                    refreshSummary();
-                    return Promise.resolve();
-                }
-
-                const ensureDevicePresent = hasOptionValue($deviceId, targetDeviceId)
-                    ? Promise.resolve()
-                    : loadDevices();
-
-                return ensureDevicePresent.then(function () {
-                    if (!hasOptionValue($deviceId, targetDeviceId)) {
-                        refreshSummary();
-                        return;
-                    }
-
-                    suspendChangeHandling = true;
-                    try {
-                        $deviceId.val(targetDeviceId);
-                    } finally {
-                        suspendChangeHandling = false;
-                    }
-                    makeSelectSearchable($deviceId, "Search switches");
-
-                    return loadPorts().then(function () {
-                        if (hasOptionValue($portIdx, targetPortIdx)) {
-                            suspendChangeHandling = true;
-                            try {
-                                $portIdx.val(targetPortIdx);
-                            } finally {
-                                suspendChangeHandling = false;
-                            }
-                        }
-
-                        rememberSelectedTargetName();
-                        if (shouldSyncName) {
-                            syncNameFromSelection();
-                        }
-                        refreshSummary();
-                    });
-                });
-            }
-
             function loadEditorData(options) {
                 const settings = options && typeof options === "object" ? options : {};
                 const shouldLoadClients = settings.loadClients === true;
@@ -905,10 +1047,6 @@
                         force: settings.forceClients === true,
                         showLoading: settings.showClientsLoading !== false
                     });
-                }).then(function () {
-                    if (getSelectionMode() === "client") {
-                        return applySelectedClientTarget();
-                    }
                 }).finally(function () {
                     refreshSummary();
                 });
@@ -953,6 +1091,12 @@
             });
 
             $portIdx.on("change", refreshSummary);
+            $controlType.on("change", function () {
+                renderActionOptions();
+                syncPowerActionAvailability();
+                refreshActionUi();
+                refreshSummary();
+            });
             $action.on("change", function () {
                 refreshActionUi();
                 refreshSummary();
@@ -964,10 +1108,11 @@
                 refreshSelectionModeUi();
                 rememberSelectedTargetName();
                 if (getSelectionMode() === "client") {
+                    // Only load the client dropdown so the user can pick one. The
+                    // switch/port for the chosen client lives on the option's
+                    // data-attached-* attributes, so there is nothing to resolve.
                     withClientWait("Loading client targets...", function () {
-                        return loadClients({ showLoading: false }).then(function () {
-                            return applySelectedClientTarget();
-                        });
+                        return loadClients({ showLoading: false });
                     });
                 } else {
                     refreshSummary();
@@ -980,42 +1125,42 @@
                 rememberSelectedTargetName();
                 const isUserSelection = $clientLookupId.data("unifi-user-selection") === true;
                 $clientLookupId.removeData("unifi-user-selection");
-                if (getSelectionMode() === "client") {
-                    withClientWait("Resolving client switch and port...", function () {
-                        return applySelectedClientTarget({ syncName: isUserSelection });
-                    });
-                } else {
-                    refreshSummary();
+                if (isUserSelection) {
+                    syncNameFromSelection();
                 }
+                refreshSummary();
             });
 
             $refreshDevices.on("click", function (event) {
                 event.preventDefault();
-                loadDevices().then(function () {
-                    if (getSelectionMode() === "client") {
-                        return applySelectedClientTarget();
-                    }
-                });
+                loadDevices();
             });
             $refreshClients.on("click", function (event) {
                 event.preventDefault();
                 withClientWait("Loading client targets...", function () {
-                    return loadClients({ force: true }).then(function () {
-                        if (getSelectionMode() === "client") {
-                            return applySelectedClientTarget();
-                        }
-                    });
+                    return loadClients({ force: true });
                 });
+            });
+            $addTarget.on("click", function (event) {
+                event.preventDefault();
+                // The selected client option already carries its switch/port in its
+                // data-attached-* attributes (read by getCurrentSelectionTarget),
+                // so adding never needs a separate switch/port resolution.
+                addCurrentTarget();
             });
 
             ensureDefaultServerSelection();
             $selectionMode.val(String(node.selectionMode || "switchPort"));
-            $action.val(String(node.action || "msgPayload"));
-            if (!$action.val()) {
-                $action.val("msgPayload");
+            $controlType.val(String(node.controlType || "poe"));
+            if (!$controlType.val()) {
+                $controlType.val("poe");
             }
+            renderActionOptions();
             makeSelectSearchable($deviceId, "Search switches");
-            renderSavedClientSelection();
+            renderEmptyClientSelection();
+            initTargetList();
+            renderTargetList();
+            syncPowerActionAvailability();
             refreshSelectionModeUi();
             refreshActionUi();
             $refreshDevices.find("i").addClass("fa-spin");
@@ -1048,6 +1193,8 @@
         <label for="node-input-server"><i class="fa fa-cog"></i> Connection</label>
         <input type="text" id="node-input-server">
     </div>
+    <div id="node-row-picker" class="unifi-poe-picker">
+        <div class="unifi-poe-picker-title"><i class="fa fa-search"></i> Pick a target, then add it</div>
     <div class="form-row">
         <label for="node-input-selectionMode"><i class="fa fa-crosshairs"></i> Search by</label>
         <select id="node-input-selectionMode">
@@ -1073,7 +1220,31 @@
         <label for="node-input-portIdx"><i class="fa fa-plug"></i> Port</label>
         <select id="node-input-portIdx"></select>
     </div>
-    <div class="form-row">
+    <div class="form-row" id="node-row-addTarget">
+        <label>&nbsp;</label>
+        <a href="#" id="node-input-addTarget" class="editor-button" title="Add the selected target to the list">
+            <i class="fa fa-plus"></i> Add to list
+        </a>
+    </div>
+    </div>
+    <div class="form-row" id="node-row-targets">
+        <label style="vertical-align:top;"><i class="fa fa-list"></i> Clients</label>
+        <div class="unifi-poe-targets-panel">
+            <div id="unifi-poe-target-list" class="unifi-poe-target-list"></div>
+            <div class="unifi-poe-target-footer">
+                <span id="unifi-poe-target-count" class="unifi-poe-target-count">0 selected</span>
+            </div>
+        </div>
+    </div>
+    <input type="hidden" id="node-input-targets">
+    <div class="form-row" id="node-row-controlType">
+        <label for="node-input-controlType"><i class="fa fa-sliders"></i> Control</label>
+        <select id="node-input-controlType">
+            <option value="poe">PoE</option>
+            <option value="port">Enable/Disable port</option>
+        </select>
+    </div>
+    <div class="form-row" id="node-row-action">
         <label for="node-input-action"><i class="fa fa-power-off"></i> Action</label>
         <select id="node-input-action">
             <option value="msgPayload">POE controlled by msg.payload</option>
@@ -1085,8 +1256,8 @@
     </div>
     <div class="form-row">
         <div class="unifi-ultimate-card unifi-ultimate-warning">
-            <strong>Power actions can disconnect devices.</strong>
-            <div>Use Disable or Power Cycle only when you are sure the selected port is correct.</div>
+            <strong>These actions can disconnect devices.</strong>
+            <div>Disabling PoE, power-cycling, or disabling the port cuts power and/or traffic to whatever is attached. Use them only when you are sure the selected ports are correct.</div>
         </div>
     </div>
     <div id="node-row-advanced" class="unifi-ultimate-advanced">
@@ -1098,18 +1269,92 @@
     </div>
 </script>
 
+<style>
+    .unifi-poe-picker {
+        background: var(--red-ui-secondary-background, #f7f9fb);
+        border: 1px solid var(--red-ui-secondary-border-color, #d9d9d9);
+        border-left: 3px solid #5b9bd5;
+        border-radius: 6px;
+        padding: 10px 12px 2px;
+        margin-bottom: 14px;
+    }
+    .unifi-poe-picker-title {
+        font-size: 0.78em;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        opacity: 0.65;
+        margin-bottom: 8px;
+    }
+    .unifi-poe-targets-panel {
+        display: inline-block;
+        width: 70%;
+        vertical-align: top;
+    }
+    .unifi-poe-target-list {
+        max-height: 160px;
+        overflow-y: auto;
+        border: 1px solid var(--red-ui-form-input-border-color, #ccc);
+        border-radius: 4px;
+        padding: 4px 6px;
+        background: var(--red-ui-form-input-background, #fff);
+    }
+    #unifi-poe-target-list .unifi-poe-target-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 3px 2px;
+    }
+    #unifi-poe-target-list .unifi-poe-target-name {
+        flex: 1 1 auto;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    #unifi-poe-target-list .unifi-poe-target-meta {
+        flex: 0 0 auto;
+        opacity: 0.6;
+        font-size: 0.85em;
+    }
+    #unifi-poe-target-list .unifi-poe-target-remove {
+        flex: 0 0 auto;
+        color: var(--red-ui-text-color-error, #b30000);
+        text-decoration: none;
+    }
+    .unifi-poe-target-empty {
+        opacity: 0.6;
+        padding: 6px 2px;
+    }
+    .unifi-poe-target-footer {
+        display: flex;
+        justify-content: flex-end;
+        margin-top: 4px;
+        font-size: 0.85em;
+        opacity: 0.8;
+    }
+</style>
+
 <script type="text/html" data-help-name="unifi-network-control-poe">
     <p><a href="https://www.youtube.com/watch?v=ZOq7M5mgUBk&list=PL9Yh1bjbLAYrWKtMlopN0swuQXbdJ8MFJ" target="_blank" rel="noopener noreferrer"><img src="resources/node-red-contrib-unifi-ultimate/logos/youtube-icon.svg" alt="YouTube" width="24" height="18" style="vertical-align:text-bottom; margin-right:6px;">Youtube Tutorials</a></p>
 
-    <p>Controls PoE on a selected UniFi switch port.</p>
+    <p>Controls PoE on a list of UniFi switch ports. Build the list by picking a target (a switch port, or a client whose uplink switch/port is resolved automatically) and clicking <b>Add to list</b>. When triggered, the configured action runs on every target in the list and a single summary message is emitted.</p>
 
     <h3>Configuration</h3>
     <p><b>Connection</b> selects the shared UniFi Network config node.</p>
-    <p><b>Search by</b> chooses how to target the port: select <code>Switch + Port</code> directly, or select a <code>Client</code> and let the node fill in the connected switch and port.</p>
+    <p><b>Search by</b> chooses how to pick a target before adding it: select <code>Switch + Port</code> directly, or select a <code>Client</code> and let the node fill in the connected switch and port.</p>
     <p><b>Switch</b> selects the adopted UniFi switch. The selector is searchable.</p>
     <p><b>Client</b> lists clients with known switch and port mapping. The selector is searchable and shows the user-defined client name (e.g. "iPhone di Massimo") when set, otherwise the device hostname.</p>
     <p><b>Port</b> selects the physical port index. Port labels include connected clients or downstream UniFi devices when available.</p>
-    <p><b>Action</b> executes the configured PoE operation. <code>POE controlled by msg.payload</code> maps incoming payloads to PoE mode (<code>true</code> enables PoE, <code>false</code> disables PoE). Enable and Disable update the UniFi port override (<code>poe_mode</code> auto/off). Power Cycle uses the official Network port action. <code>Emit Power Consumption</code> emits power values from the shared observer in the config node.</p>
+    <p><b>Add to list</b> appends the currently selected target (switch port or resolved client) to the <b>Clients</b> list. Duplicates (same switch and port) are ignored. Remove a target with the ✕ button next to it.</p>
+    <p><b>Control</b> chooses what is controlled on each target port:</p>
+    <ul>
+        <li><code>PoE</code> — controls Power-over-Ethernet on the port (the attached device keeps its link but loses/gains power).</li>
+        <li><code>Enable/Disable port</code> — administratively enables or disables the whole switch port, exactly like the UniFi <em>Port State</em> toggle. Disabling cuts <em>all</em> traffic and PoE on that port, disconnecting whatever is attached. Implemented through the UniFi port override <code>forward</code> field (verified against the controller): Disable sets <code>forward=disabled</code> and preserves the rest of the port config. Enable acts only on a disabled port (an already-enabled port is left untouched): it sets <code>forward=all</code> and, if the port had been disabled from the UniFi UI (which also blocks VLANs and clears the native network), it restores <code>tagged_vlan_mgmt=auto</code>, <code>port_security_enabled=false</code> and the site default native network.</li>
+    </ul>
+    <p><b>Action</b> is applied to <em>every</em> target in the list, and its choices depend on <b>Control</b>:</p>
+    <ul>
+        <li><b>PoE:</b> <code>POE controlled by msg.payload</code> (<code>true</code> enables, <code>false</code> disables), <code>Enable PoE</code>, <code>Disable PoE</code>, <code>Power Cycle</code>, and <code>Emit Power Consumption</code> (single target only).</li>
+        <li><b>Enable/Disable port:</b> <code>Port controlled by msg.payload</code> (<code>true</code> enables the port, <code>false</code> disables it), <code>Enable port</code>, and <code>Disable port</code>.</li>
+    </ul>
     <p><b>Power poll interval</b> for emit action is configured globally in <code>Unifi Network Config</code>. This node does not run its own timer.</p>
     <p>Request timeout is handled automatically by the node.</p>
     <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different switch or client target.</p>
@@ -1125,22 +1370,21 @@
     <h3>Outputs</h3>
     <dl class="message-properties">
         <dt>Output 1 — result</dt>
-        <dd>Emitted after the configured action completes successfully.</dd>
-        <dt class="optional">msg.payload</dt>
-        <dd>API response payload.</dd>
+        <dd>A single summary message emitted after the action has been attempted on every target in the list. Per-target failures are reported inside the summary, not on the error output.</dd>
+        <dt class="optional">msg.payload.action</dt>
+        <dd>The action applied to the list (e.g. <code>DISABLE_POE</code>).</dd>
+        <dt class="optional">msg.payload.total / ok / failed</dt>
+        <dd>Counts of targets processed, succeeded, and failed.</dd>
+        <dt class="optional">msg.payload.results</dt>
+        <dd>Array with one entry per target: <code>name</code>, <code>deviceId</code>, <code>portIdx</code>, <code>action</code>, <code>ok</code>, and either <code>portName</code>/<code>portPowerW</code>/<code>powerConsumptionSwitchTotal</code> on success or <code>error</code> on failure.</dd>
         <dt class="optional">msg.topic</dt>
         <dd>Node name from the editor.</dd>
-        <dt class="optional">msg.deviceName</dt>
-        <dd>Remembered name of the selected switch or client.</dd>
         <dt class="optional">msg.eventName</dt>
         <dd>Action that produced the message.</dd>
         <dt class="optional">msg.details.unifiNetworkPoe</dt>
-        <dd>Metadata with device, site, action, and port details. Includes <code>portPowerW</code> for the selected port when available.</dd>
-        <dt class="optional">msg.payload.powerConsumptionSwitchTotal</dt>
-        <dd>Sum of PoE power draw for all switch ports (watts) when available.</dd>
-        <dt class="optional">msg.payload.portPowerW / msg.payload.powerChanged</dt>
-        <dd>Available in power-consumption emit messages.</dd>
+        <dd>Summary metadata (action and total/ok/failed counts).</dd>
     </dl>
+    <p>The <code>Emit Power Consumption</code> action (single target only) keeps its original per-port message shape, including <code>msg.payload.portPowerW</code>, <code>msg.payload.powerConsumptionSwitchTotal</code> and <code>msg.payload.powerChanged</code>.</p>
     <dl class="message-properties">
         <dt>Output 2 — error</dt>
         <dd>Emitted when the action fails (API error, timeout, or configuration problem). The node status also turns red. Errors are additionally forwarded to any connected <code>catch</code> node.</dd>
@@ -1185,24 +1429,27 @@
     </table>
     <p>Example output (pin 1):</p>
     <pre><code>{
-  "topic": "POE Soffitta Port 2",
-  "deviceName": "Soffitta",
-  "eventName": "request:enable",
+  "topic": "Clients Control",
+  "eventName": "request:DISABLE_POE",
   "payload": {
-    "status": "ok",
-    "deviceName": "Soffitta",
-    "portIdx": 2,
-    "portName": "Port 2",
-    "portPowerW": 2.6,
-    "powerConsumptionSwitchTotal": 36.4
+    "action": "DISABLE_POE",
+    "total": 3,
+    "ok": 2,
+    "failed": 1,
+    "results": [
+      { "name": "UA-Intercom → Sala tecnica p5", "deviceId": "…", "portIdx": 5,
+        "action": "DISABLE_POE", "ok": true, "portName": "Port 5", "portPowerW": 4.1 },
+      { "name": "Caldaia p2", "deviceId": "…", "portIdx": 2,
+        "action": "DISABLE_POE", "ok": true },
+      { "name": "NAS p8", "deviceId": "…", "portIdx": 8,
+        "action": "DISABLE_POE", "ok": false, "error": "PoE control request failed (504)." }
+    ]
   },
   "details": {
     "unifiNetworkPoe": {
       "nodeType": "poe-control",
-      "action": "enable",
-      "portIdx": 2,
-      "portPowerW": 2.6,
-      "powerConsumptionSwitchTotal": 36.4
+      "action": "DISABLE_POE",
+      "total": 3, "ok": 2, "failed": 1
     }
   }
 }</code></pre>

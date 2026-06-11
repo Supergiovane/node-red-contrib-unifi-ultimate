@@ -147,7 +147,11 @@
                 const term = String($filter.val() || "").trim().toLowerCase();
                 $("#unifi-restart-device-list .unifi-restart-device-row").each(function () {
                     const text = String($(this).text() || "").toLowerCase();
-                    $(this).toggle(term === "" || text.indexOf(term) !== -1);
+                    const matches = term === "" || text.indexOf(term) !== -1;
+                    // Toggle a class (not inline display) because the row's
+                    // `display: flex !important` rule would override jQuery's
+                    // inline `display:none` and keep filtered rows visible.
+                    $(this).toggleClass("unifi-restart-hidden", !matches);
                 });
             }
 
@@ -338,6 +342,9 @@
         cursor: pointer;
         box-sizing: border-box;
         vertical-align: top;
+    }
+    #unifi-restart-device-list .unifi-restart-device-row.unifi-restart-hidden {
+        display: none !important;
     }
     #unifi-restart-device-list .unifi-restart-device-row input[type='checkbox'] {
         margin: 0 !important;

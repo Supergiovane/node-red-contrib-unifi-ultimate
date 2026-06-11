@@ -53,6 +53,68 @@ function resolvePortIdx(configuredPortIdx) {
     return NaN;
 }
 
+function normalizeTargetEntry(entry) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        return null;
+    }
+    const deviceId = String(entry.deviceId || "").trim();
+    const portIdx = resolvePortIdx(entry.portIdx);
+    if (!deviceId || !Number.isFinite(portIdx)) {
+        return null;
+    }
+    return {
+        deviceId,
+        portIdx,
+        clientId: String(entry.clientId || "").trim(),
+        name: String(entry.name || "").trim()
+    };
+}
+
+function parseConfiguredTargets(rawTargets, legacyDeviceId, legacyPortIdx, legacyName, legacyClientId) {
+    let list = [];
+    if (Array.isArray(rawTargets)) {
+        list = rawTargets;
+    } else if (typeof rawTargets === "string" && rawTargets.trim()) {
+        try {
+            const parsed = JSON.parse(rawTargets);
+            list = Array.isArray(parsed) ? parsed : [];
+        } catch (error) {
+            list = [];
+        }
+    }
+
+    const normalized = [];
+    const seen = new Set();
+    list.forEach((entry) => {
+        const target = normalizeTargetEntry(entry);
+        if (!target) {
+            return;
+        }
+        const key = target.deviceId + "|" + target.portIdx;
+        if (seen.has(key)) {
+            return;
+        }
+        seen.add(key);
+        normalized.push(target);
+    });
+
+    if (normalized.length === 0) {
+        // Migrate a legacy single-target node into a one-entry list so existing
+        // flows keep working after the upgrade to a clients list.
+        const legacy = normalizeTargetEntry({
+            deviceId: legacyDeviceId,
+            portIdx: legacyPortIdx,
+            name: legacyName,
+            clientId: legacyClientId
+        });
+        if (legacy) {
+            normalized.push(legacy);
+        }
+    }
+
+    return normalized;
+}
+
 function resolveConfiguredAction(value) {
     const normalized = String(value || "").trim();
     const lower = normalized.toLowerCase();
@@ -99,6 +161,45 @@ function resolveConfiguredAction(value) {
         type: "powerCycle",
         payloadAction: upper
     };
+}
+
+function resolveControlType(value) {
+    return String(value || "poe").trim().toLowerCase() === "port" ? "port" : "poe";
+}
+
+function resolvePortConfiguredAction(value) {
+    const normalized = String(value || "").trim();
+    const lower = normalized.toLowerCase();
+    const upper = normalized.toUpperCase();
+
+    if (["msgpayload", "payload", "poecontrolledbymsgpayload", "portcontrolledbymsgpayload"].includes(lower)) {
+        return {
+            type: "portFromPayload",
+            payloadAction: "PORT_CONTROLLED_BY_MSG_PAYLOAD"
+        };
+    }
+
+    if (["DISABLE", "OFF", "POWER_OFF", "DISABLE_PORT"].includes(upper)) {
+        return {
+            type: "portForward",
+            payloadAction: "DISABLE_PORT",
+            forward: "disabled"
+        };
+    }
+
+    // Anything else (Enable/On and the empty default) enables the port. Enabling
+    // restores forwarding of all networks on the port override.
+    return {
+        type: "portForward",
+        payloadAction: "ENABLE_PORT",
+        forward: "all"
+    };
+}
+
+function resolveEffectiveConfiguredAction(controlType, value) {
+    return controlType === "port"
+        ? resolvePortConfiguredAction(value)
+        : resolveConfiguredAction(value);
 }
 
 function resolvePayloadBoolean(value) {
@@ -159,28 +260,6 @@ function summarizeSelectedPort(port) {
     };
 }
 
-function attachPortConsumptionToPayload(payload, selectedPort, powerConsumptionSwitchTotal) {
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-        return payload;
-    }
-
-    const outputPayload = {
-        ...payload,
-        powerConsumptionSwitchTotal: Number.isFinite(Number(powerConsumptionSwitchTotal))
-            ? Number(powerConsumptionSwitchTotal)
-            : payload.powerConsumptionSwitchTotal
-    };
-
-    if (!selectedPort || typeof selectedPort !== "object") {
-        return outputPayload;
-    }
-
-    outputPayload.portIdx = selectedPort.idx !== undefined ? selectedPort.idx : payload.portIdx;
-    outputPayload.portName = selectedPort.name || payload.portName;
-    outputPayload.portPowerW = selectedPort.poePowerW !== undefined ? selectedPort.poePowerW : payload.portPowerW;
-    return outputPayload;
-}
-
 module.exports = function(RED) {
     function UnifiNetworkControlPoeNode(config) {
         RED.nodes.createNode(this, config);
@@ -188,9 +267,22 @@ module.exports = function(RED) {
         const node = this;
         node.name = config.name;
         node.server = RED.nodes.getNode(config.server);
-        node.deviceId = config.deviceId || "";
-        node.deviceName = resolveDeviceName(config.deviceName);
-        node.portIdx = config.portIdx;
+        // The node now controls a list of targets (deviceId + portIdx). Legacy
+        // single-target nodes are migrated into a one-entry list.
+        node.targets = parseConfiguredTargets(
+            config.targets,
+            config.deviceId,
+            config.portIdx,
+            config.deviceName,
+            config.clientLookupId
+        );
+        const primaryTarget = node.targets[0] || null;
+        // Keep deviceId/portIdx pointing at the first target so the existing
+        // single-port power-observation path keeps working unchanged.
+        node.deviceId = primaryTarget ? primaryTarget.deviceId : (config.deviceId || "");
+        node.portIdx = primaryTarget ? primaryTarget.portIdx : config.portIdx;
+        node.deviceName = resolveDeviceName(primaryTarget ? primaryTarget.name : config.deviceName);
+        node.controlType = resolveControlType(config.controlType);
         node.action = config.action || "msgPayload";
         node.timeout = DEFAULT_REQUEST_TIMEOUT_MS;
         node.isPowerObserving = false;
@@ -257,29 +349,36 @@ module.exports = function(RED) {
             return action && action.type === "observePower";
         }
 
-        function resolvePoeModeActionFromMessage(action, msg) {
-            if (!action || action.type !== "poeModeFromPayload") {
+        function resolveActionFromMessage(action, msg) {
+            if (!action) {
                 return action;
             }
 
             const payload = msg && typeof msg === "object" ? msg.payload : undefined;
-            const payloadBoolean = resolvePayloadBoolean(payload);
-            if (payloadBoolean === true) {
-                return {
-                    type: "poeMode",
-                    payloadAction: "ENABLE_POE",
-                    poeMode: "auto"
-                };
-            }
-            if (payloadBoolean === false) {
-                return {
-                    type: "poeMode",
-                    payloadAction: "DISABLE_POE",
-                    poeMode: "off"
-                };
+
+            if (action.type === "poeModeFromPayload") {
+                const payloadBoolean = resolvePayloadBoolean(payload);
+                if (payloadBoolean === true) {
+                    return { type: "poeMode", payloadAction: "ENABLE_POE", poeMode: "auto" };
+                }
+                if (payloadBoolean === false) {
+                    return { type: "poeMode", payloadAction: "DISABLE_POE", poeMode: "off" };
+                }
+                throw new Error("When action is 'POE controlled by msg.payload', msg.payload must be true/false.");
             }
 
-            throw new Error("When action is 'POE controlled by msg.payload', msg.payload must be true/false.");
+            if (action.type === "portFromPayload") {
+                const payloadBoolean = resolvePayloadBoolean(payload);
+                if (payloadBoolean === true) {
+                    return { type: "portForward", payloadAction: "ENABLE_PORT", forward: "all" };
+                }
+                if (payloadBoolean === false) {
+                    return { type: "portForward", payloadAction: "DISABLE_PORT", forward: "disabled" };
+                }
+                throw new Error("When action is 'Port controlled by msg.payload', msg.payload must be true/false.");
+            }
+
+            return action;
         }
 
         function formatPowerText(powerW) {
@@ -432,14 +531,23 @@ module.exports = function(RED) {
             }) || null;
         }
 
-        function buildPortOverrides(device, portIdx, poeMode) {
+        function buildPortOverrides(device, portIdx, patch) {
             const sourceOverrides = Array.isArray(device && device.port_overrides)
                 ? device.port_overrides
                 : [];
             const portOverrides = sourceOverrides.map((port) => ({ ...port }));
             const existing = portOverrides.find((port) => Number(port && port.port_idx) === portIdx);
+
+            // `patch` may be a function so callers can decide the change based on
+            // the current override (e.g. only re-enable a port that is actually
+            // disabled, without clobbering its VLAN/forward configuration).
+            const resolvedPatch = typeof patch === "function" ? patch(existing || null) : patch;
+            if (!resolvedPatch || Object.keys(resolvedPatch).length === 0) {
+                return portOverrides;
+            }
+
             if (existing) {
-                existing.poe_mode = poeMode;
+                Object.assign(existing, resolvedPatch);
                 return portOverrides;
             }
 
@@ -449,17 +557,19 @@ module.exports = function(RED) {
 
             portOverrides.push({
                 port_idx: portIdx,
-                poe_mode: poeMode,
                 portconf_id: sourcePort && sourcePort.portconf_id,
                 port_security_mac_address: [],
                 stp_port_mode: true,
                 autoneg: true,
-                port_security_enabled: false
+                port_security_enabled: false,
+                ...resolvedPatch
             });
             return portOverrides;
         }
 
-        async function invokePoeMode(deviceId, scoped, portIdx, action) {
+        async function applyLegacyPortOverridePatch(deviceId, scoped, portIdx, patch, statusText, metaExtra) {
+            // Shared path for the legacy REST device update used by both PoE mode
+            // and port enable/disable: they only differ in the override patch.
             if (typeof node.server.executeLegacyNetworkRequest !== "function") {
                 throw new Error("This action requires the UniFi Network legacy API helper.");
             }
@@ -477,8 +587,8 @@ module.exports = function(RED) {
             }
 
             const path = `/api/s/${encodeURIComponent(legacySiteName)}/rest/device/${encodeURIComponent(legacyDevice._id)}`;
-            const portOverrides = buildPortOverrides(legacyDevice, portIdx, action.poeMode);
-            setNodeStatus({ fill: "blue", shape: "dot", text: `${action.poeMode} p${portIdx}` });
+            const portOverrides = buildPortOverrides(legacyDevice, portIdx, patch);
+            setNodeStatus({ fill: "blue", shape: "dot", text: statusText });
 
             const response = await node.server.executeLegacyNetworkRequest({
                 path,
@@ -494,19 +604,111 @@ module.exports = function(RED) {
                     ? response.payload
                     : {};
                 const errorDetail = String(errorPayload.message || errorPayload.code || "").trim();
-                throw new Error(`PoE mode request failed (${response.statusCode})${errorDetail ? `: ${errorDetail}` : ""}.`);
+                throw new Error(`Port override request failed (${response.statusCode})${errorDetail ? `: ${errorDetail}` : ""}.`);
             }
 
             return {
                 response,
-                metadata: buildMetadata(deviceId, action.payloadAction, portIdx, {
+                metadata: buildMetadata(deviceId, undefined, portIdx, {
                     source: "legacy-port-overrides",
-                    requestedAction: action.payloadAction,
-                    poeMode: action.poeMode,
                     method: "PUT",
-                    path
+                    path,
+                    ...(metaExtra || {})
                 })
             };
+        }
+
+        async function invokePoeMode(deviceId, scoped, portIdx, action) {
+            return applyLegacyPortOverridePatch(
+                deviceId,
+                scoped,
+                portIdx,
+                { poe_mode: action.poeMode },
+                `${action.poeMode} p${portIdx}`,
+                {
+                    action: action.payloadAction,
+                    requestedAction: action.payloadAction,
+                    poeMode: action.poeMode
+                }
+            );
+        }
+
+        async function fetchDefaultNativeNetworkId(scoped) {
+            // The UniFi UI clears a port's native network when disabling it and
+            // restores the site default LAN when re-enabling. Mirror that so a
+            // UI-disabled port recovers correctly. The default LAN is the
+            // corporate network flagged attr_hidden_id="LAN".
+            try {
+                const legacySiteName = await fetchLegacySiteName(scoped.siteId);
+                if (!legacySiteName) {
+                    return "";
+                }
+                const response = await node.server.executeLegacyNetworkRequest({
+                    path: `/api/s/${encodeURIComponent(legacySiteName)}/rest/networkconf`,
+                    method: "GET",
+                    timeout: node.timeout
+                });
+                if (response.statusCode < 200 || response.statusCode >= 300) {
+                    return "";
+                }
+                const networks = extractArrayPayload(response.payload);
+                const defaultLan = networks.find((network) => normalizeString(network && network.attr_hidden_id).toUpperCase() === "LAN")
+                    || networks.find((network) => normalizeString(network && network.purpose) === "corporate" && network && network.attr_no_delete === true);
+                return normalizeString(defaultLan && defaultLan._id);
+            } catch (error) {
+                return "";
+            }
+        }
+
+        async function invokePortForward(deviceId, scoped, portIdx, action) {
+            const disabling = action.forward === "disabled";
+            let patch;
+            if (disabling) {
+                // Mirror exactly what the UI "Port State: Disabled" toggle writes
+                // (verified against the controller). forward=disabled alone can be
+                // rejected/ineffective while the native network and VLANs are still
+                // set, so apply the full bundle: block VLANs, clear the native
+                // network and turn on port security.
+                patch = {
+                    forward: "disabled",
+                    tagged_vlan_mgmt: "block_all",
+                    native_networkconf_id: "",
+                    port_security_enabled: true
+                };
+            } else {
+                // Enable only acts on a disabled port (never clobbers an enabled
+                // one). Besides forward=all, undo the extra hardening the UI adds
+                // when it disables a port (VLAN block + port security) and restore
+                // the native network to the site default when it was cleared.
+                const defaultNativeId = await fetchDefaultNativeNetworkId(scoped);
+                patch = (existing) => {
+                    if (!existing || String(existing.forward) !== "disabled") {
+                        return {};
+                    }
+                    const recover = {
+                        forward: "all",
+                        tagged_vlan_mgmt: "auto",
+                        port_security_enabled: false
+                    };
+                    if (defaultNativeId && !normalizeString(existing.native_networkconf_id)) {
+                        recover.native_networkconf_id = defaultNativeId;
+                    }
+                    return recover;
+                };
+            }
+
+            return applyLegacyPortOverridePatch(
+                deviceId,
+                scoped,
+                portIdx,
+                patch,
+                `${disabling ? "disable" : "enable"} port p${portIdx}`,
+                {
+                    action: action.payloadAction,
+                    requestedAction: action.payloadAction,
+                    forward: disabling ? "disabled" : "all"
+                }
+            );
         }
 
         async function invokePowerCycle(deviceId, scoped, portIdx, action) {
@@ -668,7 +870,7 @@ module.exports = function(RED) {
         }
 
         function startPowerObservation() {
-            const action = resolveConfiguredAction(node.action);
+            const action = resolveEffectiveConfiguredAction(node.controlType, node.action);
             if (!actionOpensPowerObservation(action) || node.isPowerObserving) {
                 return;
             }
@@ -689,66 +891,129 @@ module.exports = function(RED) {
             }
         }
 
-        async function invoke(msg, send) {
-            if (!node.server) {
-                throw new Error("Unifi Network configuration is missing.");
-            }
-
-            // The node executes the action configured in the editor. The only
-            // runtime override is the payload-driven action, which maps
-            // msg.payload true/false to enable/disable PoE.
-            const deviceId = resolveDeviceId(node.deviceId);
+        async function runActionOnTarget(target, effectiveAction) {
+            const deviceId = resolveDeviceId(target.deviceId);
             if (!deviceId) {
                 throw new Error("Missing switch device id.");
             }
 
             const scoped = resolveScopedIdentifiers("device", deviceId);
             if (!scoped.siteId || !scoped.resourceId) {
-                throw new Error("Device selection is invalid. Re-select the device from the editor.");
+                throw new Error("Target selection is invalid. Re-add the target from the editor.");
             }
 
-            const portIdx = resolvePortIdx(node.portIdx);
+            const portIdx = resolvePortIdx(target.portIdx);
             if (!Number.isFinite(portIdx)) {
                 throw new Error("Missing port index.");
             }
 
-            const action = resolveConfiguredAction(node.action);
+            let result;
+            if (effectiveAction.type === "poeMode") {
+                result = await invokePoeMode(deviceId, scoped, portIdx, effectiveAction);
+            } else if (effectiveAction.type === "portForward") {
+                result = await invokePortForward(deviceId, scoped, portIdx, effectiveAction);
+            } else {
+                result = await invokePowerCycle(deviceId, scoped, portIdx, effectiveAction);
+            }
+            const powerSnapshot = await fetchSelectedPortSummary(deviceId, portIdx);
+            return { result, powerSnapshot };
+        }
+
+        function buildTargetResult(target, effectiveAction, ok, runOutput, error) {
+            const entry = {
+                name: target.name || undefined,
+                clientId: target.clientId || undefined,
+                deviceId: target.deviceId,
+                portIdx: target.portIdx,
+                action: effectiveAction.payloadAction,
+                ok
+            };
+
+            if (ok && runOutput) {
+                const selectedPort = runOutput.powerSnapshot && runOutput.powerSnapshot.selectedPort;
+                entry.statusCode = runOutput.result.response.statusCode;
+                if (selectedPort) {
+                    entry.portName = selectedPort.name || undefined;
+                    if (selectedPort.poePowerW !== undefined) {
+                        entry.portPowerW = selectedPort.poePowerW;
+                    }
+                }
+                if (runOutput.powerSnapshot && runOutput.powerSnapshot.powerConsumptionSwitchTotal !== undefined) {
+                    entry.powerConsumptionSwitchTotal = runOutput.powerSnapshot.powerConsumptionSwitchTotal;
+                }
+            } else if (!ok) {
+                entry.error = error && error.message ? error.message : String(error || "unknown error");
+            }
+
+            return entry;
+        }
+
+        async function invoke(msg, send) {
+            if (!node.server) {
+                throw new Error("Unifi Network configuration is missing.");
+            }
+
+            const action = resolveEffectiveConfiguredAction(node.controlType, node.action);
+            // Power observation is a single-port stream; it always runs against
+            // the first (and, per the editor, only) configured target.
             if (actionOpensPowerObservation(action)) {
                 await emitPowerObservation(send, action, "manual");
                 return;
             }
 
-            const effectiveAction = resolvePoeModeActionFromMessage(action, msg);
+            const targets = Array.isArray(node.targets) ? node.targets : [];
+            if (targets.length === 0) {
+                throw new Error("No client targets configured. Add at least one target in the editor.");
+            }
 
-            const result = effectiveAction.type === "poeMode"
-                ? await invokePoeMode(deviceId, scoped, portIdx, effectiveAction)
-                : await invokePowerCycle(deviceId, scoped, portIdx, effectiveAction);
-            const powerSnapshot = await fetchSelectedPortSummary(deviceId, portIdx);
-            const selectedPort = powerSnapshot.selectedPort;
+            // Resolve the payload-driven action up front so a misuse (non
+            // boolean payload) surfaces on the error output instead of being
+            // recorded as a per-target failure.
+            const effectiveAction = resolveActionFromMessage(action, msg);
 
-            const output = {};
-            output.payload = attachPortConsumptionToPayload(
-                extractNetworkData(result.response.payload),
-                selectedPort,
-                powerSnapshot.powerConsumptionSwitchTotal
-            );
-            attachDetails(output, {
-                response: {
-                    statusCode: result.response.statusCode,
-                    headers: result.response.headers
+            const results = [];
+            for (const target of targets) {
+                try {
+                    const runOutput = await runActionOnTarget(target, effectiveAction);
+                    results.push(buildTargetResult(target, effectiveAction, true, runOutput, null));
+                } catch (error) {
+                    results.push(buildTargetResult(target, effectiveAction, false, null, error));
+                }
+            }
+
+            const okCount = results.filter((entry) => entry.ok).length;
+            const failedCount = results.length - okCount;
+
+            const output = {
+                payload: {
+                    action: effectiveAction.payloadAction,
+                    total: results.length,
+                    ok: okCount,
+                    failed: failedCount,
+                    results
                 },
+                topic: resolveNodeName(node.name),
+                eventName: `request:${effectiveAction.payloadAction}`
+            };
+            attachDetails(output, {
                 unifiNetworkPoe: {
-                    ...result.metadata,
-                    portPowerW: selectedPort && selectedPort.poePowerW !== undefined
-                        ? selectedPort.poePowerW
-                        : undefined,
-                    powerConsumptionSwitchTotal: powerSnapshot.powerConsumptionSwitchTotal,
-                    selectedPort: selectedPort || undefined
+                    nodeType: "poe-control",
+                    name: resolveNodeName(node.name) || undefined,
+                    action: effectiveAction.payloadAction,
+                    total: results.length,
+                    ok: okCount,
+                    failed: failedCount
                 }
             });
-            decorateOutputMessage(output, output.payload, `request:${effectiveAction.payloadAction}`);
 
-            setNodeStatus({ fill: "green", shape: "dot", text: `${effectiveAction.payloadAction} ok` });
+            if (failedCount === 0) {
+                setNodeStatus({ fill: "green", shape: "dot", text: `${effectiveAction.payloadAction} ${okCount}/${results.length}` });
+            } else if (okCount === 0) {
+                setNodeStatus({ fill: "red", shape: "ring", text: `${effectiveAction.payloadAction} 0/${results.length}` });
+            } else {
+                setNodeStatus({ fill: "yellow", shape: "dot", text: `${effectiveAction.payloadAction} ${okCount}/${results.length}` });
+            }
+
             send(output);
         }
 
@@ -777,7 +1042,7 @@ module.exports = function(RED) {
             if (!node.isPowerObserving) {
                 return null;
             }
-            const action = resolveConfiguredAction(node.action);
+            const action = resolveEffectiveConfiguredAction(node.controlType, node.action);
             if (!actionOpensPowerObservation(action)) {
                 return null;
             }
@@ -798,7 +1063,7 @@ module.exports = function(RED) {
                 if (!node.isPowerObserving) {
                     return;
                 }
-                const action = resolveConfiguredAction(node.action);
+                const action = resolveEffectiveConfiguredAction(node.controlType, node.action);
                 if (!actionOpensPowerObservation(action)) {
                     return;
                 }
@@ -809,13 +1074,13 @@ module.exports = function(RED) {
 
         if (!node.server) {
             setNodeStatus({ fill: "red", shape: "ring", text: "no config" });
-        } else if (!node.deviceId) {
-            setNodeStatus({ fill: "grey", shape: "ring", text: "set device" });
+        } else if (node.targets.length === 0) {
+            setNodeStatus({ fill: "grey", shape: "ring", text: "set targets" });
         } else {
             if (typeof node.server.addClient === "function") {
                 node.server.addClient(node);
             }
-            const action = resolveConfiguredAction(node.action);
+            const action = resolveEffectiveConfiguredAction(node.controlType, node.action);
             if (actionOpensPowerObservation(action)) {
                 startPowerObservation();
             } else {
