@@ -17,7 +17,7 @@ Control and monitor your **UniFi Network**, **UniFi Protect**, and **UniFi Acces
 
 [View Changelog](CHANGELOG.md)
 
-<a href="https://www.youtube.com/playlist?list=PL9Yh1bjbLAYrWKtMlopN0swuQXbdJ8MFJ">
+<a href="https://youtube.com/playlist?list=PL9Yh1bjbLAYrWKtMlopN0swuQXbdJ8MFJ&si=4MmW1nNTCLrJtEHv">
   <img src="resources/logos/youtube-icon.svg" alt="YouTube" width="24" height="18" align="absmiddle">
   Watch news and tutorials on YouTube
   <br/>
@@ -50,7 +50,7 @@ In Node-RED:
 7. Send any message into the node to run the action.
 
 > **Tip:** For most actions, the incoming message is just a trigger — the node uses the device and action you configured in the editor.  
-> The only exception is **Clients Control** with a *controlled by msg.payload* action: send `true` to enable (PoE or the port) and `false` to disable it, on every target in its list.
+> The only exception is **Clients Control** with a _controlled by msg.payload_ action: send `true` to enable (PoE or the port) and `false` to disable it, on every target in its list.
 
 > **Custom port:** Each config node has an optional **Port** field. Leave it empty to use the default (`443` for Network/Protect, `12445` for Access). Set it when your controller listens on a custom port — for example a **UniFi OS server** that uses `11443`. A port written directly in the controller address (`host:port`) takes precedence over this field.
 
@@ -82,7 +82,7 @@ Things you can do:
 - Read the temperature of a switch (where supported).
 - Restart a UniFi device.
 - Control a **list of clients/ports** at once with the **Clients Control** node: pick targets by switch+port or by client (its uplink switch/port is resolved automatically) and apply one action to all of them, getting a single summary message back.
-- Switch PoE on/off or power-cycle it, and **enable/disable the whole switch port** (the UniFi *Port State* toggle), driven by the editor or by `msg.payload`.
+- Switch PoE on/off or power-cycle it, and **enable/disable the whole switch port** (the UniFi _Port State_ toggle), driven by the editor or by `msg.payload`.
 - Let **Clients Control** automatically find which switch port a client is connected to.
 - Restart a whole list of switches/APs at once, or power-cycle all their active PoE ports, with the **Restart** node.
 
@@ -140,26 +140,26 @@ Things you can do:
 
 Every node has **two outputs**:
 
-| Output | When it fires |
-| ------ | ------------- |
+| Output         | When it fires                                                                |
+| -------------- | ---------------------------------------------------------------------------- |
 | **1 — result** | The action completed successfully. The result is available in `msg.payload`. |
-| **2 — error** | Something went wrong (connection problem, timeout, unsupported action). |
+| **2 — error**  | Something went wrong (connection problem, timeout, unsupported action).      |
 
 When an error occurs, the node status turns red and the error message comes out of the second output. Connect it to a **debug** node to see what happened, or wire it to any notification logic in your flow.
 
-**Repeat periodically** — for read actions, you can tick *Emit periodically* in the node editor to have the node send the result automatically at a fixed interval, without needing an Inject node. The **Presence Detection** node offers a similar **Resend (s)** field: set it above `0` to re-emit the last known presence value on that cadence (even when unchanged). Resent messages carry `msg.eventName = "repeat"` so you can tell them apart from real state changes; leave it at `0` to disable.
+**Repeat periodically** — for read actions, you can tick _Emit periodically_ in the node editor to have the node send the result automatically at a fixed interval, without needing an Inject node. The **Presence Detection** node offers a similar **Resend (s)** field: set it above `0` to re-emit the last known presence value on that cadence (even when unchanged). Resent messages carry `msg.eventName = "repeat"` so you can tell them apart from real state changes; leave it at `0` to disable.
 
 ## Example Flows
 
 Import from `examples/`:
 
-| Flow file | What it demonstrates |
-| --------- | -------------------- |
-| [examples/unifi-protect-info.json](examples/unifi-protect-info.json) | Read the state of a Protect camera |
-| [examples/unifi-protect-sensor-observe.json](examples/unifi-protect-sensor-observe.json) | Receive sensor events (motion, temperature, humidity, …) |
-| [examples/unifi-protect-camera-actions.json](examples/unifi-protect-camera-actions.json) | Take snapshots, move PTZ, show doorbell messages |
-| [examples/unifi-access-door-control.json](examples/unifi-access-door-control.json) | Door state, remote unlock, temporary lock rule |
-| [examples/unifi-access-intercom-doorbell.json](examples/unifi-access-intercom-doorbell.json) | Intercom — receive ring, trigger and cancel doorbell |
+| Flow file                                                                                    | What it demonstrates                                     |
+| -------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| [examples/unifi-protect-info.json](examples/unifi-protect-info.json)                         | Read the state of a Protect camera                       |
+| [examples/unifi-protect-sensor-observe.json](examples/unifi-protect-sensor-observe.json)     | Receive sensor events (motion, temperature, humidity, …) |
+| [examples/unifi-protect-camera-actions.json](examples/unifi-protect-camera-actions.json)     | Take snapshots, move PTZ, show doorbell messages         |
+| [examples/unifi-access-door-control.json](examples/unifi-access-door-control.json)           | Door state, remote unlock, temporary lock rule           |
+| [examples/unifi-access-intercom-doorbell.json](examples/unifi-access-intercom-doorbell.json) | Intercom — receive ring, trigger and cancel doorbell     |
 
 ## Notes
 
@@ -179,4 +179,4 @@ Import from `examples/`:
 [license-image]: https://img.shields.io/badge/license-MIT-green.svg
 [license-url]: https://opensource.org/licenses/MIT
 [youtube-image]: https://img.shields.io/badge/YouTube-Subscribe-red?logo=youtube&logoColor=white
-[youtube-url]: https://www.youtube.com/watch?v=ZOq7M5mgUBk&list=PL9Yh1bjbLAYrWKtMlopN0swuQXbdJ8MFJ
+[youtube-url]: https://youtube.com/playlist?list=PL9Yh1bjbLAYrWKtMlopN0swuQXbdJ8MFJ&si=4MmW1nNTCLrJtEHv

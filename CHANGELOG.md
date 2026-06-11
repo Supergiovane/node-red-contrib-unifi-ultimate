@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.8
+## 1.0.9
 
 > ⚠️ **Breaking changes** — see the marked items below. The internal node type id is unchanged (`unifi-network-control-poe`), so existing nodes keep working and single-target nodes migrate automatically to a one-entry list, but the **POE node output shape changed** and the **client list contents changed**.
 
