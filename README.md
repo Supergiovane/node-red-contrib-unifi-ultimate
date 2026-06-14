@@ -85,6 +85,7 @@ Things you can do:
 - Switch PoE on/off or power-cycle it, and **enable/disable the whole switch port** (the UniFi _Port State_ toggle), driven by the editor or by `msg.payload`.
 - Let **Clients Control** automatically find which switch port a client is connected to.
 - Restart a whole list of switches/APs at once, or power-cycle all their active PoE ports, with the **Restart** node.
+- Get notified when any client **joins or leaves a specific network** (for example your **Guest** network) with the **Client Watcher** node, including the device name.
 
 <br/>
 <br/>

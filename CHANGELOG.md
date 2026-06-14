@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.10
+
+- New **Client Watcher** node (UniFi Network): watches a selected network/VLAN (for example the **Guest** network) and emits a message whenever a client **joins** or **leaves** it, including the device name. The network is picked from a dropdown of the networks configured on your controller. A **Watch by** selector keeps room for future watch criteria (today only `Network Join/Leave`). Output 1 carries the event (`msg.eventName` is `joined`/`left`, device name in `msg.deviceName`, full details in `msg.payload`); Output 2 is the error output. The poll interval is configurable, and an optional **Emit current clients on start** switch reports already-connected clients at deploy. Implements [#11](https://github.com/Supergiovane/node-red-contrib-unifi-ultimate/issues/11).
+
 ## 1.0.9
 
 > ⚠️ **Breaking changes** — see the marked items below. The internal node type id is unchanged (`unifi-network-control-poe`), so existing nodes keep working and single-target nodes migrate automatically to a one-entry list, but the **POE node output shape changed** and the **client list contents changed**.

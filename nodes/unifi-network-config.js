@@ -12,6 +12,7 @@ const {
     normalizeNetworkCollection
 } = require("./utils/unifi-network-utils");
 const {
+    decodeScopedDeviceId,
     encodeScopedDeviceId,
     getCapabilitiesForType,
     getCapabilityOptions,
@@ -2912,6 +2913,116 @@ module.exports = function(RED) {
             return attachedClients;
         };
 
+        node.fetchNetworks = async () => {
+            // List the L3 networks/VLANs configured on the controller so the
+            // editor can offer them as watch targets. Uses the legacy
+            // networkconf collection because it includes empty networks too.
+            const sites = await node.fetchSites();
+            const results = await Promise.all(sites.map(async (site) => {
+                const siteId = normalizeString(site && site.id);
+                if (!siteId) {
+                    return [];
+                }
+                const siteName = normalizeString(site.name || site.displayName || siteId);
+                let networks = [];
+                try {
+                    networks = await fetchLegacySiteCollection(siteId, "/rest/networkconf");
+                } catch (error) {
+                    networks = [];
+                }
+
+                return networks
+                    .filter((entry) => entry && typeof entry === "object" && !Array.isArray(entry))
+                    .map((entry) => {
+                        const networkId = normalizeString(entry._id || entry.id);
+                        const purpose = normalizeString(entry.purpose);
+                        return {
+                            id: encodeScopedDeviceId(siteId, networkId) || networkId,
+                            networkId,
+                            name: normalizeString(entry.name || networkId || "Network"),
+                            purpose,
+                            isGuest: purpose === "guest",
+                            vlan: entry.vlan_enabled ? Number(entry.vlan) : undefined,
+                            enabled: entry.enabled !== false,
+                            siteId,
+                            siteName
+                        };
+                    })
+                    .filter((entry) => entry.networkId);
+            }));
+
+            const dedup = new Map();
+            results.flat().forEach((entry) => {
+                if (!dedup.has(entry.id)) {
+                    dedup.set(entry.id, entry);
+                }
+            });
+
+            return Array.from(dedup.values()).sort((a, b) => {
+                return String(a.name).localeCompare(String(b.name));
+            });
+        };
+
+        node.fetchActiveClientsOnNetwork = async (scopedNetworkId) => {
+            // Return the currently connected clients that belong to the given
+            // network. Matching is done on the network id, with the network
+            // name as a fallback when the controller omits the id.
+            const scoped = decodeScopedDeviceId(scopedNetworkId);
+            const siteId = normalizeString(scoped.siteId);
+            const wantedNetworkId = normalizeString(scoped.resourceId);
+            if (!siteId || !wantedNetworkId) {
+                throw new Error("Network selection is invalid. Re-select the network from the editor.");
+            }
+
+            // Resolve the watched network name once so name-based matching works
+            // even on controllers that do not echo the network id on stations.
+            let wantedNetworkName = "";
+            try {
+                const networks = await fetchLegacySiteCollection(siteId, "/rest/networkconf");
+                const matched = networks.find((entry) => normalizeString(entry && (entry._id || entry.id)) === wantedNetworkId);
+                wantedNetworkName = normalizeString(matched && matched.name);
+            } catch (error) {
+                wantedNetworkName = "";
+            }
+
+            const stations = await fetchLegacySiteCollection(siteId, "/stat/sta");
+            const normalizedWantedName = wantedNetworkName.toLowerCase();
+
+            return stations
+                .filter((station) => station && typeof station === "object" && !Array.isArray(station))
+                .filter((station) => {
+                    const stationNetworkId = normalizeString(station.network_id || station.networkId);
+                    if (stationNetworkId) {
+                        return stationNetworkId === wantedNetworkId;
+                    }
+                    const stationNetworkName = normalizeString(station.network).toLowerCase();
+                    return normalizedWantedName !== "" && stationNetworkName === normalizedWantedName;
+                })
+                .map((station) => {
+                    const mac = normalizeString(station.mac || station.macAddress);
+                    const name = stripOfflineTag(firstNonEmptyString([
+                        station.name,
+                        station.hostname,
+                        station.display_name,
+                        mac
+                    ]));
+                    return {
+                        mac,
+                        clientId: normalizeString(station.user_id || station._id || mac),
+                        name: name || mac || "Client",
+                        network: normalizeString(station.network) || wantedNetworkName,
+                        networkId: normalizeString(station.network_id || station.networkId) || wantedNetworkId,
+                        networkName: wantedNetworkName || normalizeString(station.network),
+                        essid: normalizeString(station.essid),
+                        isGuest: station.is_guest === true,
+                        isWired: station.is_wired === true,
+                        ipAddress: firstNonEmptyString([station.ip, station.last_ip, station.fixed_ip]),
+                        siteId
+                    };
+                })
+                .filter((client) => client.mac);
+        };
+
         node.addClient = (client) => {
             if (!client) {
                 return;
@@ -3149,6 +3260,26 @@ module.exports = function(RED) {
             }
 
             res.json(await server.fetchClientsWithAttachment());
+        } catch (error) {
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    RED.httpAdmin.get("/unifiNetwork/networks", RED.auth.needsPermission("unifi-network-config.read"), async (req, res) => {
+        try {
+            const serverId = String(req.query.serverId || "").trim();
+            if (!serverId) {
+                res.status(400).json({ error: "Missing serverId" });
+                return;
+            }
+
+            const server = RED.nodes.getNode(serverId);
+            if (!server || typeof server.fetchNetworks !== "function") {
+                res.status(404).json({ error: "Configuration node not found" });
+                return;
+            }
+
+            res.json(await server.fetchNetworks());
         } catch (error) {
             res.status(500).json({ error: error.message });
         }
