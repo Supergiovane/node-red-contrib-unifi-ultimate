@@ -2963,7 +2963,7 @@ module.exports = function(RED) {
             });
         };
 
-        node.fetchActiveClientsOnNetwork = async (scopedNetworkId) => {
+        node.fetchActiveClientsOnNetwork = async (scopedNetworkId, knownNetworkName) => {
             // Return the currently connected clients that belong to the given
             // network. Matching is done on the network id, with the network
             // name as a fallback when the controller omits the id.
@@ -2974,15 +2974,18 @@ module.exports = function(RED) {
                 throw new Error("Network selection is invalid. Re-select the network from the editor.");
             }
 
-            // Resolve the watched network name once so name-based matching works
-            // even on controllers that do not echo the network id on stations.
-            let wantedNetworkName = "";
-            try {
-                const networks = await fetchLegacySiteCollection(siteId, "/rest/networkconf");
-                const matched = networks.find((entry) => normalizeString(entry && (entry._id || entry.id)) === wantedNetworkId);
-                wantedNetworkName = normalizeString(matched && matched.name);
-            } catch (error) {
-                wantedNetworkName = "";
+            // Resolve the watched network name (used by the name-based fallback
+            // on controllers that omit the network id on stations). The caller
+            // can pass it to skip this per-poll lookup.
+            let wantedNetworkName = normalizeString(knownNetworkName);
+            if (!wantedNetworkName) {
+                try {
+                    const networks = await fetchLegacySiteCollection(siteId, "/rest/networkconf");
+                    const matched = networks.find((entry) => normalizeString(entry && (entry._id || entry.id)) === wantedNetworkId);
+                    wantedNetworkName = normalizeString(matched && matched.name);
+                } catch (error) {
+                    wantedNetworkName = "";
+                }
             }
 
             const stations = await fetchLegacySiteCollection(siteId, "/stat/sta");

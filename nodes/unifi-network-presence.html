@@ -3,37 +3,99 @@
 
 
 <script type="text/javascript">
+    // Resolve the active "Watch by" mode for validators: prefer the live editor
+    // value, fall back to the saved node value.
+    function currentWatchByValue(self) {
+        try {
+            const live = $("#node-input-watchBy").val();
+            if (live) {
+                return String(live).trim();
+            }
+        } catch (error) {
+            // jQuery/DOM not available in this context.
+        }
+        return (self && self.watchBy) ? String(self.watchBy).trim() : "presence";
+    }
+
     RED.nodes.registerType("unifi-network-presence", {
         category: "Unifi Ultimate",
         color: "#CFE8FB",
         defaults: {
             name: { value: "" },
             server: { value: "", type: "unifi-network-config", required: true },
-            clientId: { value: "", required: true },
+            watchBy: { value: "presence", required: true },
+            clientId: {
+                value: "",
+                validate: function (v) {
+                    const mode = currentWatchByValue(this);
+                    return mode === "network" ? true : String(v || "").trim() !== "";
+                }
+            },
             deviceName: { value: "" },
             pollInterval: { value: 10, required: true, validate: RED.validators.number() },
             onlineHysteresis: { value: 15, required: true, validate: RED.validators.number() },
             offlineHysteresis: { value: 30, required: true, validate: RED.validators.number() },
-            repeatInterval: { value: 0, required: false, validate: RED.validators.number() }
+            repeatInterval: { value: 0, required: false, validate: RED.validators.number() },
+            networkId: {
+                value: "",
+                validate: function (v) {
+                    const mode = currentWatchByValue(this);
+                    return mode === "network" ? String(v || "").trim() !== "" : true;
+                }
+            },
+            networkName: { value: "" },
+            emitInitial: { value: false },
+            joinConfirmPolls: { value: 1, validate: RED.validators.number() },
+            leaveConfirmPolls: { value: 3, validate: RED.validators.number() }
         },
         inputs: 0,
         outputs: 2,
         icon: "unifi-u-logo-light-network.svg",
         paletteLabel: "Presence Detection",
-        outputLabels: ["presence", "error"],
+        outputLabels: ["result", "error"],
         label: function () {
-            return this.name || "Presence Detection";
+            if (this.name) {
+                return this.name;
+            }
+            if (this.watchBy === "network" && this.networkName) {
+                return this.networkName;
+            }
+            return "Presence Detection";
+        },
+        oneditsave: function () {
+            const mode = String($("#node-input-watchBy").val() || "presence").trim();
+            // Only the network mode accepts an input trigger.
+            this.inputs = mode === "network" ? 1 : 0;
+            if (mode === "network") {
+                const $selected = $("#node-input-networkId option:selected");
+                this.networkName = String($selected.attr("data-network-name") || "").trim();
+                $("#node-input-networkName").val(this.networkName);
+            }
         },
         oneditprepare: function () {
             const node = this;
             const $name = $("#node-input-name");
             const $server = $("#node-input-server");
+            const $watchBy = $("#node-input-watchBy");
             const $clientId = $("#node-input-clientId");
             const $deviceName = $("#node-input-deviceName");
             const $refresh = $("#node-input-refreshClients");
             const $clientRow = $clientId.closest(".form-row");
             const $advancedRow = $("#node-row-advanced");
+            // Network-mode controls.
+            const $networkId = $("#node-input-networkId");
+            const $refreshNetworks = $("#node-input-refreshNetworks");
+            const $watchByRow = $("#node-row-watchBy");
+            const $networkRow = $("#node-row-networkId");
+            const $networkStatus = $("#unifi-presence-network-status");
             let suspendChangeHandling = false;
+            let loadedNetworksServerId = "";
+
+            $watchBy.val(this.watchBy || "presence");
+
+            function currentMode() {
+                return String($watchBy.val() || "presence").trim();
+            }
 
             function hasSelection($field) {
                 const value = String($field.val() || "").trim();
@@ -42,10 +104,71 @@
 
             function syncProgressiveRows() {
                 const hasServer = hasSelection($server);
-                const hasClient = hasSelection($clientId);
+                const isNetwork = currentMode() === "network";
+                const hasTarget = isNetwork ? hasSelection($networkId) : hasSelection($clientId);
 
-                $clientRow.toggle(hasServer);
-                $advancedRow.toggle(hasServer && hasClient);
+                $watchByRow.toggle(hasServer);
+                $clientRow.toggle(hasServer && !isNetwork);
+                $networkRow.toggle(hasServer && isNetwork);
+                $advancedRow.toggle(hasServer && hasTarget);
+                // Tuning rows depend on the active mode.
+                $("#node-presence-tuning").toggle(!isNetwork);
+                $("#node-network-tuning").toggle(isNetwork);
+            }
+
+            function renderNetworks(items) {
+                const currentValue = String($networkId.val() || node.networkId || "").trim();
+                suspendChangeHandling = true;
+                try {
+                    $networkId.empty();
+                    $networkId.append($("<option></option>").val("").text("Choose a network"));
+                    (items || []).forEach(function (item) {
+                        const id = String(item.id || "").trim();
+                        if (!id) {
+                            return;
+                        }
+                        const name = String(item.name || id).trim();
+                        const tags = [];
+                        if (item.isGuest) { tags.push("guest"); }
+                        if (item.vlan) { tags.push("VLAN " + item.vlan); }
+                        if (item.enabled === false) { tags.push("disabled"); }
+                        const suffix = tags.length > 0 ? " [" + tags.join(", ") + "]" : "";
+                        $networkId.append(
+                            $("<option></option>").val(id).text(name + suffix).attr("data-network-name", name)
+                        );
+                    });
+                    $networkId.val(currentValue && $networkId.find("option[value='" + currentValue + "']").length > 0 ? currentValue : "");
+                } finally {
+                    suspendChangeHandling = false;
+                }
+                syncProgressiveRows();
+            }
+
+            function loadNetworks(force) {
+                const serverId = String($server.val() || "").trim();
+                if (!serverId || serverId === "_ADD_") {
+                    renderNetworks([]);
+                    $networkStatus.text("");
+                    return Promise.resolve();
+                }
+                if (!force && serverId === loadedNetworksServerId) {
+                    return Promise.resolve();
+                }
+                $networkStatus.text("Loading networks...");
+                $refreshNetworks.find("i").addClass("fa-spin");
+                loadedNetworksServerId = serverId;
+                return requestJson("unifiNetwork/networks?serverId=" + encodeURIComponent(serverId))
+                    .then(function (networks) {
+                        renderNetworks(Array.isArray(networks) ? networks : []);
+                        $networkStatus.text("");
+                    })
+                    .catch(function (xhr) {
+                        renderNetworks([]);
+                        $networkStatus.text(xhr && xhr.responseJSON && xhr.responseJSON.error ? xhr.responseJSON.error : "Unable to load networks.");
+                    })
+                    .then(function () {
+                        $refreshNetworks.find("i").removeClass("fa-spin");
+                    });
             }
 
             function requestJson(url) {
@@ -446,7 +569,11 @@
                 if (suspendChangeHandling) {
                     return;
                 }
-                loadClients();
+                if (currentMode() === "network") {
+                    loadNetworks(false);
+                } else {
+                    loadClients();
+                }
             });
 
             $clientId.on("change", function () {
@@ -467,11 +594,37 @@
                 loadClients();
             });
 
+            $watchBy.on("change", function () {
+                syncProgressiveRows();
+                if (currentMode() === "network") {
+                    loadNetworks(false);
+                } else {
+                    loadClients();
+                }
+            });
+
+            $networkId.on("change", function () {
+                if (suspendChangeHandling) {
+                    return;
+                }
+                syncProgressiveRows();
+            });
+
+            $refreshNetworks.on("click", function (event) {
+                event.preventDefault();
+                loadNetworks(true);
+            });
+
             ensureDefaultServerSelection();
             makeSelectSearchable($clientId, "Search clients");
             refreshSummary();
-            $refresh.find("i").addClass("fa-spin");
-            loadClients();
+            syncProgressiveRows();
+            if (currentMode() === "network") {
+                loadNetworks(false);
+            } else {
+                $refresh.find("i").addClass("fa-spin");
+                loadClients();
+            }
         }
     });
 </script>
@@ -490,61 +643,95 @@
         <label for="node-input-server"><i class="fa fa-cog"></i> Connection</label>
         <input type="text" id="node-input-server">
     </div>
-    <div class="form-row">
+    <div class="form-row" id="node-row-watchBy" style="display:none;">
+        <label for="node-input-watchBy"><i class="fa fa-eye"></i> Watch by</label>
+        <select id="node-input-watchBy">
+            <option value="presence">Single client (presence)</option>
+            <option value="network">Network (join/leave)</option>
+        </select>
+    </div>
+    <div class="form-row" id="node-row-clientId">
         <label for="node-input-clientId"><i class="fa fa-wifi"></i> Client</label>
         <select id="node-input-clientId" style="width:62%;"></select>
         <a href="#" id="node-input-refreshClients" class="editor-button" style="margin-left:6px;" title="Refresh clients" aria-label="Refresh clients">
             <i class="fa fa-refresh"></i>
         </a>
     </div>
+    <div class="form-row" id="node-row-networkId" style="display:none;">
+        <label for="node-input-networkId"><i class="fa fa-sitemap"></i> Network</label>
+        <select id="node-input-networkId" style="width:62%;"></select>
+        <a href="#" id="node-input-refreshNetworks" class="editor-button" style="margin-left:6px;" title="Reload networks" aria-label="Reload networks">
+            <i class="fa fa-refresh"></i>
+        </a>
+        <div id="unifi-presence-network-status" class="unifi-presence-network-status"></div>
+    </div>
     <div id="node-row-advanced" class="unifi-ultimate-advanced">
         <div class="form-row">
             <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
             <input type="text" id="node-input-name" placeholder="Node name">
         </div>
-        <div class="form-row">
-            <label for="node-input-pollInterval"><i class="fa fa-repeat"></i> Poll (s)</label>
-            <input type="text" id="node-input-pollInterval" placeholder="10">
+        <div id="node-presence-tuning">
+            <div class="form-row">
+                <label for="node-input-pollInterval"><i class="fa fa-repeat"></i> Poll (s)</label>
+                <input type="text" id="node-input-pollInterval" placeholder="10">
+            </div>
+            <div class="form-row">
+                <label for="node-input-onlineHysteresis"><i class="fa fa-hourglass-start"></i> Connect Hysteresis (s)</label>
+                <input type="text" id="node-input-onlineHysteresis" placeholder="15">
+            </div>
+            <div class="form-row">
+                <label for="node-input-offlineHysteresis"><i class="fa fa-hourglass-half"></i> Hysteresis (s)</label>
+                <input type="text" id="node-input-offlineHysteresis" placeholder="30">
+            </div>
+            <div class="form-row">
+                <label for="node-input-repeatInterval"><i class="fa fa-clock-o"></i> Resend (s)</label>
+                <input type="text" id="node-input-repeatInterval" placeholder="0 = off">
+            </div>
         </div>
-        <div class="form-row">
-            <label for="node-input-onlineHysteresis"><i class="fa fa-hourglass-start"></i> Connect Hysteresis (s)</label>
-            <input type="text" id="node-input-onlineHysteresis" placeholder="15">
-        </div>
-        <div class="form-row">
-            <label for="node-input-offlineHysteresis"><i class="fa fa-hourglass-half"></i> Hysteresis (s)</label>
-            <input type="text" id="node-input-offlineHysteresis" placeholder="30">
-        </div>
-        <div class="form-row">
-            <label for="node-input-repeatInterval"><i class="fa fa-clock-o"></i> Resend (s)</label>
-            <input type="text" id="node-input-repeatInterval" placeholder="0 = off">
+        <div id="node-network-tuning" style="display:none;">
+            <div class="form-row">
+                <label for="node-input-emitInitial" style="width:auto;"><i class="fa fa-bullhorn"></i> Emit current clients on start</label>
+                <input type="checkbox" id="node-input-emitInitial" style="display:inline-block; width:auto; vertical-align:top;">
+            </div>
         </div>
         <input type="hidden" id="node-input-deviceName">
+        <input type="hidden" id="node-input-networkName">
+        <input type="hidden" id="node-input-joinConfirmPolls">
+        <input type="hidden" id="node-input-leaveConfirmPolls">
     </div>
 </script>
 
 <script type="text/html" data-help-name="unifi-network-presence">
     <p><a href="https://youtube.com/playlist?list=PL9Yh1bjbLAYrWKtMlopN0swuQXbdJ8MFJ&si=4MmW1nNTCLrJtEHv" target="_blank" rel="noopener noreferrer"><img src="resources/node-red-contrib-unifi-ultimate/logos/youtube-icon.svg" alt="YouTube" width="24" height="18" style="vertical-align:text-bottom; margin-right:6px;">Youtube Tutorials</a></p>
 
-    <p>Detects whether a selected UniFi Network client is currently connected.</p>
+    <p>Watches UniFi Network clients. In <b>Single client (presence)</b> mode it tells you whether one selected client is connected (a boolean). In <b>Network (join/leave)</b> mode it watches a whole network/VLAN (for example <code>Guest</code>) and emits an event whenever any client joins or leaves it.</p>
 
     <h3>Configuration</h3>
     <p><b>Connection</b> selects the shared UniFi Network config node.</p>
+    <p><b>Watch by</b> chooses the mode: <code>Single client (presence)</code> or <code>Network (join/leave)</code>.</p>
+
+    <h4>Single client (presence)</h4>
     <p><b>Client</b> selects the client to track. The selector is searchable and opens with the complete list before filtering. Each entry shows the user-defined client name (e.g. "iPhone di Massimo") when set, otherwise the device hostname. Known-but-offline clients are included too and marked with an <code>(offline)</code> label, so you can pick a target even while it is disconnected.</p>
-    <p><b>Poll (s)</b> sets this node cadence for presence checks. Scheduling and fetch execution are handled by the shared Network config node.</p>
-    <p><b>Connect Hysteresis (s)</b> delays the <code>true</code> output so brief reconnects do not flap.</p>
-    <p><b>Hysteresis (s)</b> delays the <code>false</code> output to avoid flapping when the client disconnects briefly.</p>
-    <p><b>Resend (s)</b> optionally re-emits the last saved presence value on a fixed cadence, even when it has not changed. Leave it at <code>0</code> to disable (default). Repeated messages carry <code>msg.eventName = "repeat"</code> so you can tell them apart from state changes.</p>
-    <p>Request timeout is handled automatically by the node.</p>
-    <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different client from the list.</p>
+    <p><b>Connect Hysteresis (s)</b> delays the <code>true</code> output so brief reconnects do not flap. <b>Hysteresis (s)</b> delays the <code>false</code> output. <b>Resend (s)</b> optionally re-emits the last saved value on a fixed cadence (<code>0</code> = off); resent messages carry <code>msg.eventName = "repeat"</code>.</p>
+
+    <h4>Network (join/leave)</h4>
+    <p><b>Network</b> selects the L3 network / VLAN to watch. The list comes from the networks configured on your controller. This is the only required field — sensible defaults handle the rest.</p>
+    <p><b>Emit current clients on start</b>, when enabled, emits a <code>joined</code> event for every client already on the network at deploy. Disabled (default) only reports later changes.</p>
+    <p>The node automatically debounces events (a client must be seen for a couple of polls before <code>joined</code>/<code>left</code> fires) to absorb the transient flapping UniFi shows while it classifies a freshly connected client. Polling cadence and debounce use built-in defaults.</p>
+    <p><b>Note on timing:</b> a newly connected client can take up to about a minute to appear on its network in the UniFi data (especially guest networks), so a <code>joined</code> event may lag the physical connection. This is a controller-side limitation. Leaves are detected quickly.</p>
+
+    <p>In <b>presence</b> mode, <b>Poll (s)</b> sets the check cadence. <b>Name</b> is the node name shown in the editor. Request timeout is handled automatically.</p>
 
     <h3>Input</h3>
     <ul>
-        <li>No input pin in this mode: checks run automatically at startup and then on the configured cadence through the shared config scheduler.</li>
+        <li><b>Presence mode:</b> no input pin; checks run automatically at startup and on the configured cadence.</li>
+        <li><b>Network mode:</b> any incoming message forces an immediate poll between intervals.</li>
     </ul>
 
     <h3>Outputs</h3>
+    <p><b>Network mode</b> emits one message per client on Output 1 with <code>msg.eventName</code> = <code>joined</code>/<code>left</code>, the client name in <code>msg.deviceName</code>, the watched network in <code>msg.network</code>, and details (<code>mac</code>, <code>isGuest</code>, <code>isWired</code>, <code>ipAddress</code>, …) in <code>msg.payload</code>. Route joins and leaves apart with a <code>switch</code> node on <code>msg.eventName</code>. The fields below describe <b>presence mode</b>.</p>
     <dl class="message-properties">
-        <dt>Output 1 — presence</dt>
+        <dt>Output 1 — result</dt>
         <dd>Emitted when the debounced presence state changes.</dd>
         <dt class="optional">msg.payload</dt>
         <dd><code>true</code> when the client is present, <code>false</code> when absent.</dd>
@@ -593,3 +780,12 @@
   "error": { "message": "Presence polling failed" }
 }</code></pre>
 </script>
+
+<style>
+    .unifi-presence-network-status {
+        margin-top: 4px;
+        margin-left: 102px;
+        font-size: 0.85em;
+        color: var(--red-ui-text-color-error, #b30000);
+    }
+</style>

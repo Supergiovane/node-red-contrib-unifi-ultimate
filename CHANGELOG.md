@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.11
+
+> ⚠️ **Breaking change.** The standalone **Client Watcher** node added in 1.0.10 has been **removed** and folded into the **Presence Detection** node as a new mode. If you placed a `unifi-network-client-watcher` node, recreate it as a Presence Detection node with **Watch by = Network (join/leave)** and select the same network.
+
+- **Presence Detection → "Client Watcher"**: the node now has a **Watch by** selector:
+  - `Single client (presence)` — the existing behaviour (one client, boolean present/away, hysteresis, resend).
+  - `Network (join/leave)` — watches a network/VLAN (e.g. **Guest**) and emits a `joined`/`left` event per client, with the device name. This replaces the standalone Client Watcher node and shares the same polling engine as presence mode. Implements [#11](https://github.com/Supergiovane/node-red-contrib-unifi-ultimate/issues/11).
+- Network mode applies an **automatic debounce**: a client must be seen present/absent for a couple of consecutive polls before an event fires. This absorbs the transient flapping UniFi shows while it classifies a freshly connected client onto its network, which previously caused **duplicated join/leave notifications**. Polling cadence and debounce use built-in defaults, so the only field to set is the network. Verified against a live controller: a new client can appear in the UniFi data with no network for ~30–60s before being classified, so a `joined` event can lag the physical connection — a controller-side limitation that cannot be avoided by polling (the real-time event websocket carries no usable data on the tested controller).
+
 ## 1.0.10
 
 - New **Client Watcher** node (UniFi Network): watches a selected network/VLAN (for example the **Guest** network) and emits a message whenever a client **joins** or **leaves** it, including the device name. The network is picked from a dropdown of the networks configured on your controller. A **Watch by** selector keeps room for future watch criteria (today only `Network Join/Leave`). Output 1 carries the event (`msg.eventName` is `joined`/`left`, device name in `msg.deviceName`, full details in `msg.payload`); Output 2 is the error output. The poll interval is configurable, and an optional **Emit current clients on start** switch reports already-connected clients at deploy. Implements [#11](https://github.com/Supergiovane/node-red-contrib-unifi-ultimate/issues/11).
