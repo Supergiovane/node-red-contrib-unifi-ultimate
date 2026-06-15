@@ -718,7 +718,13 @@
     <p><b>Network</b> selects the L3 network / VLAN to watch. The list comes from the networks configured on your controller. This is the only required field — sensible defaults handle the rest.</p>
     <p><b>Emit current clients on start</b>, when enabled, emits a <code>joined</code> event for every client already on the network at deploy. Disabled (default) only reports later changes.</p>
     <p>The node automatically debounces events (a client must be seen for a couple of polls before <code>joined</code>/<code>left</code> fires) to absorb the transient flapping UniFi shows while it classifies a freshly connected client. Polling cadence and debounce use built-in defaults.</p>
-    <p><b>Note on timing:</b> a newly connected client can take up to about a minute to appear on its network in the UniFi data (especially guest networks), so a <code>joined</code> event may lag the physical connection. This is a controller-side limitation. Leaves are detected quickly.</p>
+    <p><b>Note on timing:</b> a newly connected client can take up to about a minute to appear on its network in the UniFi data (especially guest networks), so a <code>joined</code> event may lag the physical connection. This is a controller-side limitation.</p>
+    <p><b>Note on duplicate events:</b> you may see repeated <code>joined</code>/<code>left</code> for the same device. This comes from the UniFi controller itself, not the node:</p>
+    <ul>
+        <li><b>UniFi client flapping</b> — a well-known controller behaviour where clients are shown repeatedly connecting/disconnecting (band steering, load balancing, fast roaming, weak signal). During a single reconnect the client can bounce in and out of its network for ~1 minute before settling.</li>
+        <li><b>Wi‑Fi MAC randomization (Private Address)</b> — phones/tablets present a different MAC over time, so the same physical device looks like a new client joining while the old MAC leaves. This is common on guest networks.</li>
+    </ul>
+    <p>The node reports the controller's data faithfully and applies a small built-in debounce, but it cannot fully remove this upstream noise. If duplicates are a problem, debounce in your flow — for example an <code>rbe</code> ("block unless value changes") node, or a <code>delay</code> node in rate-limit mode, keyed on <code>msg.deviceName</code>/<code>msg.payload.mac</code>.</p>
 
     <p>In <b>presence</b> mode, <b>Poll (s)</b> sets the check cadence. <b>Name</b> is the node name shown in the editor. Request timeout is handled automatically.</p>
 
