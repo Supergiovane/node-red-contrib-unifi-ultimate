@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.0
+
+- **Clients Control → Enable/Disable port**: fixed a bug where re-enabling a port that was on a non-default VLAN restored it to the default LAN (VLAN 1) instead of its original network. Disabling a port rewrites its native network and VLAN settings (mirroring the UniFi UI), which lost the port's configuration. The **config node** now keeps a persistent, always-refreshed cache of each switch port's *last known enabled* override — seeded at startup by reading every site's devices, refreshed on **every** device read, and saved to disk (in the Node-RED user directory) so it survives restarts. Re-enabling a port restores that whole snapshot, so every property — the VLAN and anything else, including modifiable properties UniFi may add in the future — comes back exactly as it was. When the port had no override while enabled, re-enabling removes the override so the port reverts to its port-profile / device defaults. Only when the port has never been seen enabled (e.g. it was already disabled before this plugin ever ran) does it fall back to a best-effort revert with the site default native network. Verified against a live controller: disabling a port really does clear its `native_networkconf_id`, and writing back the remembered override restores the exact VLAN (and every other property). Fixes [#13](https://github.com/Supergiovane/node-red-contrib-unifi-ultimate/issues/13).
+
 ## 1.0.11
 
 > ⚠️ **Breaking change.** The standalone **Client Watcher** node added in 1.0.10 has been **removed** and folded into the **Presence Detection** node as a new mode. If you placed a `unifi-network-client-watcher` node, recreate it as a Presence Detection node with **Watch by = Network (join/leave)** and select the same network.

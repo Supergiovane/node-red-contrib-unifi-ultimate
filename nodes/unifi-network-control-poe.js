@@ -538,22 +538,45 @@ module.exports = function(RED) {
             const portOverrides = sourceOverrides.map((port) => ({ ...port }));
             const existing = portOverrides.find((port) => Number(port && port.port_idx) === portIdx);
 
+            const sourcePort = Array.isArray(device && device.port_table)
+                ? device.port_table.find((port) => Number(port && port.port_idx) === portIdx)
+                : null;
+
             // `patch` may be a function so callers can decide the change based on
             // the current override (e.g. only re-enable a port that is actually
-            // disabled, without clobbering its VLAN/forward configuration).
-            const resolvedPatch = typeof patch === "function" ? patch(existing || null) : patch;
+            // disabled, without clobbering its VLAN/forward configuration). The
+            // live port_table entry and the whole device are passed too so callers
+            // can read state the override does not carry (e.g. the device MAC used
+            // to look up the remembered pre-disable override).
+            const resolvedPatch = typeof patch === "function" ? patch(existing || null, sourcePort || null, device) : patch;
             if (!resolvedPatch || Object.keys(resolvedPatch).length === 0) {
                 return portOverrides;
+            }
+
+            // Wholesale restore: replace the entire override for this port with the
+            // provided snapshot (used to bring a port back to its exact pre-disable
+            // config). Falls back to a plain push when there was no override yet.
+            if (resolvedPatch.__replaceOverride) {
+                const replacement = { ...resolvedPatch.__replaceOverride, port_idx: portIdx };
+                if (existing) {
+                    portOverrides[portOverrides.indexOf(existing)] = replacement;
+                } else {
+                    portOverrides.push(replacement);
+                }
+                return portOverrides;
+            }
+
+            // Wholesale removal: drop the override entirely so the port reverts to
+            // its port-profile / device defaults (used when the port had no
+            // override before this node disabled it).
+            if (resolvedPatch.__removeOverride) {
+                return portOverrides.filter((port) => Number(port && port.port_idx) !== portIdx);
             }
 
             if (existing) {
                 Object.assign(existing, resolvedPatch);
                 return portOverrides;
             }
-
-            const sourcePort = Array.isArray(device && device.port_table)
-                ? device.port_table.find((port) => Number(port && port.port_idx) === portIdx)
-                : null;
 
             portOverrides.push({
                 port_idx: portIdx,
@@ -584,6 +607,18 @@ module.exports = function(RED) {
             const legacyDevice = findLegacyDevice(legacyDevices, scoped, officialDevice);
             if (!legacyDevice || !legacyDevice._id) {
                 throw new Error("Unable to resolve UniFi legacy device id.");
+            }
+
+            // Feed the just-fetched (still authoritative) device into the config
+            // node's port-override cache before we change anything. This keeps the
+            // "last known enabled" snapshot fresh so a later re-enable can restore
+            // the exact pre-disable configuration.
+            if (typeof node.server.ingestPortOverridesFromDevice === "function") {
+                try {
+                    node.server.ingestPortOverridesFromDevice(legacyDevice);
+                } catch (error) {
+                    // Cache maintenance is best-effort; never block the actual action.
+                }
             }
 
             const path = `/api/s/${encodeURIComponent(legacySiteName)}/rest/device/${encodeURIComponent(legacyDevice._id)}`;
@@ -668,7 +703,10 @@ module.exports = function(RED) {
                 // (verified against the controller). forward=disabled alone can be
                 // rejected/ineffective while the native network and VLANs are still
                 // set, so apply the full bundle: block VLANs, clear the native
-                // network and turn on port security.
+                // network and turn on port security. The port's pre-disable config
+                // has already been captured into the config-node cache by
+                // applyLegacyPortOverridePatch (before this patch runs), so enabling
+                // can restore it later.
                 patch = {
                     forward: "disabled",
                     tagged_vlan_mgmt: "block_all",
@@ -677,13 +715,35 @@ module.exports = function(RED) {
                 };
             } else {
                 // Enable only acts on a disabled port (never clobbers an enabled
-                // one). Besides forward=all, undo the extra hardening the UI adds
-                // when it disables a port (VLAN block + port security) and restore
-                // the native network to the site default when it was cleared.
+                // one). If the config node remembers the port's last known enabled
+                // override, restore it wholesale so every property (VLAN and
+                // anything else, now or in the future) comes back exactly as it was.
+                // Otherwise fall back to a best-effort revert (used when we have no
+                // record of the port at all): undo the UI hardening and restore the
+                // site default native network.
                 const defaultNativeId = await fetchDefaultNativeNetworkId(scoped);
-                patch = (existing) => {
+                const lookupRemembered = (device) => {
+                    if (!device || typeof node.server.getEnabledPortOverride !== "function") {
+                        return null;
+                    }
+                    try {
+                        return node.server.getEnabledPortOverride(device.mac, portIdx);
+                    } catch (error) {
+                        return null;
+                    }
+                };
+                patch = (existing, _sourcePort, device) => {
                     if (!existing || String(existing.forward) !== "disabled") {
                         return {};
+                    }
+                    const remembered = lookupRemembered(device);
+                    if (remembered && remembered.__noOverride) {
+                        // The port had no override while enabled — remove the one we
+                        // added on disable so it reverts to its profile/defaults.
+                        return { __removeOverride: true };
+                    }
+                    if (remembered) {
+                        return { __replaceOverride: remembered };
                     }
                     const recover = {
                         forward: "all",

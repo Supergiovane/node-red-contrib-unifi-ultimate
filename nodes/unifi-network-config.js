@@ -1,5 +1,8 @@
 "use strict";
 
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const {
     buildBaseUrlFromHost,
     normalizePort,
@@ -27,6 +30,28 @@ module.exports = function(RED) {
     const MIN_POWER_OBSERVER_INTERVAL_SECONDS = 5;
     const DEFAULT_POWER_OBSERVER_INTERVAL_SECONDS = 15;
     const POWER_OBSERVER_SCHEDULER_TICK_MS = 1000;
+    const PORT_OVERRIDE_CACHE_VERSION = 1;
+    const PORT_OVERRIDE_CACHE_SAVE_DEBOUNCE_MS = 1000;
+    // Sentinel stored for a port that was enabled but had no override at all, so
+    // re-enabling knows to remove the override we added (instead of restoring one).
+    const PORT_OVERRIDE_NONE = { __noOverride: true };
+
+    function portOverrideCacheKey(deviceMac, portIdx) {
+        const mac = String(deviceMac || "").trim().toLowerCase();
+        const idx = Number(portIdx);
+        if (!mac || !Number.isFinite(idx)) {
+            return "";
+        }
+        return `${mac}|${Math.trunc(idx)}`;
+    }
+
+    function resolvePortOverrideCacheFile(nodeId) {
+        const dir = (RED.settings && RED.settings.userDir)
+            ? RED.settings.userDir
+            : os.tmpdir();
+        const safeId = String(nodeId || "shared").replace(/[^a-z0-9._-]/gi, "_");
+        return path.join(dir, `unifi-ultimate-portcache-${safeId}.json`);
+    }
 
     function normalizePowerObserverIntervalSeconds(value) {
         const parsed = Number(value);
@@ -97,6 +122,159 @@ module.exports = function(RED) {
         node.unofficialPollObserverNodeState = new Map();
         node.unofficialPollObserverTimer = null;
         node.unofficialPollObserverPollInProgress = false;
+
+        // Persistent mirror of each switch port's "last known enabled" override.
+        // Disabling a port destroys its VLAN/native-network config on the
+        // controller, so we cannot read it back to re-enable the port correctly.
+        // Instead we snapshot every port's override while it is still enabled —
+        // seeded at startup, refreshed on every device read, and persisted to disk
+        // so it survives Node-RED restarts. Keyed by `${mac}|${portIdx}`; the value
+        // is either the override object or PORT_OVERRIDE_NONE (enabled, no override).
+        node.portOverrideCache = new Map();
+        node.portOverrideCacheFile = resolvePortOverrideCacheFile(node.id);
+        node.portOverrideCacheSaveTimer = null;
+
+        function loadPortOverrideCache() {
+            try {
+                const raw = fs.readFileSync(node.portOverrideCacheFile, "utf8");
+                const data = JSON.parse(raw);
+                const entries = data && typeof data === "object" ? data.entries : null;
+                if (entries && typeof entries === "object") {
+                    Object.keys(entries).forEach((key) => {
+                        node.portOverrideCache.set(key, entries[key]);
+                    });
+                }
+            } catch (error) {
+                // No cache file yet (or unreadable) — start empty.
+            }
+        }
+
+        function schedulePortOverrideCacheSave() {
+            if (node.portOverrideCacheSaveTimer || node.isClosing) {
+                return;
+            }
+            node.portOverrideCacheSaveTimer = setTimeout(() => {
+                node.portOverrideCacheSaveTimer = null;
+                try {
+                    const entries = {};
+                    node.portOverrideCache.forEach((value, key) => {
+                        entries[key] = value;
+                    });
+                    fs.writeFileSync(
+                        node.portOverrideCacheFile,
+                        JSON.stringify({ version: PORT_OVERRIDE_CACHE_VERSION, entries }),
+                        "utf8"
+                    );
+                } catch (error) {
+                    // Persistence is best-effort; the in-memory cache still works.
+                }
+            }, PORT_OVERRIDE_CACHE_SAVE_DEBOUNCE_MS);
+            if (typeof node.portOverrideCacheSaveTimer.unref === "function") {
+                node.portOverrideCacheSaveTimer.unref();
+            }
+        }
+
+        // Store the last known ENABLED override for a port. `override` is the raw
+        // override object, or null when the enabled port had no override at all.
+        node.rememberEnabledPortOverride = (deviceMac, portIdx, override) => {
+            const key = portOverrideCacheKey(deviceMac, portIdx);
+            if (!key) {
+                return;
+            }
+            const value = override
+                ? JSON.parse(JSON.stringify(override))
+                : { ...PORT_OVERRIDE_NONE };
+            node.portOverrideCache.set(key, value);
+            schedulePortOverrideCacheSave();
+        };
+
+        // Refresh the cache from a freshly fetched legacy device. Only ports that
+        // are currently enabled update the cache; a disabled port keeps whatever
+        // enabled snapshot we already have, so its VLAN can be restored later.
+        node.ingestPortOverridesFromDevice = (device) => {
+            if (!device || typeof device !== "object") {
+                return;
+            }
+            const mac = normalizeString(device.mac);
+            if (!mac) {
+                return;
+            }
+            const overridesByIdx = new Map();
+            (Array.isArray(device.port_overrides) ? device.port_overrides : []).forEach((override) => {
+                const idx = Number(override && override.port_idx);
+                if (Number.isFinite(idx)) {
+                    overridesByIdx.set(Math.trunc(idx), override);
+                }
+            });
+            const indices = new Set();
+            (Array.isArray(device.port_table) ? device.port_table : []).forEach((port) => {
+                const idx = Number(port && port.port_idx);
+                if (Number.isFinite(idx)) {
+                    indices.add(Math.trunc(idx));
+                }
+            });
+            overridesByIdx.forEach((_override, idx) => indices.add(idx));
+            indices.forEach((idx) => {
+                const override = overridesByIdx.get(idx) || null;
+                const forward = override ? normalizeString(override.forward) : "";
+                if (forward === "disabled") {
+                    // Keep the last known enabled snapshot instead of overwriting it.
+                    return;
+                }
+                node.rememberEnabledPortOverride(mac, idx, override);
+            });
+        };
+
+        // Return the remembered enabled override for a port (a deep clone so callers
+        // cannot mutate the cache), PORT_OVERRIDE_NONE when the enabled port had no
+        // override, or null when the port is unknown.
+        node.getEnabledPortOverride = (deviceMac, portIdx) => {
+            const key = portOverrideCacheKey(deviceMac, portIdx);
+            if (!key) {
+                return null;
+            }
+            const value = node.portOverrideCache.get(key);
+            if (!value) {
+                return null;
+            }
+            if (value.__noOverride) {
+                return { ...PORT_OVERRIDE_NONE };
+            }
+            return JSON.parse(JSON.stringify(value));
+        };
+
+        // Best-effort startup seed: read every site's devices once so the cache is
+        // populated with the current enabled configuration before any disable.
+        node.seedPortOverrideCache = async () => {
+            if (!String(node.getApiKey() || "").trim()) {
+                return;
+            }
+            let sites;
+            try {
+                sites = await node.fetchSites();
+            } catch (error) {
+                return;
+            }
+            for (const site of (Array.isArray(sites) ? sites : [])) {
+                if (node.isClosing) {
+                    return;
+                }
+                const siteId = String(site && site.id || "").trim();
+                if (!siteId) {
+                    continue;
+                }
+                try {
+                    const devices = await fetchLegacyDevices(siteId);
+                    (Array.isArray(devices) ? devices : []).forEach((device) => {
+                        node.ingestPortOverridesFromDevice(device);
+                    });
+                } catch (error) {
+                    // Skip sites we cannot read; the cache still warms up on demand.
+                }
+            }
+        };
+
+        loadPortOverrideCache();
 
         function setNodeStatus(status) {
             if (!status || typeof status !== "object" || Array.isArray(status)) {
@@ -1343,10 +1521,18 @@ module.exports = function(RED) {
 
         async function fetchLegacyDevices(siteId) {
             const devices = await fetchLegacySiteCollection(siteId, "/stat/device");
-            return devices.map((device) => ({
+            const mapped = devices.map((device) => ({
                 ...device,
                 siteId
             }));
+            // Every device read is an opportunity to keep the port-override cache
+            // aligned with the controller, so enable/disable can restore VLANs.
+            try {
+                mapped.forEach((device) => node.ingestPortOverridesFromDevice(device));
+            } catch (error) {
+                // Cache maintenance must never break the actual device fetch.
+            }
+            return mapped;
         }
 
         function buildLegacyClientSummary(client, siteId) {
@@ -3062,9 +3248,22 @@ module.exports = function(RED) {
 
         node.updateObserverDebugStatus();
 
+        // Warm the port-override cache in the background so a first-ever disable
+        // already has the port's enabled configuration recorded. Best-effort.
+        setTimeout(() => {
+            if (node.isClosing) {
+                return;
+            }
+            node.seedPortOverrideCache().catch(() => {});
+        }, 0);
+
         node.on("close", function(done) {
             try {
                 node.isClosing = true;
+                if (node.portOverrideCacheSaveTimer) {
+                    clearTimeout(node.portOverrideCacheSaveTimer);
+                    node.portOverrideCacheSaveTimer = null;
+                }
                 node.nodeClients = [];
                 node.powerObserverNodeState.clear();
                 node.stopPowerObservationScheduler();
