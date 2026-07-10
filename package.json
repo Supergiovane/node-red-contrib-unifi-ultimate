@@ -12,12 +12,27 @@
   ],
   "keywords": [
     "node-red",
+    "node-red-contrib",
     "unifi",
     "ubiquiti",
+    "unifi-protect",
+    "unifi-access",
+    "unifi-network",
     "network",
     "protect",
     "access",
-    "node-red-contrib"
+    "camera",
+    "nvr",
+    "cctv",
+    "surveillance",
+    "doorbell",
+    "poe",
+    "presence",
+    "dream-machine",
+    "udm",
+    "iot",
+    "smarthome",
+    "home-automation"
   ],
   "dependencies": {
     "ws": "8.20.0"
