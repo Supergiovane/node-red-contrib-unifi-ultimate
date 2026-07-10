@@ -1,6 +1,15 @@
 <p align="center">
-  <img src="nodes/icons/unifi-ultimate-logo.svg" alt="Unifi Ultimate" width="720">
+  <img src="img/logo-supervibe.png" alt="UniFi Ultimate - Max Supervibe" width="380">
 </p>
+
+## Nodes for Hikvision (and compatible) Camera, Alarm, Radar, NVR, Doorbell, Speaker etc.
+
+Control and monitor your **UniFi Network**, **UniFi Protect**, and **UniFi Access** devices directly from Node-RED.
+UniFi Ultimate brings the full power of the Ubiquiti UniFi ecosystem to Node-RED. Monitor and control UniFi Network, Protect, and Access using intuitive nodes, receive real-time events, manage devices, PoE ports, cameras, and client presence, and build powerful automation workflows without complex coding.
+
+<br/>
+<br/>
+<br/>
 
 [![NPM version][npm-version-image]][npm-url]
 [![Node.js version][node-version-image]][npm-url]
@@ -11,9 +20,9 @@
 [![MIT License][license-image]][license-url]
 [![Youtube][youtube-image]][youtube-url]
 
-# node-red-contrib-unifi-ultimate
-
-Control and monitor your **UniFi Network**, **UniFi Protect**, and **UniFi Access** devices directly from Node-RED — no technical knowledge required.
+<p align="center">
+  <img src="img/readmemain.png" alt="UniFi Ultimate for Node-RED — Max Supervibe" width="70%">
+</p>
 
 [View Changelog](CHANGELOG.md)
 
