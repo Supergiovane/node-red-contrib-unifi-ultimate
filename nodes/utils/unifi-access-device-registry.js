@@ -12,6 +12,60 @@ const DEVICE_TYPE_DEFINITIONS = {
         type: "device",
         label: "Access Device",
         listPath: "/api/v1/developer/devices"
+    },
+    visitor: {
+        type: "visitor",
+        label: "Visitor",
+        listPath: "/api/v1/developer/visitors",
+        detailPath: "/api/v1/developer/visitors/:id"
+    },
+    accessPolicy: {
+        type: "accessPolicy",
+        label: "Access Policy",
+        listPath: "/api/v1/developer/access_policies",
+        detailPath: "/api/v1/developer/access_policies/:id",
+        supportsEvents: false
+    },
+    schedule: {
+        type: "schedule",
+        label: "Schedule",
+        listPath: "/api/v1/developer/access_policies/schedules",
+        detailPath: "/api/v1/developer/access_policies/schedules/:id",
+        supportsEvents: false
+    },
+    holidayGroup: {
+        type: "holidayGroup",
+        label: "Holiday Group",
+        listPath: "/api/v1/developer/access_policies/holiday_groups",
+        detailPath: "/api/v1/developer/access_policies/holiday_groups/:id",
+        supportsEvents: false
+    },
+    doorGroup: {
+        type: "doorGroup",
+        label: "Door Group",
+        listPath: "/api/v1/developer/door_groups",
+        detailPath: "/api/v1/developer/door_groups/:id",
+        supportsEvents: false
+    },
+    systemLog: {
+        type: "systemLog",
+        label: "Recent System Log",
+        listPath: "/api/v1/developer/system/logs",
+        listMethod: "POST",
+        listQuery: {
+            page_size: 200,
+            page_num: 1
+        },
+        listPayload: () => {
+            const until = Math.floor(Date.now() / 1000);
+            return {
+                topic: "all",
+                since: Math.max(0, until - 86400),
+                until
+            };
+        },
+        collectionPath: "hits",
+        supportsEvents: false
     }
 };
 
@@ -309,7 +363,22 @@ const TYPE_CAPABILITIES = {
                 return { payload };
             }
         }
-    ]
+    ],
+    visitor: [],
+    accessPolicy: [],
+    schedule: [],
+    holidayGroup: [],
+    doorGroup: [
+        {
+            id: "readDoorGroupTopology",
+            label: "Read Door Group Topology",
+            description: "Fetch the complete building and door-group topology.",
+            method: "GET",
+            path: "/api/v1/developer/door_groups/topology",
+            mode: "request"
+        }
+    ],
+    systemLog: []
 };
 
 function getDeviceTypes() {
@@ -329,6 +398,7 @@ function getCapabilitiesForType(deviceType, device) {
     // Device-aware filtering keeps the editor clean, for example by only
     // showing doorbell actions on hardware that can actually ring.
     return COMMON_CAPABILITIES
+        .filter((capability) => capability.id !== "observe" || definition.supportsEvents !== false)
         .concat(TYPE_CAPABILITIES[definition.type] || [])
         .filter((capability) => isCapabilitySupportedForDevice(definition.type, capability, device))
         .map((capability) => ({
@@ -527,7 +597,7 @@ function summarizeDevice(deviceType, device) {
     // summary shape for the editor.
     const normalizedType = String(deviceType || "").trim();
     const item = device && typeof device === "object" ? device : {};
-    const id = String(item.id || "").trim();
+    const id = String(item.id || item._id || "").trim();
 
     if (normalizedType === "door") {
         const stateParts = [];
@@ -546,10 +616,36 @@ function summarizeDevice(deviceType, device) {
         };
     }
 
+    if (normalizedType === "visitor") {
+        const fullName = String(
+            item.full_name
+            || [item.first_name, item.last_name].filter(Boolean).join(" ")
+            || item.name
+            || id
+            || "Visitor"
+        ).trim();
+
+        return {
+            id,
+            name: fullName,
+            state: String(item.status || item.visitor_status || item.end_time || "").trim(),
+            raw: item
+        };
+    }
+
+    if (normalizedType === "systemLog") {
+        return {
+            id,
+            name: String(item.event || item.topic || item.type || item.message || id || "System Log"),
+            state: String(item.created_at || item.create_time || item.timestamp || "").trim(),
+            raw: item
+        };
+    }
+
     return {
         id,
-        name: String(item.alias || item.name || id || "Device"),
-        state: String(item.type || "").trim(),
+        name: String(item.alias || item.name || item.full_name || id || "Access Item"),
+        state: String(item.type || item.status || item.is_default || "").trim(),
         raw: item
     };
 }

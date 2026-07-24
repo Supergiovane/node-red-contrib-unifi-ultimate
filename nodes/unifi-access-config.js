@@ -133,19 +133,35 @@ module.exports = function(RED) {
                 throw new Error(`Unsupported device type: ${deviceType}`);
             }
 
+            const listMethod = String(definition.listMethod || "GET").toUpperCase();
+            const listPayload = typeof definition.listPayload === "function"
+                ? definition.listPayload()
+                : definition.listPayload;
             const response = await node.apiRequest({
                 path: definition.listPath,
-                method: "GET",
+                method: listMethod,
                 // Some Access device inventories only refresh reliably when this
                 // query flag is present.
-                query: deviceType === "device" ? { refresh: "true" } : undefined
+                query: {
+                    ...(definition.listQuery && typeof definition.listQuery === "object" ? definition.listQuery : {}),
+                    ...(deviceType === "device" ? { refresh: "true" } : {})
+                },
+                payload: listMethod === "GET" || listMethod === "HEAD" ? undefined : listPayload
             });
 
             if (response.statusCode < 200 || response.statusCode >= 300) {
                 throw new Error(`Failed to load ${deviceType} entries (${response.statusCode})`);
             }
 
-            return normalizeAccessCollection(response.payload);
+            let collectionPayload = extractAccessData(response.payload);
+            if (definition.collectionPath) {
+                collectionPayload = String(definition.collectionPath)
+                    .split(".")
+                    .filter(Boolean)
+                    .reduce((current, key) => current && typeof current === "object" ? current[key] : undefined, collectionPayload);
+            }
+
+            return normalizeAccessCollection(collectionPayload);
         };
 
         node.fetchDeviceByTypeAndId = async (deviceType, deviceId) => {
@@ -170,7 +186,7 @@ module.exports = function(RED) {
             }
 
             const items = await node.fetchDevices(deviceType);
-            return items.find((entry) => String(entry.id || "").trim() === String(deviceId || "").trim()) || null;
+            return items.find((entry) => String(entry.id || entry._id || "").trim() === String(deviceId || "").trim()) || null;
         };
 
         node.fetchCapabilityOptions = async (deviceType, deviceId, capabilityId, capabilityConfig) => {

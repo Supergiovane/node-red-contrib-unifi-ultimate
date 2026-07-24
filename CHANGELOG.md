@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Protect Device:** added Bridge, Link Station, Alarm Hub, Key Fob, Relay, Siren, and Speaker resources with state/event support. Added explicit siren play/stop/test, relay output control, and speaker sound-test actions.
+- **Access Device:** added read-only Visitor, Access Policy, Schedule, Holiday Group, Door Group, and Recent System Log resources, plus door-group topology reads.
+
 ## 1.1.2
 
 - **Network Device:** added read-only Site actions to list configured networks, Wi-Fi broadcasts, WAN interfaces, VPN servers, site-to-site VPN tunnels, and existing guest vouchers through the official Network integration API.

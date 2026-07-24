@@ -108,6 +108,9 @@ Use **Protect** nodes to work with:
 - lights
 - chimes
 - viewers
+- bridges and Link Stations
+- alarm hubs and key fobs
+- sirens, relays, and speakers
 - NVR
 
 Things you can do:
@@ -118,6 +121,8 @@ Things you can do:
 - Control PTZ cameras (move to preset, start/stop patrol).
 - Display a custom message on a doorbell screen.
 - Switch a viewer to a different live feed.
+- Monitor bridges, Link Stations, alarm hubs, key fobs, sirens, relays, and speakers.
+- Play or stop a siren, control relay outputs, and test speaker or siren sound.
 
 <br/>
 <br/>
@@ -133,6 +138,8 @@ Use **Access** nodes to work with:
 - Access devices (hubs, intercoms)
 - door events (unlock, ring, DPS, emergency)
 - lock rules and schedules
+- visitors, access policies, holiday groups, and door groups
+- recent system logs
 - doorbell actions
 
 Things you can do:
@@ -142,6 +149,8 @@ Things you can do:
 - Enable lockdown or evacuation mode.
 - Receive door events in real time.
 - Trigger or cancel an intercom doorbell.
+- Read visitors, access policies, schedules, holiday groups, and door groups.
+- Inspect recent Access system-log entries and the door-group topology.
 
 ## Outputs
 

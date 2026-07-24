@@ -61,6 +61,62 @@ const DEVICE_TYPE_DEFINITIONS = {
         modelKey: "nvr",
         listPath: "/v1/nvrs",
         detailPath: "/v1/nvrs"
+    },
+    bridge: {
+        type: "bridge",
+        label: "Bridge",
+        modelKey: "bridge",
+        listPath: "/v1/bridges",
+        detailPath: "/v1/bridges/:id",
+        supportsRawUpdate: false
+    },
+    linkStation: {
+        type: "linkStation",
+        label: "Link Station",
+        modelKey: "linkstation",
+        listPath: "/v1/link-stations",
+        detailPath: "/v1/link-stations/:id",
+        supportsRawUpdate: false
+    },
+    alarmHub: {
+        type: "alarmHub",
+        label: "Alarm Hub",
+        modelKey: "linkstation",
+        listPath: "/v1/alarm-hubs",
+        detailPath: "/v1/alarm-hubs/:id",
+        supportsRawUpdate: false
+    },
+    fob: {
+        type: "fob",
+        label: "Key Fob",
+        modelKey: "fob",
+        listPath: "/v1/fobs",
+        detailPath: "/v1/fobs/:id",
+        supportsRawUpdate: false
+    },
+    relay: {
+        type: "relay",
+        label: "Relay",
+        modelKey: "relay",
+        listPath: "/v1/relays",
+        detailPath: "/v1/relays/:id",
+        supportsRawUpdate: false
+    },
+    siren: {
+        type: "siren",
+        label: "Siren",
+        modelKey: "siren",
+        listPath: "/v1/sirens",
+        detailPath: "/v1/sirens/:id",
+        supportsRawUpdate: false
+    },
+    speaker: {
+        type: "speaker",
+        label: "Speaker",
+        modelKey: "speaker",
+        listPath: "/v1/speakers",
+        detailPath: "/v1/speakers/:id",
+        supportsRawUpdate: false
     }
 };
 
@@ -512,6 +568,160 @@ const TYPE_CAPABILITIES = {
             path: "/v1/meta/info",
             mode: "request"
         }
+    ],
+    bridge: [],
+    linkStation: [],
+    alarmHub: [],
+    fob: [],
+    relay: [
+        {
+            id: "activateRelayOutput",
+            label: "Control Relay Output",
+            description: "Turn a relay output on or off, optionally with an automatic off pulse.",
+            method: "POST",
+            path: "/v1/relays/:id/outputs/:outputId/activate",
+            mode: "request",
+            ignoreInputPayload: true,
+            useConfiguredPayload: true,
+            editor: {
+                fields: [
+                    {
+                        id: "outputId",
+                        label: "Output",
+                        type: "select",
+                        options: [
+                            { value: "0", label: "Output 0" },
+                            { value: "1", label: "Output 1" }
+                        ],
+                        defaultValue: "0"
+                    },
+                    {
+                        id: "state",
+                        label: "State",
+                        type: "select",
+                        options: [
+                            { value: "on", label: "On" },
+                            { value: "off", label: "Off" }
+                        ],
+                        defaultValue: "on"
+                    },
+                    {
+                        id: "pulseDuration",
+                        label: "Auto-off (ms)",
+                        type: "number",
+                        placeholder: "0",
+                        defaultValue: 0,
+                        helpText: "0 keeps the selected state until another command."
+                    }
+                ]
+            },
+            requestComposer: ({ capabilityConfig }) => {
+                const outputId = parseConfiguredInteger(capabilityConfig.outputId, 0, 1, 0);
+                const state = String(capabilityConfig.state || "on").trim().toLowerCase() === "off" ? "off" : "on";
+                const pulseDuration = parseConfiguredInteger(capabilityConfig.pulseDuration, 0, Number.MAX_SAFE_INTEGER, 0);
+                const payload = { state };
+
+                if (state === "on") {
+                    payload.pulseDuration = pulseDuration;
+                }
+
+                return {
+                    params: { outputId },
+                    payload
+                };
+            }
+        }
+    ],
+    siren: [
+        {
+            id: "playSiren",
+            label: "Play Siren",
+            description: "Activate the siren for the configured duration.",
+            method: "POST",
+            path: "/v1/sirens/:id/play",
+            mode: "request",
+            ignoreInputPayload: true,
+            useConfiguredPayload: true,
+            editor: {
+                fields: [
+                    {
+                        id: "duration",
+                        label: "Duration (seconds)",
+                        type: "number",
+                        placeholder: "5",
+                        defaultValue: 5
+                    }
+                ]
+            },
+            requestComposer: ({ capabilityConfig }) => ({
+                payload: {
+                    duration: parseConfiguredInteger(capabilityConfig.duration, 0, Number.MAX_SAFE_INTEGER, 5)
+                }
+            })
+        },
+        {
+            id: "stopSiren",
+            label: "Stop Siren",
+            description: "Stop an active siren.",
+            method: "POST",
+            path: "/v1/sirens/:id/stop",
+            mode: "request",
+            ignoreInputPayload: true
+        },
+        {
+            id: "testSirenSound",
+            label: "Test Siren Sound",
+            description: "Play the siren test sound at the configured volume.",
+            method: "POST",
+            path: "/v1/sirens/:id/test-sound",
+            mode: "request",
+            ignoreInputPayload: true,
+            useConfiguredPayload: true,
+            editor: {
+                fields: [
+                    {
+                        id: "volume",
+                        label: "Volume",
+                        type: "number",
+                        placeholder: "1-100",
+                        defaultValue: 50
+                    }
+                ]
+            },
+            requestComposer: ({ capabilityConfig }) => ({
+                payload: {
+                    volume: parseConfiguredInteger(capabilityConfig.volume, 1, 100, 50)
+                }
+            })
+        }
+    ],
+    speaker: [
+        {
+            id: "testSpeakerSound",
+            label: "Test Speaker Sound",
+            description: "Play the speaker test sound at the configured volume.",
+            method: "POST",
+            path: "/v1/speakers/:id/test-sound",
+            mode: "request",
+            ignoreInputPayload: true,
+            useConfiguredPayload: true,
+            editor: {
+                fields: [
+                    {
+                        id: "volume",
+                        label: "Volume",
+                        type: "number",
+                        placeholder: "0-100",
+                        defaultValue: 50
+                    }
+                ]
+            },
+            requestComposer: ({ capabilityConfig }) => ({
+                payload: {
+                    volume: parseConfiguredInteger(capabilityConfig.volume, 0, 100, 50)
+                }
+            })
+        }
     ]
 };
 
@@ -533,6 +743,7 @@ function getCapabilitiesForType(deviceType, device) {
     // support, such as PTZ actions on non-PTZ cameras.
     return COMMON_CAPABILITIES
         .concat(TYPE_CAPABILITIES[definition.type] || [])
+        .filter((capability) => capability.id !== "patchSettings" || definition.supportsRawUpdate !== false)
         .filter((capability) => isCapabilitySupportedForDevice(definition.type, capability, device))
         .map((capability) => ({
         ...capability,
@@ -1317,6 +1528,20 @@ function parseConfiguredPropertyValue(value, valueType) {
     }
 
     return value;
+}
+
+function parseConfiguredInteger(value, minimum, maximum, fallback) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+        return fallback;
+    }
+
+    const integer = Math.trunc(numeric);
+    if (integer < minimum || integer > maximum) {
+        return fallback;
+    }
+
+    return integer;
 }
 
 function buildDoorbellMessagePayload(capabilityConfig) {
