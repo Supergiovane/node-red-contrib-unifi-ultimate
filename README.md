@@ -80,6 +80,9 @@ Things you can do:
 - Check whether a device or phone is connected to your network.
 - Re-send the current presence state at a fixed interval with the Presence node's **Resend** field (e.g. to keep a dashboard or home-automation system in sync).
 - Count how many clients are currently online.
+- List the site's configured networks, Wi-Fi broadcasts, and WAN interfaces.
+- List VPN servers and site-to-site VPN tunnels.
+- List existing guest Wi-Fi vouchers.
 - Create guest Wi-Fi vouchers.
 - Read CPU usage, memory, and uptime from a switch or access point.
 - Read the temperature of a switch (where supported).

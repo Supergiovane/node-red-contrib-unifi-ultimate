@@ -95,6 +95,54 @@ const TYPE_CAPABILITIES = {
             mode: "request"
         },
         {
+            id: "listSiteNetworks",
+            label: "List Networks",
+            description: "Fetch the networks configured for the selected site.",
+            method: "GET",
+            path: "/v1/sites/{siteId}/networks",
+            mode: "request"
+        },
+        {
+            id: "listWifiBroadcasts",
+            label: "List Wi-Fi Broadcasts",
+            description: "Fetch the Wi-Fi broadcasts configured for the selected site.",
+            method: "GET",
+            path: "/v1/sites/{siteId}/wifi/broadcasts",
+            mode: "request"
+        },
+        {
+            id: "listWanInterfaces",
+            label: "List WAN Interfaces",
+            description: "Fetch the WAN interfaces configured for the selected site.",
+            method: "GET",
+            path: "/v1/sites/{siteId}/wans",
+            mode: "request"
+        },
+        {
+            id: "listVpnServers",
+            label: "List VPN Servers",
+            description: "Fetch the VPN servers configured for the selected site.",
+            method: "GET",
+            path: "/v1/sites/{siteId}/vpn/servers",
+            mode: "request"
+        },
+        {
+            id: "listSiteToSiteVpnTunnels",
+            label: "List Site-to-Site VPN Tunnels",
+            description: "Fetch the site-to-site VPN tunnels configured for the selected site.",
+            method: "GET",
+            path: "/v1/sites/{siteId}/vpn/site-to-site-tunnels",
+            mode: "request"
+        },
+        {
+            id: "listGuestVouchers",
+            label: "List Guest Vouchers",
+            description: "Fetch the Hotspot guest vouchers for the selected site.",
+            method: "GET",
+            path: "/v1/sites/{siteId}/hotspot/vouchers",
+            mode: "request"
+        },
+        {
             id: "countOnlineClients",
             label: "Count Online Clients",
             description: "Count currently online clients for the selected site.",

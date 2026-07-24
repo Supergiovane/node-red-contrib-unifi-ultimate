@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.2
+
+- **Network Device:** added read-only Site actions to list configured networks, Wi-Fi broadcasts, WAN interfaces, VPN servers, site-to-site VPN tunnels, and existing guest vouchers through the official Network integration API.
+
 ## 1.1.1
 
 - **Docs:** new Max Supervibe README banner and app-icon logo.
