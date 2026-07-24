@@ -8,3 +8,4 @@ branding/
 .env
 .env.*
 !.env.example
+CODEX_CONTEXT.md
