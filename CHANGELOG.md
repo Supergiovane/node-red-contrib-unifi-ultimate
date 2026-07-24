@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.3
 
 - **Protect Device:** added Bridge, Link Station, Alarm Hub, Key Fob, Relay, Siren, and Speaker resources with state/event support. Added explicit siren play/stop/test, relay output control, and speaker sound-test actions.
 - **Access Device:** added read-only Visitor, Access Policy, Schedule, Holiday Group, Door Group, and Recent System Log resources, plus door-group topology reads.
@@ -15,7 +15,7 @@
 
 ## 1.1.0
 
-- **Clients Control → Enable/Disable port**: fixed a bug where re-enabling a port that was on a non-default VLAN restored it to the default LAN (VLAN 1) instead of its original network. Disabling a port rewrites its native network and VLAN settings (mirroring the UniFi UI), which lost the port's configuration. The **config node** now keeps a persistent, always-refreshed cache of each switch port's *last known enabled* override — seeded at startup by reading every site's devices, refreshed on **every** device read, and saved to disk (in the Node-RED user directory) so it survives restarts. Re-enabling a port restores that whole snapshot, so every property — the VLAN and anything else, including modifiable properties UniFi may add in the future — comes back exactly as it was. When the port had no override while enabled, re-enabling removes the override so the port reverts to its port-profile / device defaults. Only when the port has never been seen enabled (e.g. it was already disabled before this plugin ever ran) does it fall back to a best-effort revert with the site default native network. Verified against a live controller: disabling a port really does clear its `native_networkconf_id`, and writing back the remembered override restores the exact VLAN (and every other property). Fixes [#13](https://github.com/Supergiovane/node-red-contrib-unifi-ultimate/issues/13).
+- **Clients Control → Enable/Disable port**: fixed a bug where re-enabling a port that was on a non-default VLAN restored it to the default LAN (VLAN 1) instead of its original network. Disabling a port rewrites its native network and VLAN settings (mirroring the UniFi UI), which lost the port's configuration. The **config node** now keeps a persistent, always-refreshed cache of each switch port's _last known enabled_ override — seeded at startup by reading every site's devices, refreshed on **every** device read, and saved to disk (in the Node-RED user directory) so it survives restarts. Re-enabling a port restores that whole snapshot, so every property — the VLAN and anything else, including modifiable properties UniFi may add in the future — comes back exactly as it was. When the port had no override while enabled, re-enabling removes the override so the port reverts to its port-profile / device defaults. Only when the port has never been seen enabled (e.g. it was already disabled before this plugin ever ran) does it fall back to a best-effort revert with the site default native network. Verified against a live controller: disabling a port really does clear its `native_networkconf_id`, and writing back the remembered override restores the exact VLAN (and every other property). Fixes [#13](https://github.com/Supergiovane/node-red-contrib-unifi-ultimate/issues/13).
 
 ## 1.0.11
 
