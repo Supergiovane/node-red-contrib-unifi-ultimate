@@ -1,6 +1,7 @@
 "use strict";
 
 const { decodeScopedDeviceId } = require("./utils/unifi-network-device-registry");
+const { normalizePresenceMatchBy } = require("./utils/unifi-network-presence-utils");
 const {
     buildStatusTimestampText,
     appendStatusTimestamp,
@@ -277,6 +278,11 @@ module.exports = function(RED) {
         }
 
         node.clientId = config.clientId || "";
+        // Existing flows keep the historical ID-based behavior. Name matching
+        // deliberately resolves the active client again on every poll, allowing
+        // privacy-addressed devices to rotate their MAC/resource id.
+        node.matchBy = normalizePresenceMatchBy(config.matchBy);
+        node.clientName = normalizeString(config.clientName || config.deviceName);
         node.pollIntervalSeconds = parsePositiveSeconds(config.pollInterval, 10);
         node.onlineHysteresisSeconds = parseNonNegativeSeconds(config.onlineHysteresis, 15);
         node.offlineHysteresisSeconds = parseNonNegativeSeconds(config.offlineHysteresis, 30);
@@ -293,6 +299,8 @@ module.exports = function(RED) {
         node.firstOnlineDetectedAt = 0;
         node.firstOfflineDetectedAt = 0;
         node.lastKnownClient = null;
+        node.lastMatchedClientId = "";
+        node.lastMatchCount = 0;
 
         function setNodeStatus(status) {
             if (!status || typeof status !== "object" || Array.isArray(status)) {
@@ -341,6 +349,10 @@ module.exports = function(RED) {
                 name: nodeName || undefined,
                 deviceName: resolvedDeviceName || undefined,
                 clientId,
+                matchBy: node.matchBy,
+                clientName: node.matchBy === "name" ? node.clientName || undefined : undefined,
+                matchedClientId: node.lastMatchedClientId || undefined,
+                matchCount: node.matchBy === "name" ? node.lastMatchCount : undefined,
                 siteId: scoped.siteId || undefined,
                 resourceId: scoped.resourceId || undefined,
                 source,
@@ -469,6 +481,14 @@ module.exports = function(RED) {
             const client = snapshot && snapshot.client && typeof snapshot.client === "object" && !Array.isArray(snapshot.client)
                 ? snapshot.client
                 : null;
+            if (node.matchBy === "name") {
+                node.lastMatchCount = Number.isFinite(Number(snapshot && snapshot.matchCount))
+                    ? Math.max(0, Math.trunc(Number(snapshot.matchCount)))
+                    : 0;
+                if (normalizeString(snapshot && snapshot.matchedClientId)) {
+                    node.lastMatchedClientId = normalizeString(snapshot.matchedClientId);
+                }
+            }
             if (client) {
                 node.lastKnownClient = client;
             }
@@ -507,6 +527,8 @@ module.exports = function(RED) {
             }
             return node.server.requestPresenceObservationNow({
                 clientId,
+                matchBy: node.matchBy,
+                clientName: node.clientName,
                 timeout: node.timeout,
                 source: source || "manual-input"
             });
@@ -587,6 +609,8 @@ module.exports = function(RED) {
             }
             return {
                 clientId,
+                matchBy: node.matchBy,
+                clientName: node.clientName,
                 pollIntervalSeconds: node.pollIntervalSeconds,
                 timeout: node.timeout
             };
@@ -606,6 +630,8 @@ module.exports = function(RED) {
             setNodeStatus({ fill: "red", shape: "ring", text: "no config" });
         } else if (!node.clientId) {
             setNodeStatus({ fill: "grey", shape: "ring", text: "set client" });
+        } else if (node.matchBy === "name" && !node.clientName) {
+            setNodeStatus({ fill: "grey", shape: "ring", text: "set client name" });
         } else {
             if (node.server && typeof node.server.addClient === "function") {
                 node.server.addClient(node);

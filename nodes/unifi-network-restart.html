@@ -58,6 +58,15 @@
                 }
             }
 
+            function parseStoredNames() {
+                try {
+                    const parsed = JSON.parse(String(node.deviceNames || "{}"));
+                    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+                } catch (error) {
+                    return {};
+                }
+            }
+
             function hasSelection($field) {
                 return String($field.val() || "").trim() !== "";
             }
@@ -101,16 +110,12 @@
                 const hasStoredSelection = storedIds.length > 0;
                 const storedSet = {};
                 storedIds.forEach(function (id) { storedSet[id] = true; });
+                const storedNames = parseStoredNames();
+                const renderedSet = {};
 
                 $list.empty();
 
-                if (!Array.isArray(items) || items.length === 0) {
-                    $list.append($("<div class='unifi-restart-empty'></div>").text("No UniFi Network devices found."));
-                    updateSelectedCount();
-                    return;
-                }
-
-                items
+                (Array.isArray(items) ? items : [])
                     .slice()
                     .sort(function (a, b) {
                         return String(a.name || a.id).localeCompare(String(b.name || b.id));
@@ -120,6 +125,7 @@
                         if (!id) {
                             return;
                         }
+                        renderedSet[id] = true;
                         const name = String(item.name || id).trim();
                         const model = String(item.state || "").trim();
                         const checked = hasStoredSelection ? Boolean(storedSet[id]) : !isGatewayLike(item);
@@ -138,6 +144,30 @@
                         }
                         $list.append($row);
                     });
+
+                // Keep configured devices that are missing from this controller
+                // response. Otherwise opening and saving the editor would silently
+                // delete an offline or temporarily unavailable target.
+                storedIds.forEach(function (id) {
+                    if (renderedSet[id]) {
+                        return;
+                    }
+                    const name = String(storedNames[id] || id).trim();
+                    const $row = $("<label class='unifi-restart-device-row unifi-restart-device-unavailable'></label>");
+                    const $checkbox = $("<input type='checkbox'>")
+                        .attr("data-id", id)
+                        .attr("data-name", name)
+                        .prop("checked", true);
+                    $checkbox.on("change", updateSelectedCount);
+                    $row.append($checkbox);
+                    $row.append($("<span class='unifi-restart-device-name'></span>").text(name));
+                    $row.append($("<span class='unifi-restart-device-model'></span>").text("saved; currently unavailable"));
+                    $list.append($row);
+                });
+
+                if ($list.find("input[type='checkbox']").length === 0) {
+                    $list.append($("<div class='unifi-restart-empty'></div>").text("No UniFi Network devices found."));
+                }
 
                 applyFilter();
                 updateSelectedCount();
@@ -158,9 +188,8 @@
             function loadDevices(force) {
                 const serverId = String($server.val() || "").trim();
                 if (!serverId || serverId === "_ADD_") {
-                    $list.empty();
+                    renderDevices([]);
                     $status.text("");
-                    updateSelectedCount();
                     return Promise.resolve();
                 }
 
@@ -169,6 +198,9 @@
                 }
 
                 $status.text("Loading devices...");
+                if ($list.find("input[type='checkbox']").length === 0) {
+                    renderDevices([]);
+                }
                 loadedServerId = serverId;
                 loadingPromise = requestJson("unifiNetwork/devices?serverId=" + encodeURIComponent(serverId) + "&deviceType=device")
                     .then(function (devices) {
@@ -176,7 +208,7 @@
                         $status.text("");
                     })
                     .catch(function (xhr) {
-                        $list.empty();
+                        renderDevices([]);
                         const message = xhr && xhr.responseJSON && xhr.responseJSON.error
                             ? xhr.responseJSON.error
                             : "Unable to load devices.";
@@ -278,7 +310,7 @@
         <li><code>Restart devices</code> — reboots each selected device (UniFi <code>RESTART</code> action).</li>
         <li><code>Power cycle PoE ports</code> — power-cycles every port currently delivering PoE on each selected device (UniFi <code>POWER_CYCLE</code> action). Devices with no active PoE ports are skipped.</li>
     </ul>
-    <p><b>Devices</b> lists every adopted UniFi Network device. By default switches and access points are pre-selected; gateways, consoles and cloud keys are listed but unchecked. Add or remove devices freely — the selection is saved with the node. Use <code>All</code>/<code>None</code> and the filter box to manage long lists.</p>
+    <p><b>Devices</b> lists every adopted UniFi Network device. By default switches and access points are pre-selected; gateways, consoles and cloud keys are listed but unchecked. Add or remove devices freely — the selection is saved with the node. A configured device missing from the current controller response remains checked and is marked as <code>saved; currently unavailable</code>. Use <code>All</code>/<code>None</code> and the filter box to manage long lists.</p>
 
     <h3>Input</h3>
     <ul>

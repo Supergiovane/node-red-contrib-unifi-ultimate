@@ -850,7 +850,20 @@
                         );
                     });
 
-                    if (currentValue && $deviceId.find("option[value='" + currentValue + "']").length > 0) {
+                    const hasCurrentValue = currentValue && $deviceId.find("option").filter(function () {
+                        return String($(this).val() || "") === currentValue;
+                    }).length > 0;
+                    if (hasCurrentValue) {
+                        $deviceId.val(currentValue);
+                    } else if (currentValue) {
+                        const savedName = String(node.deviceName || currentValue).trim();
+                        $deviceId.append(
+                            $("<option></option>")
+                                .val(currentValue)
+                                .text(savedName + " (saved; currently unavailable)")
+                                .attr("data-device-name", savedName)
+                                .attr("data-unavailable", "true")
+                        );
                         $deviceId.val(currentValue);
                     } else {
                         $deviceId.val("");
@@ -1069,6 +1082,7 @@
             });
 
             refreshSelectionSummary();
+            renderDevices([]);
             ensureDefaultServerSelection();
             refreshEditor();
         }
@@ -1135,7 +1149,7 @@
 
     <h3>Configuration</h3>
     <p><b>Connection</b> selects the shared UniFi Access config node.</p>
-    <p><b>Control</b> chooses the Access category. <b>Device</b> chooses the specific door, device, visitor, policy, schedule, holiday group, door group, or recent system-log entry. Selectors are searchable and open with the complete list before filtering.</p>
+    <p><b>Control</b> chooses the Access category. <b>Device</b> chooses the specific door, device, visitor, policy, schedule, holiday group, door group, or recent system-log entry. Selectors are searchable and open with the complete list before filtering. A saved selection that is temporarily unavailable is preserved instead of being cleared.</p>
     <p><b>Action</b> only shows actions supported by the selected item.</p>
     <p>Additional fields appear only when the selected action needs extra input, such as a temporary lock rule or a room name for doorbell actions.</p>
     <p>For <code>Set Temporary Lock Rule</code>, choose <code>Custom Duration</code> to reveal the minutes field. Legacy <code>ended_time</code> is still available only as fallback compatibility.</p>

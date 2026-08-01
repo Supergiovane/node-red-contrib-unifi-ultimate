@@ -17,6 +17,18 @@
         return (self && self.watchBy) ? String(self.watchBy).trim() : "presence";
     }
 
+    function currentPresenceMatchByValue(self) {
+        try {
+            const live = $("#node-input-matchBy").val();
+            if (live) {
+                return String(live).trim();
+            }
+        } catch (error) {
+            // jQuery/DOM not available in this context.
+        }
+        return (self && self.matchBy) ? String(self.matchBy).trim() : "id";
+    }
+
     RED.nodes.registerType("unifi-network-presence", {
         category: "Unifi Ultimate",
         color: "#CFE8FB",
@@ -24,11 +36,22 @@
             name: { value: "" },
             server: { value: "", type: "unifi-network-config", required: true },
             watchBy: { value: "presence", required: true },
+            matchBy: { value: "id", required: true },
             clientId: {
                 value: "",
                 validate: function (v) {
                     const mode = currentWatchByValue(this);
                     return mode === "network" ? true : String(v || "").trim() !== "";
+                }
+            },
+            clientName: {
+                value: "",
+                validate: function (v) {
+                    const mode = currentWatchByValue(this);
+                    const matchBy = currentPresenceMatchByValue(this);
+                    return mode !== "presence" || matchBy !== "name"
+                        ? true
+                        : String(v || this.deviceName || "").trim() !== "";
                 }
             },
             deviceName: { value: "" },
@@ -54,11 +77,11 @@
         paletteLabel: "Presence Detection",
         outputLabels: ["result", "error"],
         label: function () {
-            if (this.name) {
-                return this.name;
-            }
             if (this.watchBy === "network" && this.networkName) {
                 return this.networkName;
+            }
+            if (this.watchBy !== "network" && (this.clientName || this.deviceName)) {
+                return this.clientName || this.deviceName;
             }
             return "Presence Detection";
         },
@@ -70,28 +93,42 @@
                 const $selected = $("#node-input-networkId option:selected");
                 this.networkName = String($selected.attr("data-network-name") || "").trim();
                 $("#node-input-networkName").val(this.networkName);
+            } else {
+                const selectedClientName = String($("#node-input-clientId option:selected").attr("data-client-name") || "").trim();
+                const configuredClientName = String($("#node-input-clientName").val() || "").trim();
+                if (selectedClientName) {
+                    this.deviceName = selectedClientName;
+                    $("#node-input-deviceName").val(selectedClientName);
+                }
+                this.clientName = configuredClientName || selectedClientName;
+                $("#node-input-clientName").val(this.clientName);
             }
         },
         oneditprepare: function () {
             const node = this;
-            const $name = $("#node-input-name");
             const $server = $("#node-input-server");
             const $watchBy = $("#node-input-watchBy");
+            const $matchBy = $("#node-input-matchBy");
             const $clientId = $("#node-input-clientId");
+            const $clientName = $("#node-input-clientName");
             const $deviceName = $("#node-input-deviceName");
             const $refresh = $("#node-input-refreshClients");
             const $clientRow = $clientId.closest(".form-row");
+            const $clientNameRow = $("#node-row-clientName");
             const $advancedRow = $("#node-row-advanced");
             // Network-mode controls.
             const $networkId = $("#node-input-networkId");
             const $refreshNetworks = $("#node-input-refreshNetworks");
             const $watchByRow = $("#node-row-watchBy");
+            const $matchByRow = $("#node-row-matchBy");
             const $networkRow = $("#node-row-networkId");
             const $networkStatus = $("#unifi-presence-network-status");
             let suspendChangeHandling = false;
             let loadedNetworksServerId = "";
 
             $watchBy.val(this.watchBy || "presence");
+            $matchBy.val(this.matchBy || "id");
+            $clientName.val(this.clientName || this.deviceName || "");
 
             function currentMode() {
                 return String($watchBy.val() || "presence").trim();
@@ -108,7 +145,9 @@
                 const hasTarget = isNetwork ? hasSelection($networkId) : hasSelection($clientId);
 
                 $watchByRow.toggle(hasServer);
+                $matchByRow.toggle(hasServer && !isNetwork);
                 $clientRow.toggle(hasServer && !isNetwork);
+                $clientNameRow.toggle(hasServer && !isNetwork && hasSelection($clientId));
                 $networkRow.toggle(hasServer && isNetwork);
                 $advancedRow.toggle(hasServer && hasTarget);
                 // Tuning rows depend on the active mode.
@@ -137,7 +176,48 @@
                             $("<option></option>").val(id).text(name + suffix).attr("data-network-name", name)
                         );
                     });
-                    $networkId.val(currentValue && $networkId.find("option[value='" + currentValue + "']").length > 0 ? currentValue : "");
+                    const hasCurrentValue = currentValue && $networkId.find("option").filter(function () {
+                        return String($(this).val() || "") === currentValue;
+                    }).length > 0;
+                    if (hasCurrentValue) {
+                        $networkId.val(currentValue);
+                    } else if (currentValue) {
+                        const savedName = String(node.networkName || currentValue).trim();
+                        $networkId.append(
+                            $("<option></option>")
+                                .val(currentValue)
+                                .text(savedName + " (saved; currently unavailable)")
+                                .attr("data-network-name", savedName)
+                                .attr("data-unavailable", "true")
+                        );
+                        $networkId.val(currentValue);
+                    } else {
+                        $networkId.val("");
+                    }
+                } finally {
+                    suspendChangeHandling = false;
+                }
+                syncProgressiveRows();
+            }
+
+            function renderNetworksLoading() {
+                const savedValue = String($networkId.val() || node.networkId || "").trim();
+                const savedName = String(node.networkName || savedValue).trim();
+                suspendChangeHandling = true;
+                try {
+                    $networkId.empty();
+                    if (savedValue) {
+                        $networkId.append(
+                            $("<option></option>")
+                                .val(savedValue)
+                                .text(savedName + " (loading...)")
+                                .attr("data-network-name", savedName)
+                        );
+                        $networkId.val(savedValue);
+                    } else {
+                        $networkId.append($('<option></option>').val("").text("Loading networks..."));
+                        $networkId.val("");
+                    }
                 } finally {
                     suspendChangeHandling = false;
                 }
@@ -156,6 +236,7 @@
                 }
                 $networkStatus.text("Loading networks...");
                 $refreshNetworks.find("i").addClass("fa-spin");
+                renderNetworksLoading();
                 loadedNetworksServerId = serverId;
                 return requestJson("unifiNetwork/networks?serverId=" + encodeURIComponent(serverId))
                     .then(function (networks) {
@@ -446,7 +527,9 @@
 
                 if (serverId && serverId !== "_ADD_") {
                     summary = "Choose the client to monitor.";
-                    detail = "Presence checks are scheduled by the shared Network config node using UniFi Network data.";
+                    detail = $matchBy.val() === "name"
+                        ? "The active client is matched by alias or hostname on every poll."
+                        : "The selected UniFi client ID is checked on every poll.";
                 }
 
                 if (clientName) {
@@ -456,22 +539,16 @@
                 syncProgressiveRows();
             }
 
-            function syncNameFromSelection() {
-                const clientName = getSelectedClientName();
-                if (!clientName) {
-                    return;
-                }
-
-                $name.val(clientName);
-            }
-
-            function rememberSelectedClientName() {
+            function rememberSelectedClientName(forceTargetName) {
                 const clientName = getSelectedClientName();
                 if (!clientName) {
                     return;
                 }
 
                 $deviceName.val(clientName);
+                if (forceTargetName || !String($clientName.val() || "").trim()) {
+                    $clientName.val(clientName);
+                }
             }
 
             function renderClients(items) {
@@ -500,7 +577,28 @@
                         $clientId.append($option);
                     });
 
-                    if (currentValue && $clientId.find("option[value='" + currentValue + "']").length > 0) {
+                    const hasCurrentValue = currentValue && $clientId.find("option").filter(function () {
+                        return String($(this).val() || "") === currentValue;
+                    }).length > 0;
+                    if (hasCurrentValue) {
+                        $clientId.val(currentValue);
+                        const loadedClientName = getSelectedClientName();
+                        if (loadedClientName) {
+                            $clientName.val(loadedClientName);
+                            $deviceName.val(loadedClientName);
+                        }
+                    } else if (currentValue) {
+                        // Never discard a saved target just because the controller
+                        // omitted it from this refresh. Keeping a synthetic option
+                        // prevents opening/saving the editor from erasing clientId.
+                        const savedName = String($clientName.val() || node.clientName || node.deviceName || currentValue).trim();
+                        $clientId.append(
+                            $("<option></option>")
+                                .val(currentValue)
+                                .text(savedName + " (saved; currently unavailable)")
+                                .attr("data-client-name", savedName)
+                                .attr("data-unavailable", "true")
+                        );
                         $clientId.val(currentValue);
                     } else {
                         $clientId.val("");
@@ -510,20 +608,32 @@
                 }
 
                 makeSelectSearchable($clientId, "Search clients");
-                rememberSelectedClientName();
+                rememberSelectedClientName(false);
                 refreshSummary();
             }
 
             function renderClientsLoading() {
+                const savedValue = String($clientId.val() || node.clientId || "").trim();
+                const savedName = String($clientName.val() || node.clientName || node.deviceName || savedValue).trim();
                 suspendChangeHandling = true;
                 try {
                     $clientId.empty();
-                    $clientId.append(
-                        $("<option></option>")
-                            .val("")
-                            .text("Loading clients, please wait...")
-                    );
-                    $clientId.val("");
+                    if (savedValue) {
+                        $clientId.append(
+                            $("<option></option>")
+                                .val(savedValue)
+                                .text(savedName + " (loading...)")
+                                .attr("data-client-name", savedName)
+                        );
+                        $clientId.val(savedValue);
+                    } else {
+                        $clientId.append(
+                            $("<option></option>")
+                                .val("")
+                                .text("Loading clients, please wait...")
+                        );
+                        $clientId.val("");
+                    }
                 } finally {
                     suspendChangeHandling = false;
                 }
@@ -580,12 +690,8 @@
                 if (suspendChangeHandling) {
                     return;
                 }
-                rememberSelectedClientName();
-                const isUserSelection = $clientId.data("unifi-user-selection") === true;
+                rememberSelectedClientName(true);
                 $clientId.removeData("unifi-user-selection");
-                if (isUserSelection) {
-                    syncNameFromSelection();
-                }
                 refreshSummary();
             });
 
@@ -601,6 +707,14 @@
                 } else {
                     loadClients();
                 }
+            });
+
+            $matchBy.on("change", function () {
+                refreshSummary();
+            });
+
+            $clientName.on("input change", function () {
+                refreshSummary();
             });
 
             $networkId.on("change", function () {
@@ -650,6 +764,13 @@
             <option value="network">Network (join/leave)</option>
         </select>
     </div>
+    <div class="form-row" id="node-row-matchBy" style="display:none;">
+        <label for="node-input-matchBy"><i class="fa fa-id-card-o"></i> Identify by</label>
+        <select id="node-input-matchBy">
+            <option value="id">Client ID</option>
+            <option value="name">Client name</option>
+        </select>
+    </div>
     <div class="form-row" id="node-row-clientId">
         <label for="node-input-clientId"><i class="fa fa-wifi"></i> Client</label>
         <select id="node-input-clientId" style="width:62%;"></select>
@@ -666,9 +787,10 @@
         <div id="unifi-presence-network-status" class="unifi-presence-network-status"></div>
     </div>
     <div id="node-row-advanced" class="unifi-ultimate-advanced">
-        <div class="form-row">
-            <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
-            <input type="text" id="node-input-name" placeholder="Node name">
+        <div class="form-row" id="node-row-clientName" style="display:none;">
+            <label for="node-input-clientName"><i class="fa fa-font"></i> Match name</label>
+            <input type="text" id="node-input-clientName" readonly>
+            <div class="form-tips">Read-only value copied from the selected client. It is used when Identify by is set to Client name.</div>
         </div>
         <div id="node-presence-tuning">
             <div class="form-row">
@@ -694,6 +816,7 @@
                 <input type="checkbox" id="node-input-emitInitial" style="display:inline-block; width:auto; vertical-align:top;">
             </div>
         </div>
+        <input type="hidden" id="node-input-name">
         <input type="hidden" id="node-input-deviceName">
         <input type="hidden" id="node-input-networkName">
         <input type="hidden" id="node-input-joinConfirmPolls">
@@ -712,6 +835,8 @@
 
     <h4>Single client (presence)</h4>
     <p><b>Client</b> selects the client to track. The selector is searchable and opens with the complete list before filtering. Each entry shows the user-defined client name (e.g. "iPhone di Massimo") when set, otherwise the device hostname. Known-but-offline clients are included too and marked with an <code>(offline)</code> label, so you can pick a target even while it is disconnected.</p>
+    <p><b>Identify by</b> controls how the selected client is found. <b>Client ID</b> (default) tracks the exact UniFi record and is the safest choice for most devices. <b>Client name</b> searches the currently connected clients by alias, display name, or hostname on every poll, so presence continues to work when a privacy-enabled device rotates its MAC address and UniFi assigns it a new client ID. The read-only <b>Match name</b> value is copied from the client selected above. Name matching is exact but case-insensitive; give devices unique names because any online client with the same name counts as present.</p>
+    <p>If a saved client is temporarily missing from the controller response, the editor keeps it as <code>saved; currently unavailable</code> instead of clearing the configuration.</p>
     <p><b>Connect Hysteresis (s)</b> delays the <code>true</code> output so brief reconnects do not flap. <b>Hysteresis (s)</b> delays the <code>false</code> output. <b>Resend (s)</b> optionally re-emits the last saved value on a fixed cadence (<code>0</code> = off); resent messages carry <code>msg.eventName = "repeat"</code>.</p>
 
     <h4>Network (join/leave)</h4>
@@ -726,7 +851,7 @@
     </ul>
     <p>The node reports the controller's data faithfully and applies a small built-in debounce, but it cannot fully remove this upstream noise. If duplicates are a problem, debounce in your flow — for example an <code>rbe</code> ("block unless value changes") node, or a <code>delay</code> node in rate-limit mode, keyed on <code>msg.deviceName</code>/<code>msg.payload.mac</code>.</p>
 
-    <p>In <b>presence</b> mode, <b>Poll (s)</b> sets the check cadence. <b>Name</b> is the node name shown in the editor. Request timeout is handled automatically.</p>
+    <p>In <b>presence</b> mode, <b>Poll (s)</b> sets the check cadence. Request timeout is handled automatically.</p>
 
     <h3>Input</h3>
     <ul>

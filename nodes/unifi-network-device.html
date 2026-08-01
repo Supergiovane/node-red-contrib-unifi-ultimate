@@ -941,7 +941,20 @@
                         $deviceId.append($option);
                     });
 
-                    if (currentValue && $deviceId.find("option[value='" + currentValue + "']").length > 0) {
+                    const hasCurrentValue = currentValue && $deviceId.find("option").filter(function () {
+                        return String($(this).val() || "") === currentValue;
+                    }).length > 0;
+                    if (hasCurrentValue) {
+                        $deviceId.val(currentValue);
+                    } else if (currentValue) {
+                        const savedName = String(node.deviceName || currentValue).trim();
+                        $deviceId.append(
+                            $("<option></option>")
+                                .val(currentValue)
+                                .text(savedName + " (saved; currently unavailable)")
+                                .attr("data-device-name", savedName)
+                                .attr("data-unavailable", "true")
+                        );
                         $deviceId.val(currentValue);
                     } else {
                         $deviceId.val("");
@@ -955,16 +968,28 @@
             }
 
             function renderDevicesLoading(label) {
+                const savedValue = getCurrentOrNodeValue($deviceId, node.deviceId, "");
+                const savedName = String(node.deviceName || savedValue).trim();
                 clientTargetsLoading = isClientResourceSelected();
                 clientTargetsPopulated = false;
                 withSuppressedChanges(function () {
                     $deviceId.empty();
-                    $deviceId.append(
-                        $("<option></option>")
-                            .val("")
-                            .text(label)
-                    );
-                    $deviceId.val("");
+                    if (savedValue) {
+                        $deviceId.append(
+                            $("<option></option>")
+                                .val(savedValue)
+                                .text(savedName + " (loading...)")
+                                .attr("data-device-name", savedName)
+                        );
+                        $deviceId.val(savedValue);
+                    } else {
+                        $deviceId.append(
+                            $("<option></option>")
+                                .val("")
+                                .text(label)
+                        );
+                        $deviceId.val("");
+                    }
                 });
 
                 makeSelectSearchable($deviceId, label);
@@ -1197,6 +1222,7 @@
             });
 
             refreshSelectionSummary();
+            renderDevicesLoading("Loading items, please wait...");
             ensureDefaultServerSelection();
             $refresh.find("i").addClass("fa-spin");
             refreshEditor();
@@ -1265,7 +1291,7 @@
     <h3>Configuration</h3>
     <p><b>Connection</b> selects the shared UniFi Network config node.</p>
     <p><b>Resource</b> chooses what you want to work with: Site, UniFi Device, or Client.</p>
-    <p><b>Item</b> chooses the specific site, device, or client. Device and client selectors are searchable and open with the complete list before filtering.</p>
+    <p><b>Item</b> chooses the specific site, device, or client. Device and client selectors are searchable and open with the complete list before filtering. A saved selection that is offline or temporarily unavailable is preserved instead of being cleared.</p>
     <p><b>Action</b> only shows actions supported by the selected resource. Additional fields appear only when the selected action needs extra input.</p>
     <p>Action highlights include <code>Count Online Clients</code>, <code>List Networks</code>, <code>List Wi-Fi Broadcasts</code>, <code>List WAN Interfaces</code>, <code>List VPN Servers</code>, <code>List Site-to-Site VPN Tunnels</code>, <code>List Guest Vouchers</code>, <code>Create Guest Voucher</code>, <code>Read CPU</code>, <code>Read Memory</code>, <code>Read Uptime</code>, <code>Read Temperatures</code>, <code>Is Client Online</code>, <code>Restart Device</code>, and <code>Power Cycle Port</code>.</p>
     <p><code>Read Application Info</code> is available on the <code>Site</code> resource type and returns Network application metadata.</p>

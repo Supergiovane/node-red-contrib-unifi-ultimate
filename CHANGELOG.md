@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.4
+
+- **Presence Detection:** added an **Identify by** choice. Existing flows continue to match the exact UniFi client ID, while the new **Client name** mode resolves active clients by alias/display name/hostname on every poll so devices using private or rotating MAC addresses can still be recognized. The selected name is shown in a read-only **Match name** field; the editable node **Name** field was removed to avoid ambiguity. The editor also preserves saved client and network selections when they are temporarily absent from the controller response instead of silently clearing them on save.
+- **Editor selection safety:** Network Device, Protect Device, Access Device, and Restart now retain configured devices that are offline, temporarily unavailable, or missing during an API error. Missing entries are shown as <code>saved; currently unavailable</code> and remain persisted across editor saves.
+
 ## 1.1.3
 
 - **Protect Device:** added Bridge, Link Station, Alarm Hub, Key Fob, Relay, Siren, and Speaker resources with state/event support. Added explicit siren play/stop/test, relay output control, and speaker sound-test actions.

@@ -78,6 +78,7 @@ Use **Network** nodes to work with:
 Things you can do:
 
 - Check whether a device or phone is connected to your network.
+- Track presence either by the exact UniFi client ID or by client name; name matching tolerates private/rotating MAC addresses by resolving the active client again on every poll.
 - Re-send the current presence state at a fixed interval with the Presence node's **Resend** field (e.g. to keep a dashboard or home-automation system in sync).
 - Count how many clients are currently online.
 - List the site's configured networks, Wi-Fi broadcasts, and WAN interfaces.

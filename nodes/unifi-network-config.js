@@ -24,6 +24,12 @@ const {
     resolveScopedIdentifiers,
     summarizeDevice
 } = require("./utils/unifi-network-device-registry");
+const {
+    normalizePresenceMatchBy,
+    normalizeClientMatchName,
+    findActiveClientsByName,
+    resolveClientResourceId
+} = require("./utils/unifi-network-presence-utils");
 
 module.exports = function(RED) {
     const API_KEY_HEADER = "X-API-Key";
@@ -1433,7 +1439,7 @@ module.exports = function(RED) {
             return node.legacySiteNameById.get(normalizedSiteId) || "";
         }
 
-        async function fetchLegacySiteCollection(siteId, collectionPath) {
+        async function fetchLegacySiteCollection(siteId, collectionPath, timeout) {
             const legacySiteName = await fetchLegacySiteName(siteId);
             if (!legacySiteName) {
                 return [];
@@ -1441,7 +1447,8 @@ module.exports = function(RED) {
 
             const response = await node.legacyApiRequest({
                 path: `/api/s/${encodeURIComponent(legacySiteName)}${collectionPath}`,
-                method: "GET"
+                method: "GET",
+                timeout: Number(timeout) > 0 ? Number(timeout) : 15000
             });
 
             if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -1451,8 +1458,8 @@ module.exports = function(RED) {
             return normalizeNetworkCollection(response.payload);
         }
 
-        async function fetchLegacyClients(siteId) {
-            const clients = await fetchLegacySiteCollection(siteId, "/stat/sta");
+        async function fetchLegacyClients(siteId, timeout) {
+            const clients = await fetchLegacySiteCollection(siteId, "/stat/sta", timeout);
             return clients.map((client) => ({
                 ...client,
                 __unifiUltimateOnline: true,
@@ -2503,11 +2510,126 @@ module.exports = function(RED) {
             };
         };
 
+        node.fetchActivePresenceClients = async (siteId, timeout) => {
+            const normalizedSiteId = normalizeString(siteId);
+            if (!normalizedSiteId) {
+                throw new Error("Client selection is invalid. Re-select the client from the editor.");
+            }
+
+            // Name matching needs the currently connected population, not the
+            // historical known-client list. Query both sources so aliases and
+            // hostnames remain available across controller/API versions.
+            const results = await Promise.allSettled([
+                node.fetchPagedCollection({
+                    path: `/v1/sites/${encodeURIComponent(normalizedSiteId)}/clients`,
+                    timeout: Number(timeout) > 0 ? Number(timeout) : 8000
+                }),
+                fetchLegacyClients(normalizedSiteId, Number(timeout) > 0 ? Number(timeout) : 8000)
+            ]);
+            const successful = results.filter((result) => result.status === "fulfilled");
+            if (successful.length === 0) {
+                const firstFailure = results.find((result) => result.status === "rejected");
+                throw (firstFailure && firstFailure.reason) || new Error("Unable to load active clients.");
+            }
+
+            const officialClients = results[0].status === "fulfilled" && Array.isArray(results[0].value)
+                ? results[0].value
+                : [];
+            const legacyClients = results[1].status === "fulfilled" && Array.isArray(results[1].value)
+                ? results[1].value
+                : [];
+
+            return officialClients
+                .map((client) => ({
+                    ...client,
+                    siteId: client && (client.siteId || client.site_id) || normalizedSiteId,
+                    isOnline: true,
+                    online: true,
+                    offline: false
+                }))
+                .concat(legacyClients.map((client) => ({
+                    ...client,
+                    siteId: client && (client.siteId || client.site_id) || normalizedSiteId,
+                    isOnline: true,
+                    online: true,
+                    offline: false
+                })));
+        };
+
+        node.fetchPresenceObservationSnapshotByName = async (clientId, clientName, timeout, activeClients) => {
+            const scoped = resolveScopedIdentifiers("client", clientId);
+            const normalizedClientName = normalizeString(clientName);
+            if (!scoped.siteId || !normalizedClientName) {
+                throw new Error("Client name selection is invalid. Re-select the client from the editor.");
+            }
+
+            const clients = Array.isArray(activeClients)
+                ? activeClients
+                : await node.fetchActivePresenceClients(scoped.siteId, timeout);
+            const matches = findActiveClientsByName(clients, normalizedClientName);
+            if (matches.length === 0) {
+                return {
+                    found: false,
+                    connected: false,
+                    statusCode: 404,
+                    client: null,
+                    matchBy: "name",
+                    clientName: normalizedClientName,
+                    matchCount: 0
+                };
+            }
+
+            // The official and legacy collections can describe the same active
+            // client. Count unique identities so metadata is not inflated.
+            const uniqueMatches = new Map();
+            matches.forEach((client, index) => {
+                const key = normalizeIdentifierKey(client && (client.macAddress || client.mac_address || client.mac))
+                    || normalizeIdentifierKey(resolveClientResourceId(client))
+                    || String(index);
+                if (!uniqueMatches.has(key)) {
+                    uniqueMatches.set(key, client);
+                }
+            });
+            const matchedClient = uniqueMatches.values().next().value;
+            const matchedResourceId = resolveClientResourceId(matchedClient);
+            const matchedClientId = encodeScopedDeviceId(scoped.siteId, matchedResourceId) || matchedResourceId;
+
+            return {
+                found: true,
+                connected: true,
+                statusCode: 200,
+                client: {
+                    ...matchedClient,
+                    siteId: matchedClient && (matchedClient.siteId || matchedClient.site_id) || scoped.siteId
+                },
+                matchBy: "name",
+                clientName: normalizedClientName,
+                matchCount: uniqueMatches.size,
+                matchedClientId: matchedClientId || undefined
+            };
+        };
+
+        node.fetchPresenceObservationSnapshotForDescriptor = async (descriptor, activeClients) => {
+            const matchBy = normalizePresenceMatchBy(descriptor && descriptor.matchBy);
+            if (matchBy === "name") {
+                return node.fetchPresenceObservationSnapshotByName(
+                    descriptor && descriptor.clientId,
+                    descriptor && descriptor.clientName,
+                    descriptor && descriptor.timeout,
+                    activeClients
+                );
+            }
+            return node.fetchPresenceObservationSnapshot(
+                descriptor && descriptor.clientId,
+                descriptor && descriptor.timeout
+            );
+        };
+
         node.requestPresenceObservationNow = async (descriptor) => {
             if (!descriptor || typeof descriptor !== "object") {
                 throw new Error("Invalid presence descriptor.");
             }
-            const snapshot = await node.fetchPresenceObservationSnapshot(descriptor.clientId, descriptor.timeout);
+            const snapshot = await node.fetchPresenceObservationSnapshotForDescriptor(descriptor);
             return {
                 source: normalizeString(descriptor.source) || "manual-input",
                 ...snapshot,
@@ -2542,9 +2664,14 @@ module.exports = function(RED) {
                     }
 
                     const clientId = normalizeString(descriptor.clientId);
+                    const matchBy = normalizePresenceMatchBy(descriptor.matchBy);
+                    const clientName = normalizeString(descriptor.clientName);
                     const pollIntervalSeconds = Number(descriptor.pollIntervalSeconds);
                     const timeout = Number(descriptor.timeout);
-                    if (!clientId || !Number.isFinite(pollIntervalSeconds) || pollIntervalSeconds <= 0) {
+                    if (!clientId
+                        || (matchBy === "name" && !clientName)
+                        || !Number.isFinite(pollIntervalSeconds)
+                        || pollIntervalSeconds <= 0) {
                         return null;
                     }
 
@@ -2552,6 +2679,8 @@ module.exports = function(RED) {
                         client,
                         descriptor: {
                             clientId,
+                            matchBy,
+                            clientName,
                             pollIntervalMs: Math.max(1000, Math.trunc(pollIntervalSeconds * 1000)),
                             timeout: Number.isFinite(timeout) && timeout > 0 ? Math.trunc(timeout) : 8000
                         }
@@ -2634,9 +2763,14 @@ module.exports = function(RED) {
                     }
 
                     state.nextRunAt = now + entry.descriptor.pollIntervalMs;
-                    const key = entry.descriptor.clientId;
+                    const scoped = resolveScopedIdentifiers("client", entry.descriptor.clientId);
+                    const key = entry.descriptor.matchBy === "name"
+                        ? `name::${scoped.siteId}::${normalizeClientMatchName(entry.descriptor.clientName)}`
+                        : `id::${entry.descriptor.clientId}`;
                     const group = dueGroups.get(key) || {
                         clientId: entry.descriptor.clientId,
+                        matchBy: entry.descriptor.matchBy,
+                        clientName: entry.descriptor.clientName,
                         timeout: entry.descriptor.timeout,
                         entries: []
                     };
@@ -2645,10 +2779,22 @@ module.exports = function(RED) {
                     dueGroups.set(key, group);
                 });
 
+                const activeClientsBySite = new Map();
                 for (const group of dueGroups.values()) {
                     let snapshot;
                     try {
-                        snapshot = await node.fetchPresenceObservationSnapshot(group.clientId, group.timeout);
+                        let activeClients;
+                        if (group.matchBy === "name") {
+                            const scoped = resolveScopedIdentifiers("client", group.clientId);
+                            if (!activeClientsBySite.has(scoped.siteId)) {
+                                activeClientsBySite.set(
+                                    scoped.siteId,
+                                    node.fetchActivePresenceClients(scoped.siteId, group.timeout)
+                                );
+                            }
+                            activeClients = await activeClientsBySite.get(scoped.siteId);
+                        }
+                        snapshot = await node.fetchPresenceObservationSnapshotForDescriptor(group, activeClients);
                     } catch (error) {
                         snapshot = {
                             found: false,
@@ -2663,6 +2809,8 @@ module.exports = function(RED) {
                         node.notifyPresenceObserverClient(entry.client, {
                             source: "poll",
                             clientId: group.clientId,
+                            matchBy: group.matchBy,
+                            clientName: group.clientName,
                             ...snapshot
                         });
                     });

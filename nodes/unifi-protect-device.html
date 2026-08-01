@@ -861,7 +861,20 @@
                         );
                     });
 
-                    if (currentValue && $deviceId.find("option[value='" + currentValue + "']").length > 0) {
+                    const hasCurrentValue = currentValue && $deviceId.find("option").filter(function () {
+                        return String($(this).val() || "") === currentValue;
+                    }).length > 0;
+                    if (hasCurrentValue) {
+                        $deviceId.val(currentValue);
+                    } else if (currentValue) {
+                        const savedName = String(node.deviceName || currentValue).trim();
+                        $deviceId.append(
+                            $("<option></option>")
+                                .val(currentValue)
+                                .text(savedName + " (saved; currently unavailable)")
+                                .attr("data-device-name", savedName)
+                                .attr("data-unavailable", "true")
+                        );
                         $deviceId.val(currentValue);
                     } else {
                         $deviceId.val("");
@@ -1080,6 +1093,7 @@
             });
 
             refreshSelectionSummary();
+            renderDevices([]);
             ensureDefaultServerSelection();
             refreshEditor();
         }
@@ -1146,7 +1160,7 @@
 
     <h3>Configuration</h3>
     <p><b>Connection</b> selects the shared UniFi Protect config node.</p>
-    <p><b>Control</b> chooses the Protect device category. <b>Device</b> chooses the specific item. Device selectors are searchable and open with the complete list before filtering.</p>
+    <p><b>Control</b> chooses the Protect device category. <b>Device</b> chooses the specific item. Device selectors are searchable and open with the complete list before filtering. A saved selection that is temporarily unavailable is preserved instead of being cleared.</p>
     <p><b>Action</b> only shows actions supported by the selected device.</p>
     <p>Additional fields appear only when the selected action needs extra input. For example, events, PTZ presets, live views, or discovered properties.</p>
     <p>Action highlights: <code>Receive Events</code>, <code>Read Device State</code>, <code>Take Snapshot</code>, <code>Show Doorbell Message</code>, siren play/stop/test, relay output control, speaker sound test, and <code>Read Application Info</code> on <code>NVR</code>.</p>
