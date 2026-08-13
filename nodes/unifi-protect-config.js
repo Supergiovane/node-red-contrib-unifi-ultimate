@@ -27,7 +27,6 @@ module.exports = function(RED) {
         node.host = String(config.host || "").trim();
         node.port = normalizePort(config.port);
         node.baseUrl = buildBaseUrlFromHost(node.host, node.port);
-        node.authHeader = (config.authHeader || "X-API-Key").trim() || "X-API-Key";
         // UniFi controllers almost always use self-signed certificates, so accept
         // them unless the user explicitly opted into strict verification.
         node.rejectUnauthorized = config.rejectUnauthorized === true || config.rejectUnauthorized === "true";
@@ -62,7 +61,7 @@ module.exports = function(RED) {
             const normalizedPath = String(path || "").startsWith("/") ? String(path || "") : `/${String(path || "")}`;
             const requestUrl = new URL(`${node.baseUrl}${normalizedPath}${queryString}`);
             const requestMethod = String(method || "GET").toUpperCase();
-            const requestHeaders = buildRequestHeaders(node.authHeader, apiKey, headers);
+            const requestHeaders = buildRequestHeaders(apiKey, headers);
             const requestBody = buildRequestBody(requestHeaders, requestMethod, payload);
 
             return doRequest(
@@ -220,7 +219,7 @@ module.exports = function(RED) {
             try {
                 ws = new WebSocket(node.buildWebSocketUrl(path), {
                     headers: {
-                        [node.authHeader]: apiKey,
+                        "X-API-Key": apiKey,
                         Accept: "application/json"
                     },
                     rejectUnauthorized: node.rejectUnauthorized

@@ -91,13 +91,15 @@ function doRequest(url, options, body) {
     });
 }
 
-function buildRequestHeaders(authHeader, apiKey, msgHeaders) {
+function buildRequestHeaders(apiKey, msgHeaders) {
     return Object.assign(
         {
-            Accept: "application/json",
-            [authHeader]: apiKey
+            Accept: "application/json"
         },
-        msgHeaders && typeof msgHeaders === "object" ? msgHeaders : {}
+        msgHeaders && typeof msgHeaders === "object" ? msgHeaders : {},
+        {
+            "X-API-Key": apiKey
+        }
     );
 }
 

@@ -74,7 +74,6 @@
     "type": "unifi-protect-config",
     "name": "My Protect",
     "host": "192.168.1.10",
-    "authHeader": "X-API-Key",
     "rejectUnauthorized": true
   },
   {

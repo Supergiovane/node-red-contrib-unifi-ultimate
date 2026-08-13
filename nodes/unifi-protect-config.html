@@ -18,7 +18,6 @@
                     return /^\d+$/.test(String(value)) && Number(value) >= 1 && Number(value) <= 65535;
                 }
             },
-            authHeader: { value: "X-API-Key", required: true },
             rejectUnauthorized: { value: false }
         },
         credentials: {
@@ -105,10 +104,6 @@
             <label for="node-config-input-name"><i class="fa fa-tag"></i> Name</label>
             <input type="text" id="node-config-input-name" placeholder="Node name">
         </div>
-        <div class="form-row">
-            <label for="node-config-input-authHeader"><i class="fa fa-header"></i> API Header</label>
-            <input type="text" id="node-config-input-authHeader" placeholder="X-API-Key">
-        </div>
     </div>
 </script>
 
@@ -120,10 +115,9 @@
     <h3>Configuration</h3>
     <p><b>Controller</b> accepts the UniFi OS host or IP address. The node builds the Protect integration URL automatically.</p>
     <p><b>Port</b> is optional. Leave it empty to use the default <code>443</code>. Set it when your UniFi OS server listens on a custom port (for example <code>11443</code>). A port embedded directly in the Controller field (<code>host:port</code>) takes precedence over this field.</p>
-    <p><b>API Key</b> is required for authentication.</p>
+    <p><b>API Key</b> is required for authentication and is sent automatically as <code>X-API-Key</code>.</p>
     <p><b>Security</b> &mdash; <b>Allow self-signed certificate</b> is enabled by default because UniFi controllers almost always present a self-signed certificate. Leave it checked for UniFi OS setups. Uncheck it only if your controller serves a certificate signed by a trusted certificate authority and you want strict verification.</p>
     <p><b>Name</b> is the config node name shown in the editor.</p>
-    <p><b>API Header</b> is an advanced field. Leave the default value unless your UniFi Protect setup expects a different header name.</p>
 
     <h3>Usage</h3>
     <p>This config node is used by UniFi Protect Device nodes for API requests and live device/event updates.</p>

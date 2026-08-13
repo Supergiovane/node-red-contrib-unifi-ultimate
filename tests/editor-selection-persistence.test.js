@@ -41,3 +41,11 @@ describe("dynamic editor selection persistence", () => {
         expect(source).toContain("storedIds.forEach(function (id)");
     });
 });
+
+describe("Protect connection editor", () => {
+    test("does not expose a configurable API header", () => {
+        const source = readNodeEditor("unifi-protect-config.html");
+        expect(source).not.toContain("fa-header");
+        expect(source).toContain("sent automatically as <code>X-API-Key</code>");
+    });
+});

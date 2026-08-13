@@ -32,7 +32,6 @@ const {
 } = require("./utils/unifi-network-presence-utils");
 
 module.exports = function(RED) {
-    const API_KEY_HEADER = "X-API-Key";
     const MIN_POWER_OBSERVER_INTERVAL_SECONDS = 5;
     const DEFAULT_POWER_OBSERVER_INTERVAL_SECONDS = 15;
     const POWER_OBSERVER_SCHEDULER_TICK_MS = 1000;
@@ -317,7 +316,7 @@ module.exports = function(RED) {
             const normalizedPath = String(path || "").startsWith("/") ? String(path || "") : `/${String(path || "")}`;
             const requestUrl = new URL(`${node.baseUrl}${normalizedPath}${queryString}`);
             const requestMethod = String(method || "GET").toUpperCase();
-            const requestHeaders = buildRequestHeaders(API_KEY_HEADER, apiKey, headers);
+            const requestHeaders = buildRequestHeaders(apiKey, headers);
             const requestBody = buildRequestBody(requestHeaders, requestMethod, payload);
 
             return doRequest(
@@ -357,7 +356,7 @@ module.exports = function(RED) {
             const legacyBaseUrl = node.baseUrl.replace(/\/integration\/?$/, "");
             const requestUrl = new URL(`${legacyBaseUrl}${normalizedPath}${queryString}`);
             const requestMethod = String(method || "GET").toUpperCase();
-            const requestHeaders = buildRequestHeaders(API_KEY_HEADER, apiKey, headers);
+            const requestHeaders = buildRequestHeaders(apiKey, headers);
             const requestBody = buildRequestBody(requestHeaders, requestMethod, payload);
 
             return doRequest(
