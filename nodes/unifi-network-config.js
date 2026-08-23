@@ -907,10 +907,7 @@ module.exports = function(RED) {
             let ws;
             try {
                 ws = new WebSocket(node.buildUnofficialNetworkWebSocketUrl(), {
-                    headers: {
-                        [API_KEY_HEADER]: apiKey,
-                        Accept: "application/json"
-                    },
+                    headers: buildRequestHeaders(apiKey),
                     rejectUnauthorized: node.rejectUnauthorized
                 });
             } catch (error) {

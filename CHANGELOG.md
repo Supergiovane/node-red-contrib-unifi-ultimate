@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.6
+
+- **Network unofficial event stream:** fixed WebSocket startup failing with `API_KEY_HEADER is not defined` after upgrading to 1.1.5 ([#19](https://github.com/Supergiovane/node-red-contrib-unifi-ultimate/issues/19)).
+
 ## 1.1.5
 
 - **Protect configuration:** removed the advanced **API Header** field. UniFi Protect authentication now always uses the official `X-API-Key` header automatically, reducing configuration errors for end users. Existing flows continue to work without changes.
