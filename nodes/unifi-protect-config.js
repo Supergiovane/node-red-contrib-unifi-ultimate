@@ -17,8 +17,73 @@ const {
     normalizeDeviceCollection,
     summarizeDevice
 } = require("./utils/unifi-protect-device-registry");
+const {
+    collectNamedScopes,
+    getKnxAiCameraRegistry,
+    normalizeProtectCameraEvent,
+    normalizeSearchText
+} = require("./utils/knx-ai-camera-registry");
+
+function extractProtectErrorDetail(response) {
+    let payload = response && response.payload;
+    if (Buffer.isBuffer(payload)) {
+        const text = payload.length <= 8192 ? payload.toString("utf8").trim() : "";
+        if (!text) return "";
+        try { payload = JSON.parse(text); } catch (error) { payload = text; }
+    }
+    if (typeof payload === "string") {
+        const text = payload.trim();
+        if (!text) return "";
+        try { payload = JSON.parse(text); } catch (error) { return text.slice(0, 300); }
+    }
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return "";
+    const nestedError = payload.error && typeof payload.error === "object" ? payload.error : {};
+    const detail = payload.detail
+        || payload.message
+        || payload.error_description
+        || nestedError.detail
+        || nestedError.message
+        || (typeof payload.error === "string" ? payload.error : "");
+    return String(detail || "").replace(/[\r\n\t]+/g, " ").trim().slice(0, 300);
+}
+
+function createSnapshotError({ camera, response, retriedWithStandardQuality }) {
+    const statusCode = Number(response && response.statusCode) || 0;
+    const detail = extractProtectErrorDetail(response);
+    const cameraState = String(camera && camera.raw && camera.raw.state || camera && camera.state || "")
+        .trim()
+        .toUpperCase();
+    const isOffline = /\boffline\b/i.test(detail)
+        || (statusCode === 503 && cameraState === "DISCONNECTED");
+    let message;
+    if (isOffline) {
+        const stateDetail = cameraState ? `; state: ${cameraState}` : "";
+        message = `UniFi Protect snapshot for '${camera.cameraName}' is unavailable because Protect reports that the camera is offline (HTTP ${statusCode || 503}${stateDetail}).`;
+    } else if (statusCode === 429) {
+        const retryAfter = response && response.headers && response.headers["retry-after"];
+        const retryDetail = retryAfter ? `; retry after ${retryAfter} second(s)` : "";
+        message = `UniFi Protect temporarily rate-limited the snapshot for '${camera.cameraName}' (HTTP 429${retryDetail}).`;
+    } else {
+        const apiDetail = detail ? `: ${detail}` : "";
+        const retryDetail = retriedWithStandardQuality ? " after one standard-quality retry" : "";
+        message = `UniFi Protect snapshot for '${camera.cameraName}' failed (HTTP ${statusCode || "unknown"}${apiDetail})${retryDetail}.`;
+    }
+    const error = new Error(message);
+    error.code = isOffline ? "UNIFI_PROTECT_CAMERA_OFFLINE" : statusCode === 429 ? "UNIFI_PROTECT_RATE_LIMITED" : "UNIFI_PROTECT_SNAPSHOT_FAILED";
+    error.statusCode = statusCode;
+    error.cameraState = cameraState;
+    return error;
+}
 
 module.exports = function(RED) {
+    const knxAiCameraRegistry = getKnxAiCameraRegistry();
+    knxAiCameraRegistry.registerAdapter({
+        id: "unifi-ultimate",
+        title: "UniFi Ultimate / Protect",
+        packageName: "node-red-contrib-unifi-ultimate",
+        capabilities: ["camera_catalog", "snapshot", "motion", "smart_events", "zones", "lines"]
+    });
+
     function UnifiProtectConfigNode(config) {
         RED.nodes.createNode(this, config);
 
@@ -35,6 +100,8 @@ module.exports = function(RED) {
         node.wsEvents = null;
         node.reconnectTimer = null;
         node.isClosing = false;
+        node.knxAiCameraCache = { at: 0, cameras: [] };
+        node.knxAiCameraListeners = new Set();
 
         node.getApiKey = () => node.credentials && node.credentials.apiKey;
 
@@ -148,6 +215,118 @@ module.exports = function(RED) {
                 : null;
 
             return getCapabilitiesForType(deviceType, selectedDevice);
+        };
+
+        node.listKnxAiCameras = async ({ force = false } = {}) => {
+            const now = Date.now();
+            if (!force && node.knxAiCameraCache.cameras.length > 0 && (now - node.knxAiCameraCache.at) < 30000) {
+                return node.knxAiCameraCache.cameras.slice();
+            }
+            const cameras = (await node.fetchDevices("camera")).map((camera) => {
+                const nativeCameraId = String(camera && camera.id || "").trim();
+                const cameraName = String(camera && (camera.name || camera.displayName) || nativeCameraId).trim();
+                const cameraState = String(camera && camera.state || "").trim().toUpperCase();
+                const objectTypes = Array.from(new Set([].concat(
+                    camera && camera.smartDetectSettings && Array.isArray(camera.smartDetectSettings.objectTypes)
+                        ? camera.smartDetectSettings.objectTypes
+                        : [],
+                    camera && camera.featureFlags && Array.isArray(camera.featureFlags.smartDetectTypes)
+                        ? camera.featureFlags.smartDetectTypes
+                        : []
+                ).map((value) => String(value || "").trim()).filter(Boolean)));
+                return {
+                    id: `${node.id}:${nativeCameraId}`,
+                    cameraId: `${node.id}:${nativeCameraId}`,
+                    nativeCameraId,
+                    cameraName,
+                    name: cameraName,
+                    aliases: [cameraName, nativeCameraId].filter(Boolean),
+                    controllerId: node.id,
+                    controllerName: node.name || node.host || node.id,
+                    adapterId: "unifi-ultimate",
+                    adapterTitle: "UniFi Ultimate / Protect",
+                    source: "unifi-ultimate",
+                    state: cameraState,
+                    online: cameraState ? cameraState === "CONNECTED" : null,
+                    objectTypes,
+                    lines: collectNamedScopes(camera, "line"),
+                    zones: collectNamedScopes(camera, "zone"),
+                    raw: camera
+                };
+            }).filter((camera) => camera.nativeCameraId);
+            node.knxAiCameraCache = { at: now, cameras };
+            return cameras.slice();
+        };
+
+        node.resolveKnxAiCamera = async ({ cameraId, cameraName } = {}) => {
+            const cameras = await node.listKnxAiCameras();
+            const requestedId = String(cameraId || "").trim();
+            const requestedName = normalizeSearchText(cameraName);
+            const exact = cameras.filter((camera) => {
+                return requestedId && [camera.id, camera.cameraId, camera.nativeCameraId].includes(requestedId)
+                    || requestedName && [camera.cameraName, camera.name].concat(camera.aliases || []).some((value) => normalizeSearchText(value) === requestedName);
+            });
+            if (exact.length === 1) return exact[0];
+            if (exact.length > 1) throw new Error("The camera name is ambiguous.");
+            const partial = requestedName ? cameras.filter((camera) => {
+                return [camera.cameraName, camera.name].concat(camera.aliases || []).some((value) => {
+                    const candidate = normalizeSearchText(value);
+                    return candidate && (candidate.includes(requestedName) || requestedName.includes(candidate));
+                });
+            }) : [];
+            if (partial.length === 1) return partial[0];
+            if (partial.length > 1) throw new Error("The camera name is ambiguous.");
+            throw new Error("Camera not found in this UniFi Protect controller.");
+        };
+
+        node.takeKnxAiCameraSnapshot = async ({ cameraId, cameraName, highQuality = false } = {}) => {
+            const camera = await node.resolveKnxAiCamera({ cameraId, cameraName });
+            const supportsHighQuality = camera.raw
+                && camera.raw.featureFlags
+                && camera.raw.featureFlags.supportFullHdSnapshot === true;
+            const requestHighQuality = highQuality === true && supportsHighQuality;
+            const requestSnapshot = (useHighQuality) => node.apiRequest({
+                path: `/v1/cameras/${encodeURIComponent(camera.nativeCameraId)}/snapshot`,
+                method: "GET",
+                // The Protect API defaults to standard quality. Do not send the
+                // highQuality flag unless this camera explicitly advertises it.
+                query: useHighQuality ? { highQuality: "true" } : {},
+                headers: { Accept: "image/jpeg" },
+                timeout: 20000
+            });
+            let response = await requestSnapshot(requestHighQuality);
+            const statusCode = Number(response && response.statusCode) || 0;
+            const firstErrorDetail = extractProtectErrorDetail(response);
+            const cameraState = String(camera && camera.raw && camera.raw.state || "").trim().toUpperCase();
+            const cameraIsOffline = /\boffline\b/i.test(firstErrorDetail)
+                || (statusCode === 503 && cameraState === "DISCONNECTED");
+            const shouldRetryStandard = !cameraIsOffline && (requestHighQuality
+                ? [400, 409, 422, 500, 502, 503, 504].includes(statusCode)
+                : [502, 503, 504].includes(statusCode));
+            let retriedWithStandardQuality = false;
+            if (shouldRetryStandard) {
+                // Some Protect/camera combinations reject forced full-HD
+                // snapshots with 503 even though a normal snapshot is ready.
+                retriedWithStandardQuality = true;
+                response = await requestSnapshot(false);
+            }
+            if (response.statusCode < 200 || response.statusCode >= 300) {
+                throw createSnapshotError({ camera, response, retriedWithStandardQuality });
+            }
+            if (!Buffer.isBuffer(response.payload) || response.payload.length === 0) {
+                throw new Error("UniFi Protect returned an empty or invalid snapshot.");
+            }
+            const contentTypeHeader = response.headers && response.headers["content-type"];
+            const mediaType = String(Array.isArray(contentTypeHeader) ? contentTypeHeader[0] : contentTypeHeader || "image/jpeg")
+                .split(";")[0]
+                .trim()
+                .toLowerCase();
+            return {
+                data: response.payload,
+                mediaType,
+                camera,
+                statusCode: response.statusCode
+            };
         };
 
         node.buildWebSocketUrl = (path) => {
@@ -328,9 +507,63 @@ module.exports = function(RED) {
             }
         };
 
+        const knxAiBridgeClient = {
+            id: `knx-ai-camera-adapter:${node.id}`,
+            handleProtectDeviceUpdate(update) {
+                const item = update && update.item;
+                if (item && item.modelKey === "camera") node.knxAiCameraCache = { at: 0, cameras: [] };
+            },
+            handleProtectEventUpdate(update) {
+                const item = update && update.item;
+                if (!item || item.modelKey !== "event" || node.knxAiCameraListeners.size === 0) return;
+                Promise.resolve(node.listKnxAiCameras()).then((cameras) => {
+                    const camera = cameras.find((entry) => entry.nativeCameraId === String(item.device || ""));
+                    const event = normalizeProtectCameraEvent({
+                        event: item,
+                        camera: camera && camera.raw,
+                        controllerId: node.id,
+                        controllerName: node.name || node.host || node.id
+                    });
+                    if (!event) return;
+                    node.knxAiCameraListeners.forEach((listener) => {
+                        try { listener(event); } catch (error) { }
+                    });
+                }).catch((error) => {
+                    node.warn(`KNX AI camera event adapter failed: ${error && error.message ? error.message : error}`);
+                });
+            }
+        };
+
+        const knxAiProvider = {
+            id: `unifi-ultimate:${node.id}`,
+            adapterId: "unifi-ultimate",
+            title: "UniFi Ultimate / Protect",
+            packageName: "node-red-contrib-unifi-ultimate",
+            controllerId: node.id,
+            controllerName: node.name || node.host || node.id,
+            capabilities: ["camera_catalog", "snapshot", "motion", "smart_events", "zones", "lines"],
+            listCameras: (options) => node.listKnxAiCameras(options),
+            takeSnapshot: (request) => node.takeKnxAiCameraSnapshot(request),
+            subscribe(listener) {
+                if (typeof listener !== "function") return () => { };
+                const wasEmpty = node.knxAiCameraListeners.size === 0;
+                node.knxAiCameraListeners.add(listener);
+                if (wasEmpty) node.addClient(knxAiBridgeClient);
+                return () => {
+                    node.knxAiCameraListeners.delete(listener);
+                    if (node.knxAiCameraListeners.size === 0) node.removeClient(knxAiBridgeClient);
+                };
+            }
+        };
+        node.knxAiCameraProvider = knxAiProvider;
+        knxAiCameraRegistry.registerProvider(knxAiProvider);
+
         node.on("close", function(done) {
             try {
                 node.isClosing = true;
+                knxAiCameraRegistry.unregisterProvider(knxAiProvider.id);
+                node.knxAiCameraListeners.clear();
+                node.removeClient(knxAiBridgeClient);
                 node.closeWebSockets();
             } catch (error) {
             } finally {

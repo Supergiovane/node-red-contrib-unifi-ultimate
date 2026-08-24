@@ -32,6 +32,24 @@ describe("new UniFi Protect resource families", () => {
 });
 
 describe("new UniFi Protect actions", () => {
+    test("uses the official highQuality query parameter for snapshots", () => {
+        const execution = composeCapabilityExecution("camera", "getSnapshot", {
+            forceHighQuality: "true"
+        });
+        const request = buildCapabilityRequest(
+            "camera",
+            "getSnapshot",
+            "camera-1",
+            execution.params
+        );
+
+        expect(request).toMatchObject({
+            method: "GET",
+            path: "/v1/cameras/camera-1/snapshot"
+        });
+        expect(execution.query).toEqual({ highQuality: "true" });
+    });
+
     test("composes an explicit relay output command", () => {
         const execution = composeCapabilityExecution("relay", "activateRelayOutput", {
             outputId: "1",

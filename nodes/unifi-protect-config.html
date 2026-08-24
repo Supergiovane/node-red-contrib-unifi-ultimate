@@ -122,4 +122,9 @@
     <h3>Usage</h3>
     <p>This config node is used by UniFi Protect Device nodes for API requests and live device/event updates.</p>
     <p>All Protect API calls and websocket streams are managed by this config node. Runtime nodes subscribe through <code>addClient/removeClient</code> and receive broadcast updates.</p>
+
+    <h3>Automatic KNX AI camera adapter</h3>
+    <p>If <code>node-red-contrib-knx-ultimate</code> is installed, this config node automatically publishes its available cameras to the KNX AI chat runtime. No Protect Device node, camera selector, or wire to KNX AI is required.</p>
+    <p>KNX AI can request snapshots directly and subscribe to motion, smart line, intrusion-zone, and loiter-zone events. Persistent notification rules remain owned by the KNX AI chat context. The API key stays private inside this config node.</p>
+    <p>The provider uses the generic <code>node-red.knx-ai.camera-adapters.v1</code> runtime contract, allowing other camera suites to expose the same capabilities independently.</p>
 </script>

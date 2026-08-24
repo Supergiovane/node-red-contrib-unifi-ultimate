@@ -125,6 +125,17 @@ Things you can do:
 - Monitor bridges, Link Stations, alarm hubs, key fobs, sirens, relays, and speakers.
 - Play or stop a siren, control relay outputs, and test speaker or siren sound.
 
+### Automatic KNX AI camera adapter
+
+When `node-red-contrib-knx-ultimate` is installed, every configured **Unifi Protect Config** instance automatically publishes its cameras to the KNX AI chat runtime. No Protect Device node, selector, or intermediate wire is required. KNX AI can then:
+
+- send a current camera snapshot to Telegram or RedBot;
+- describe a fresh snapshot with the configured vision-capable LLM;
+- create persistent chat notifications for unclassified motion or generic smart detections, as well as line crossings, intrusion zones, and loiter zones;
+- filter smart events by the camera's supported classifications, including people, animals, vehicles, faces, license plates, and packages, and optionally by an exact line or zone exposed by Protect.
+
+The integration uses the generic `node-red.knx-ai.camera-adapters.v1` runtime contract, so other camera packages can register the same catalog/snapshot/event capabilities without vendor-specific code in KNX AI. Protect API keys remain inside this config node and are never copied into KNX AI.
+
 <br/>
 <br/>
 <p align="left">

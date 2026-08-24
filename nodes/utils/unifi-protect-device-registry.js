@@ -358,7 +358,7 @@ const TYPE_CAPABILITIES = {
             },
             requestComposer: ({ capabilityConfig }) => ({
                 query: capabilityConfig.forceHighQuality
-                    ? { forceHighQuality: capabilityConfig.forceHighQuality }
+                    ? { highQuality: capabilityConfig.forceHighQuality }
                     : {}
             })
         },

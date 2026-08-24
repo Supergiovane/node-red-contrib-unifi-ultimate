@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.7
+
+- **Automatic KNX AI camera adapter:** Protect config nodes now register camera catalogs, connectivity state, supported object classifications, direct snapshots, and motion/smart-detection events through the vendor-neutral KNX AI runtime registry. KNX AI discovers the installed integration without camera-node wiring and can create generic person, animal, vehicle, face, license-plate and package watches as well as named line/zone notifications. Chat snapshots use standard quality by default; full-HD is requested only when the camera advertises support, with one automatic standard-quality retry on transient gateway errors. Protect's offline and rate-limit responses are reported explicitly instead of being reduced to a generic HTTP error.
+
 ## 1.1.6
 
 - **Network unofficial event stream:** fixed WebSocket startup failing with `API_KEY_HEADER is not defined` after upgrading to 1.1.5 ([#19](https://github.com/Supergiovane/node-red-contrib-unifi-ultimate/issues/19)).
