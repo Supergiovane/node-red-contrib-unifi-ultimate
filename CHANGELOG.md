@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.7
+## 1.1.8
 
 - **Automatic KNX AI camera adapter:** Protect config nodes now register camera catalogs, connectivity state, supported object classifications, direct snapshots, and motion/smart-detection events through the vendor-neutral KNX AI runtime registry. KNX AI discovers the installed integration without camera-node wiring and can create generic person, animal, vehicle, face, license-plate and package watches as well as named line/zone notifications. Chat snapshots use standard quality by default; full-HD is requested only when the camera advertises support, with one automatic standard-quality retry on transient gateway errors. Protect's offline and rate-limit responses are reported explicitly instead of being reduced to a generic HTTP error.
 
