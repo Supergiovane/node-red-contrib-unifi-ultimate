@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.8 Sept 2026
+## 1.1.9 Sept 2026
 
 - **Protect Alarm Manager:** NVR controls can now list and select Protect Arm Profiles, then arm or disarm the local Alarm Manager through the official Protect API.
 
