@@ -124,6 +124,7 @@ Things you can do:
 - Switch a viewer to a different live feed.
 - Monitor bridges, Link Stations, alarm hubs, key fobs, sirens, relays, and speakers.
 - Play or stop a siren, control relay outputs, and test speaker or siren sound.
+- Read and select Protect Arm Profiles, then arm or disarm the local Alarm Manager from the NVR control.
 
 ### Automatic KNX AI camera adapter
 

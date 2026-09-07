@@ -3,6 +3,7 @@
 const {
     buildCapabilityRequest,
     composeCapabilityExecution,
+    getCapabilityOptions,
     getCapabilitiesForType,
     getDeviceTypeDefinition
 } = require("../nodes/utils/unifi-protect-device-registry");
@@ -90,5 +91,82 @@ describe("new UniFi Protect actions", () => {
             .toEqual({ volume: 50 });
         expect(composeCapabilityExecution("speaker", "testSpeakerSound", { volume: "0" }).payload)
             .toEqual({ volume: 0 });
+    });
+
+    test.each([
+        ["getArmProfiles", "GET", "/v1/arm-profiles"],
+        ["enableArmAlarm", "POST", "/v1/arm-profiles/enable"],
+        ["disableArmAlarm", "POST", "/v1/arm-profiles/disable"]
+    ])("builds the %s Alarm Manager request", (capabilityId, method, path) => {
+        expect(buildCapabilityRequest("nvr", capabilityId, "nvr-1")).toMatchObject({
+            method,
+            path
+        });
+    });
+
+    test("selects an arm profile using the official settings payload", () => {
+        const execution = composeCapabilityExecution("nvr", "setCurrentArmProfile", {
+            armProfileId: "profile-away"
+        });
+        const request = buildCapabilityRequest(
+            "nvr",
+            "setCurrentArmProfile",
+            "nvr-1",
+            execution.params
+        );
+
+        expect(request).toMatchObject({
+            method: "PATCH",
+            path: "/v1/arm-profiles/settings"
+        });
+        expect(execution.payload).toEqual({ armProfileId: "profile-away" });
+    });
+
+    test("requires an arm profile for the select action", () => {
+        expect(() => composeCapabilityExecution("nvr", "setCurrentArmProfile", {}))
+            .toThrow("Select an arm profile");
+    });
+
+    test("loads arm profiles and defaults to the NVR's current profile", async () => {
+        const fetchArmProfiles = jest.fn(async () => [
+            { id: "profile-home", name: "Home" },
+            { id: "profile-away", name: "Away" }
+        ]);
+
+        const result = await getCapabilityOptions("nvr", "setCurrentArmProfile", {
+            device: { armMode: { armProfileId: "profile-away" } },
+            capabilityConfig: {},
+            fetchArmProfiles
+        });
+
+        expect(fetchArmProfiles).toHaveBeenCalledTimes(1);
+        expect(result.fields[0]).toMatchObject({
+            id: "armProfileId",
+            type: "select",
+            defaultValue: "profile-away",
+            options: [
+                { value: "profile-home", label: "Home" },
+                { value: "profile-away", label: "Away" }
+            ]
+        });
+    });
+
+    test("preserves a configured arm profile that is temporarily unavailable", async () => {
+        const result = await getCapabilityOptions("nvr", "setCurrentArmProfile", {
+            device: { armMode: { armProfileId: "profile-home" } },
+            capabilityConfig: { armProfileId: "profile-saved" },
+            fetchArmProfiles: async () => [{ id: "profile-home", name: "Home" }]
+        });
+
+        expect(result.fields[0]).toMatchObject({
+            defaultValue: "profile-saved",
+            options: [
+                { value: "profile-home", label: "Home" },
+                {
+                    value: "profile-saved",
+                    label: "profile-saved (saved; currently unavailable)"
+                }
+            ]
+        });
     });
 });

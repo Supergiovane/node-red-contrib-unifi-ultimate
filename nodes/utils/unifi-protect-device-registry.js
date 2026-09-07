@@ -567,6 +567,62 @@ const TYPE_CAPABILITIES = {
             method: "GET",
             path: "/v1/meta/info",
             mode: "request"
+        },
+        {
+            id: "getArmProfiles",
+            label: "Read Arm Profiles",
+            description: "Fetch the arm profiles configured in Protect's local Alarm Manager.",
+            method: "GET",
+            path: "/v1/arm-profiles",
+            mode: "request"
+        },
+        {
+            id: "setCurrentArmProfile",
+            label: "Select Arm Profile",
+            description: "Select the arm profile Protect will use the next time the alarm is armed.",
+            method: "PATCH",
+            path: "/v1/arm-profiles/settings",
+            mode: "request",
+            ignoreInputPayload: true,
+            useConfiguredPayload: true,
+            editor: {
+                fields: [
+                    {
+                        id: "armProfileId",
+                        label: "Arm profile",
+                        type: "select",
+                        placeholder: "Select an arm profile"
+                    }
+                ]
+            },
+            requestComposer: ({ capabilityConfig }) => {
+                const armProfileId = String(capabilityConfig.armProfileId || "").trim();
+                if (!armProfileId) {
+                    throw new Error("Select an arm profile before using this action.");
+                }
+
+                return {
+                    payload: { armProfileId }
+                };
+            }
+        },
+        {
+            id: "enableArmAlarm",
+            label: "Arm Alarm",
+            description: "Arm Protect using the currently selected arm profile.",
+            method: "POST",
+            path: "/v1/arm-profiles/enable",
+            mode: "request",
+            ignoreInputPayload: true
+        },
+        {
+            id: "disableArmAlarm",
+            label: "Disarm Alarm",
+            description: "Disarm Protect's local Alarm Manager.",
+            method: "POST",
+            path: "/v1/arm-profiles/disable",
+            mode: "request",
+            ignoreInputPayload: true
         }
     ],
     bridge: [],
@@ -907,6 +963,24 @@ async function getCapabilityOptions(deviceType, capabilityId, context) {
         };
     }
 
+    if (deviceType === "nvr" && capabilityId === "setCurrentArmProfile") {
+        const armProfiles = context && typeof context.fetchArmProfiles === "function"
+            ? await context.fetchArmProfiles()
+            : [];
+        const currentArmProfileId = firstDefinedValue(context && context.device, [
+            "armMode.armProfileId"
+        ]);
+        return {
+            capabilityId,
+            fields: [buildArmProfileField(
+                armProfiles,
+                capability.editor.fields[0],
+                context && context.capabilityConfig,
+                currentArmProfileId
+            )]
+        };
+    }
+
     if (deviceType === "camera" && capabilityId === "setDoorbellMessage") {
         return buildDoorbellMessageFields(context, capability);
     }
@@ -1023,6 +1097,36 @@ function buildLiveviewOptions(liveviews, allowEmpty, emptyLabel) {
     }
 
     return options;
+}
+
+function buildArmProfileField(armProfiles, baseField, capabilityConfig, currentArmProfileId) {
+    const profiles = Array.isArray(armProfiles) ? armProfiles : [];
+    const options = profiles.map((profile) => ({
+        value: String(profile && profile.id ? profile.id : ""),
+        label: String((profile && profile.name) || (profile && profile.id) || "Arm profile")
+    })).filter((option) => option.value);
+    const discoveredProfileCount = options.length;
+    const configuredId = String(
+        normalizeObject(capabilityConfig).armProfileId
+        || currentArmProfileId
+        || ""
+    ).trim();
+
+    if (configuredId && !options.some((option) => option.value === configuredId)) {
+        options.push({
+            value: configuredId,
+            label: `${configuredId} (saved; currently unavailable)`
+        });
+    }
+
+    return {
+        ...baseField,
+        options,
+        defaultValue: configuredId,
+        helpText: discoveredProfileCount > 0
+            ? "The selected profile is stored in Protect and will be used by Arm Alarm."
+            : "No arm profiles were returned. Arm profiles require Protect's local Alarm Manager."
+    };
 }
 
 function isCapabilitySupportedForDevice(deviceType, capability, device) {

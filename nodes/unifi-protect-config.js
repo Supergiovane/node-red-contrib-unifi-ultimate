@@ -194,6 +194,20 @@ module.exports = function(RED) {
                 : [];
         };
 
+        node.fetchArmProfiles = async () => {
+            const response = await node.apiRequest({
+                path: "/v1/arm-profiles",
+                method: "GET"
+            });
+            if (response.statusCode < 200 || response.statusCode >= 300) {
+                throw new Error(`Failed to load Protect arm profiles (${response.statusCode})`);
+            }
+
+            return Array.isArray(response.payload)
+                ? response.payload
+                : [];
+        };
+
         node.fetchCapabilityOptions = async (deviceType, deviceId, capabilityId, capabilityConfig) => {
             const selectedDevice = deviceId
                 ? await node.fetchDeviceByTypeAndId(deviceType, deviceId)
@@ -205,7 +219,8 @@ module.exports = function(RED) {
                 capabilityConfig,
                 fetchDevice: node.fetchDeviceByTypeAndId,
                 fetchDevices: node.fetchDevices,
-                fetchAssetFiles: node.fetchAssetFiles
+                fetchAssetFiles: node.fetchAssetFiles,
+                fetchArmProfiles: node.fetchArmProfiles
             });
         };
 
