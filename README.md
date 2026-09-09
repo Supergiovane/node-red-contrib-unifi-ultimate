@@ -126,22 +126,6 @@ Things you can do:
 - Play or stop a siren, control relay outputs, and test speaker or siren sound.
 - Read and select Protect Arm Profiles, then arm or disarm the local Alarm Manager from the NVR control.
 
-### Automatic Cerebrum / KNX AI camera adapter
-
-Every configured **Unifi Protect Config** instance automatically publishes its cameras through the shared `node-red.knx-ai.camera-adapters.v1` runtime contract. Cerebrum and KNX AI can discover the installed provider without a Protect Device node, camera selector, or intermediate wire. They can then:
-
-- send a current camera snapshot to the chat channel;
-- describe a fresh snapshot with the configured vision-capable LLM;
-- subscribe to motion, line-crossing, intrusion-zone and loiter-zone events;
-- filter smart events by classifications such as people, animals, vehicles, faces, license plates and packages, and by an exact Protect line or zone;
-- search recorded events with time, camera and detection filters, follow explicit pagination, and retrieve the thumbnail belonging to an exact returned event.
-
-Recorded history requires the optional **History user/password** in the Protect config node. Use a dedicated local UniFi OS account that can view the required cameras. The Integration API key remains responsible for the official live-event and current-snapshot endpoints; the local account opens only the separate recorded-history session. Credentials and session cookies stay in the Node-RED credential/config node and are never published to Cerebrum, KNX AI, flows or chat context.
-
-Other camera packages can implement the same catalog, event, snapshot and recorded-history methods without adding vendor-specific code to Cerebrum.
-
-
-
 <br/>
 <br/>
 <p align="left">

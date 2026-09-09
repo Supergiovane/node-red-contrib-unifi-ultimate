@@ -26,8 +26,10 @@ function normalizeSearchText(value) {
 // This is the vendor-neutral KNX AI camera adapter contract. Keep this registry
 // shape aligned with KNX Ultimate: an adapter describes package capabilities,
 // while each configured controller registers a provider implementing
-// listCameras(), takeSnapshot(), and subscribe(). The shared Symbol avoids any
-// direct package dependency or flow wiring.
+// listCameras(), takeSnapshot(), and subscribe(). Optional queryEvents() and
+// takeEventSnapshot() expose recorded evidence on demand. Providers declaring
+// eventRetention: "none" keep their live feed transient in consumers. The
+// shared Symbol avoids any direct package dependency or flow wiring.
 function getKnxAiCameraRegistry() {
     const existing = globalThis[KNX_AI_CAMERA_REGISTRY_KEY];
     if (existing && existing.version === 1 && existing.adapters instanceof Map && existing.providers instanceof Map) {

@@ -83,6 +83,95 @@ function createSnapshotError({ camera, response, retriedWithStandardQuality }) {
     return error;
 }
 
+const PROTECT_CAMERA_EVENT_DEDUPE_TTL_MS = 60 * 60 * 1000;
+const PROTECT_CAMERA_EVENT_DEDUPE_MAX_ENTRIES = 2048;
+
+function cloneProviderMetadataWithoutRaw(value) {
+    if (Array.isArray(value)) return value.map(cloneProviderMetadataWithoutRaw);
+    if (!value || typeof value !== "object") return value;
+    const clone = {};
+    Object.entries(value).forEach(([key, nested]) => {
+        if (key === "raw") return;
+        clone[key] = cloneProviderMetadataWithoutRaw(nested);
+    });
+    return clone;
+}
+
+function sortedSemanticValues(values) {
+    return Array.from(new Set((Array.isArray(values) ? values : [])
+        .map((value) => String(value === undefined || value === null ? "" : value).trim())
+        .filter(Boolean)))
+        .sort();
+}
+
+function createProtectCameraEventDeduper({
+    ttlMs = PROTECT_CAMERA_EVENT_DEDUPE_TTL_MS,
+    maxEntries = PROTECT_CAMERA_EVENT_DEDUPE_MAX_ENTRIES
+} = {}) {
+    const entries = new Map();
+    const normalizedTtl = Math.max(1000, Number(ttlMs) || PROTECT_CAMERA_EVENT_DEDUPE_TTL_MS);
+    const normalizedMaxEntries = Math.max(1, Math.floor(Number(maxEntries) || PROTECT_CAMERA_EVENT_DEDUPE_MAX_ENTRIES));
+    let lastPrunedAt = 0;
+
+    function prune(now, force = false) {
+        if (!force && entries.size < normalizedMaxEntries && now - lastPrunedAt < Math.min(normalizedTtl, 60000)) return;
+        entries.forEach((entry, key) => {
+            if (now - entry.seenAt > normalizedTtl) entries.delete(key);
+        });
+        lastPrunedAt = now;
+    }
+
+    return {
+        shouldForward(event, sourceEvent, now = Date.now()) {
+            if (!event || typeof event !== "object") return false;
+            const checkedAt = Number.isFinite(Number(now)) ? Number(now) : Date.now();
+            prune(checkedAt);
+            const eventId = String(event.eventId || "").trim();
+            const key = eventId
+                ? `id:${eventId}`
+                : `fallback:${event.cameraId || event.nativeCameraId || ""}:${event.eventType || ""}:${event.at || ""}`;
+            const rawEnd = sourceEvent && sourceEvent.end !== undefined && sourceEvent.end !== null
+                ? String(sourceEvent.end)
+                : null;
+            const fingerprint = JSON.stringify({
+                source: event.source || "",
+                controllerId: event.controllerId || "",
+                controllerName: event.controllerName || "",
+                cameraId: event.cameraId || "",
+                nativeCameraId: event.nativeCameraId || "",
+                cameraName: event.cameraName || "",
+                eventId,
+                eventType: event.eventType || "",
+                at: event.at || "",
+                active: event.active === true,
+                end: rawEnd,
+                scopeId: event.scopeId || "",
+                scopeName: event.scopeName || "",
+                scopeIds: sortedSemanticValues(event.scopeIds),
+                objectTypes: sortedSemanticValues(event.objectTypes)
+            });
+            const previous = entries.get(key);
+            const isDuplicate = previous
+                && previous.fingerprint === fingerprint
+                && checkedAt - previous.seenAt <= normalizedTtl;
+
+            // Refresh insertion order even for duplicates so a noisy active event
+            // remains suppressed until it has actually gone quiet for the TTL.
+            entries.delete(key);
+            entries.set(key, { fingerprint, seenAt: checkedAt });
+            if (entries.size > normalizedMaxEntries) {
+                const oldestKey = entries.keys().next().value;
+                if (oldestKey !== undefined) entries.delete(oldestKey);
+            }
+            return !isDuplicate;
+        },
+        clear() {
+            entries.clear();
+            lastPrunedAt = 0;
+        }
+    };
+}
+
 module.exports = function(RED) {
     const knxAiCameraRegistry = getKnxAiCameraRegistry();
     knxAiCameraRegistry.registerAdapter({
@@ -116,6 +205,7 @@ module.exports = function(RED) {
         node.protectHistorySessionHeaders = null;
         node.protectHistoryAuthentication = null;
         node.protectHistoryPaginationGuard = createProtectHistoryPaginationGuard();
+        node.protectCameraEventDeduper = createProtectCameraEventDeduper();
 
         node.getApiKey = () => node.credentials && node.credentials.apiKey;
 
@@ -458,7 +548,7 @@ module.exports = function(RED) {
             return {
                 data: response.payload,
                 mediaType,
-                camera,
+                camera: cloneProviderMetadataWithoutRaw(camera),
                 statusCode: response.statusCode
             };
         };
@@ -537,7 +627,7 @@ module.exports = function(RED) {
                 events: payload
             });
             return {
-                events: continuation.duplicatePage ? [] : selected,
+                events: continuation.duplicatePage ? [] : selected.map(cloneProviderMetadataWithoutRaw),
                 from: normalized.from,
                 to: normalized.to,
                 offset: normalized.offset,
@@ -788,8 +878,10 @@ module.exports = function(RED) {
                         controllerName: node.name || node.host || node.id
                     });
                     if (!event) return;
+                    if (!node.protectCameraEventDeduper.shouldForward(event, item)) return;
+                    const publicEvent = cloneProviderMetadataWithoutRaw(event);
                     node.knxAiCameraListeners.forEach((listener) => {
-                        try { listener(event); } catch (error) { }
+                        try { listener(publicEvent); } catch (error) { }
                     });
                 }).catch((error) => {
                     node.warn(`KNX AI camera event adapter failed: ${error && error.message ? error.message : error}`);
@@ -805,8 +897,9 @@ module.exports = function(RED) {
             packageName: "node-red-contrib-unifi-ultimate",
             controllerId: node.id,
             controllerName: node.name || node.host || node.id,
+            eventRetention: "none",
             capabilities: ["camera_catalog", "snapshot", "motion", "smart_events", "zones", "lines"].concat(historyCapabilities),
-            listCameras: (options) => node.listKnxAiCameras(options),
+            listCameras: async (options) => (await node.listKnxAiCameras(options)).map(cloneProviderMetadataWithoutRaw),
             takeSnapshot: (request) => node.takeKnxAiCameraSnapshot(request),
             subscribe(listener) {
                 if (typeof listener !== "function") return () => { };
@@ -833,6 +926,7 @@ module.exports = function(RED) {
                 node.knxAiCameraListeners.clear();
                 node.protectHistorySessionHeaders = null;
                 node.protectHistoryPaginationGuard.clear();
+                node.protectCameraEventDeduper.clear();
                 node.removeClient(knxAiBridgeClient);
                 node.closeWebSockets();
             } catch (error) {

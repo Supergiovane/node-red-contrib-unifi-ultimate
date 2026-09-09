@@ -256,6 +256,7 @@ describe("UniFi Protect KNX AI provider", () => {
         });
         const provider = registry.providers.get("unifi-ultimate:protect-config-1");
         expect(provider).toBeDefined();
+        expect(provider.eventRetention).toBe("none");
         expect(provider.capabilities).toEqual(expect.arrayContaining(["event_history", "event_snapshot"]));
         expect(provider.queryEvents).toEqual(expect.any(Function));
         expect(provider.takeEventSnapshot).toEqual(expect.any(Function));
@@ -282,6 +283,8 @@ describe("UniFi Protect KNX AI provider", () => {
             objectTypes: ["person", "animal", "vehicle"],
             lines: [{ id: "line-1", name: "Vialetto" }]
         });
+        expect(cameras[0]).not.toHaveProperty("raw");
+        expect(configNode.knxAiCameraCache.cameras[0]).toHaveProperty("raw");
 
         configNode.apiRequest = jest.fn(async (request) => ({
             statusCode: 200,
@@ -291,6 +294,7 @@ describe("UniFi Protect KNX AI provider", () => {
         }));
         const snapshot = await provider.takeSnapshot({ cameraId: cameras[0].cameraId, highQuality: true });
         expect(snapshot.data).toEqual(Buffer.from([1, 2, 3]));
+        expect(snapshot.camera).not.toHaveProperty("raw");
         expect(configNode.apiRequest).toHaveBeenCalledWith(expect.objectContaining({
             path: "/v1/cameras/camera-1/snapshot",
             query: { highQuality: "true" }
@@ -331,7 +335,7 @@ describe("UniFi Protect KNX AI provider", () => {
                 ...cameras[0],
                 state: "DISCONNECTED",
                 online: false,
-                raw: { ...cameras[0].raw, state: "DISCONNECTED" }
+                raw: { ...configNode.knxAiCameraCache.cameras[0].raw, state: "DISCONNECTED" }
             }]
         };
         configNode.apiRequest
@@ -384,6 +388,7 @@ describe("UniFi Protect KNX AI provider", () => {
             eventType: "motion",
             thumbnailAvailable: true
         });
+        expect(history.events[0]).not.toHaveProperty("raw");
         expect(configNode.executeProtectHistoryRequest).toHaveBeenCalledWith(expect.objectContaining({
             path: "events",
             query: expect.objectContaining({ orderDirection: "DESC", limit: 100 })
@@ -440,18 +445,20 @@ describe("UniFi Protect KNX AI provider", () => {
         const unsubscribe = provider.subscribe((event) => events.push(event));
         const bridgeClient = configNode.nodeClients.find((client) => String(client.id).startsWith("knx-ai-camera-adapter:"));
         expect(bridgeClient).toBeDefined();
+        const liveEventStart = Date.now();
+        const liveEvent = {
+            id: "event-1",
+            modelKey: "event",
+            type: "smartDetectLine",
+            device: "camera-1",
+            start: liveEventStart,
+            end: null,
+            smartDetectLineIds: ["line-1"],
+            smartDetectTypes: ["person"]
+        };
         bridgeClient.handleProtectEventUpdate({
             type: "add",
-            item: {
-                id: "event-1",
-                modelKey: "event",
-                type: "smartDetectLine",
-                device: "camera-1",
-                start: Date.now(),
-                end: null,
-                smartDetectLineIds: ["line-1"],
-                smartDetectTypes: ["person"]
-            }
+            item: { ...liveEvent }
         });
         await new Promise((resolve) => setImmediate(resolve));
         expect(events[0]).toMatchObject({
@@ -462,6 +469,50 @@ describe("UniFi Protect KNX AI provider", () => {
             objectTypes: ["person"],
             active: true
         });
+        expect(events[0]).not.toHaveProperty("raw");
+
+        bridgeClient.handleProtectEventUpdate({ type: "update", item: { ...liveEvent } });
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(events).toHaveLength(1);
+
+        bridgeClient.handleProtectEventUpdate({
+            type: "update",
+            item: { ...liveEvent, end: liveEventStart + 1000 }
+        });
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(events).toHaveLength(2);
+        expect(events[1]).toMatchObject({ eventId: "event-1", active: false });
+
+        const enrichedFinishedEvent = {
+            ...liveEvent,
+            end: liveEventStart + 1000,
+            smartDetectLineIds: ["line-1", "line-2"],
+            smartDetectTypes: ["person", "vehicle"]
+        };
+        bridgeClient.handleProtectEventUpdate({ type: "update", item: enrichedFinishedEvent });
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(events).toHaveLength(3);
+        expect(events[2]).toMatchObject({
+            active: false,
+            scopeIds: ["line-1", "line-2"],
+            objectTypes: ["person", "vehicle"]
+        });
+
+        bridgeClient.handleProtectEventUpdate({ type: "update", item: { ...enrichedFinishedEvent } });
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(events).toHaveLength(3);
+
+        const normalDeviceClient = { id: "normal-protect-node", handleProtectEventUpdate: jest.fn() };
+        configNode.nodeClients.push(normalDeviceClient);
+        const broadcastEvent = {
+            type: "add",
+            item: { ...liveEvent, id: "event-broadcast", start: liveEventStart + 2000 }
+        };
+        configNode.broadcastEventUpdate(broadcastEvent);
+        configNode.broadcastEventUpdate(broadcastEvent);
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(normalDeviceClient.handleProtectEventUpdate).toHaveBeenCalledTimes(2);
+        expect(events.filter((event) => event.eventId === "event-broadcast")).toHaveLength(1);
 
         unsubscribe();
         configNode.emit("close", jest.fn());
