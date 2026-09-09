@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.10 Sept 2026
+## 1.1.11 Sept 2026
 
 - **Protect recorded events for Cerebrum/KNX AI:** Protect config nodes can optionally use a dedicated local UniFi OS account to query recorded camera events and retrieve the JPEG thumbnail for an exact event. The shared provider exposes normalized, paginated history operations without leaking credentials, cookies, private URLs, or raw controller responses to the assistant.
 

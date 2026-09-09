@@ -115,6 +115,112 @@ describe("UniFi Protect KNX AI provider", () => {
         delete globalThis[KNX_AI_CAMERA_REGISTRY_KEY];
     });
 
+    test("filters unsupported event bursts and coalesces cold camera catalog refreshes", async () => {
+        let ProtectConfigNode;
+        const RED = {
+            auth: { needsPermission: () => (req, res, next) => next() },
+            httpAdmin: { get: jest.fn() },
+            nodes: {
+                createNode(node) {
+                    const emitter = new EventEmitter();
+                    node.id = "protect-burst-test";
+                    node.credentials = { apiKey: "secret" };
+                    node.on = emitter.on.bind(emitter);
+                    node.emit = emitter.emit.bind(emitter);
+                    node.warn = jest.fn();
+                },
+                registerType(type, constructor) {
+                    if (type === "unifi-protect-config") ProtectConfigNode = constructor;
+                }
+            }
+        };
+        require("../nodes/unifi-protect-config")(RED);
+        const configNode = new ProtectConfigNode({
+            name: "Casa",
+            host: "192.168.1.10",
+            port: "443",
+            rejectUnauthorized: false
+        });
+        configNode.ensureWebSockets = jest.fn();
+        const provider = getKnxAiCameraRegistry().providers.get("unifi-ultimate:protect-burst-test");
+        const received = [];
+        const unsubscribe = provider.subscribe((event) => received.push(event));
+        const bridgeClient = configNode.nodeClients.find((client) => String(client.id).startsWith("knx-ai-camera-adapter:"));
+
+        let releaseColdRefresh;
+        configNode.fetchDevices = jest.fn(() => new Promise((resolve) => {
+            releaseColdRefresh = resolve;
+        }));
+        for (let index = 0; index < 100; index += 1) {
+            bridgeClient.handleProtectEventUpdate({
+                item: {
+                    id: `unsupported-${index}`,
+                    modelKey: "event",
+                    type: "recording",
+                    device: "camera-1",
+                    start: Date.now()
+                }
+            });
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(configNode.fetchDevices).not.toHaveBeenCalled();
+
+        for (let index = 0; index < 100; index += 1) {
+            bridgeClient.handleProtectEventUpdate({
+                item: {
+                    id: `motion-${index}`,
+                    modelKey: "event",
+                    type: "motion",
+                    device: "camera-1",
+                    start: Date.now()
+                }
+            });
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(configNode.fetchDevices).toHaveBeenCalledTimes(1);
+        releaseColdRefresh([{
+            id: "camera-1",
+            modelKey: "camera",
+            name: "Ingresso",
+            state: "CONNECTED"
+        }]);
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(received).toHaveLength(100);
+
+        let releaseStaleRefresh;
+        configNode.fetchDevices.mockClear();
+        configNode.fetchDevices.mockImplementationOnce(() => new Promise((resolve) => {
+            releaseStaleRefresh = resolve;
+        }));
+        bridgeClient.handleProtectDeviceUpdate({ item: { modelKey: "camera", id: "camera-1" } });
+        bridgeClient.handleProtectEventUpdate({
+            item: {
+                id: "motion-with-stale-catalog",
+                modelKey: "event",
+                type: "motion",
+                device: "camera-1",
+                start: Date.now()
+            }
+        });
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(configNode.fetchDevices).toHaveBeenCalledTimes(1);
+        expect(received.at(-1)).toMatchObject({
+            eventId: "motion-with-stale-catalog",
+            cameraName: "Ingresso"
+        });
+        releaseStaleRefresh([{
+            id: "camera-1",
+            modelKey: "camera",
+            name: "Ingresso aggiornato",
+            state: "CONNECTED"
+        }]);
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(configNode.knxAiCameraCache.cameras[0].cameraName).toBe("Ingresso aggiornato");
+
+        unsubscribe();
+        configNode.emit("close", jest.fn());
+    });
+
     test("registers cameras, snapshots and live smart events without a wired Protect node", async () => {
         let ProtectConfigNode;
         const RED = {
@@ -282,6 +388,37 @@ describe("UniFi Protect KNX AI provider", () => {
             path: "events",
             query: expect.objectContaining({ orderDirection: "DESC", limit: 100 })
         }));
+
+        const repeatedHistoryPage = Array.from({ length: 100 }, (_, index) => ({
+            id: `repeated-history-${index}`,
+            modelKey: "event",
+            type: "motion",
+            device: "camera-1",
+            start: Date.now() - index * 1000,
+            end: Date.now() - index * 1000 + 500,
+            thumbnail: `e-repeated-history-${index}`
+        }));
+        configNode.executeProtectHistoryRequest = jest.fn(async () => ({
+            statusCode: 200,
+            headers: { "content-type": "application/json" },
+            payload: repeatedHistoryPage
+        }));
+        const historyRequest = {
+            eventType: "motion",
+            from: "2026-09-09T06:00:00.000Z",
+            to: "2026-09-09T12:00:00.000Z",
+            limit: 20
+        };
+        const firstHistoryPage = await provider.queryEvents(historyRequest);
+        const duplicateHistoryPage = await provider.queryEvents({ ...historyRequest, offset: 100 });
+        expect(firstHistoryPage).toMatchObject({ hasMore: true, nextOffset: 100, duplicatePage: false });
+        expect(duplicateHistoryPage).toMatchObject({
+            events: [],
+            hasMore: false,
+            nextOffset: null,
+            duplicatePage: true,
+            continuationStoppedReason: "duplicate_page"
+        });
 
         configNode.executeProtectHistoryRequest = jest.fn(async () => ({
             statusCode: 200,

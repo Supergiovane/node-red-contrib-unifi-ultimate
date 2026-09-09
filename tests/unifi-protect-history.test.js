@@ -1,6 +1,7 @@
 "use strict";
 
 const {
+    createProtectHistoryPaginationGuard,
     expandHistoryEventTypes,
     extractProtectHistorySessionHeaders,
     normalizeProtectHistoryRequest,
@@ -87,5 +88,33 @@ describe("UniFi Protect history helpers", () => {
             limit: 1
         });
         expect(selected.map((event) => event.eventId)).toEqual(["new"]);
+    });
+
+    test("stops a continuation when Protect repeats a page or the offset cannot advance", () => {
+        const guard = createProtectHistoryPaginationGuard();
+        const page = Array.from({ length: 100 }, (_, index) => ({
+            id: `event-${index}`,
+            device: "camera-1",
+            type: "motion",
+            start: 10000 - index
+        }));
+        const first = guard.evaluate({ key: "query-1", offset: 0, pageSize: 100, events: page });
+        const duplicate = guard.evaluate({ key: "query-1", offset: 100, pageSize: 100, events: page });
+        const overflow = guard.evaluate({
+            key: "query-2",
+            offset: Number.MAX_SAFE_INTEGER,
+            pageSize: 100,
+            events: page
+        });
+
+        expect(first).toMatchObject({ hasMore: true, nextOffset: 100, duplicatePage: false });
+        expect(duplicate).toMatchObject({
+            hasMore: false,
+            nextOffset: null,
+            duplicatePage: true,
+            duplicateOffset: 0,
+            madeProgress: false
+        });
+        expect(overflow).toMatchObject({ hasMore: false, nextOffset: null, madeProgress: false });
     });
 });

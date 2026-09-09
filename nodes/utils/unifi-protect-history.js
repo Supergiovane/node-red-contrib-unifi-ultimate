@@ -1,5 +1,7 @@
 "use strict";
 
+const { createHash } = require("crypto");
+
 const {
     SMART_CAMERA_EVENTS,
     normalizeSearchText
@@ -8,6 +10,8 @@ const {
 const PROTECT_HISTORY_DEFAULT_WINDOW_MS = 24 * 60 * 60 * 1000;
 const PROTECT_HISTORY_PAGE_SIZE = 100;
 const PROTECT_HISTORY_MAX_RESULTS = 100;
+const PROTECT_HISTORY_PAGINATION_TTL_MS = 5 * 60 * 1000;
+const PROTECT_HISTORY_PAGINATION_MAX_QUERIES = 32;
 
 function normalizeText(value, maxLength = 240) {
     return String(value === undefined || value === null ? "" : value).trim().slice(0, maxLength);
@@ -121,6 +125,93 @@ function extractProtectHistorySessionHeaders(response) {
     };
 }
 
+function fingerprintProtectHistoryPage(events) {
+    if (!Array.isArray(events) || events.length === 0) return "";
+    const hash = createHash("sha256");
+    events.forEach((event) => {
+        if (!event || typeof event !== "object" || Array.isArray(event)) {
+            hash.update(JSON.stringify([normalizeText(event, 500)]));
+        } else {
+            hash.update(JSON.stringify([
+                normalizeText(event.id || event.eventId, 200),
+                normalizeText(event.device || event.camera || event.cameraId, 200),
+                normalizeText(event.type || event.eventType, 100),
+                normalizeText(event.start === undefined ? event.timestamp : event.start, 100),
+                normalizeText(event.end, 100),
+                normalizeText(event.thumbnail || event.thumbnailId, 200)
+            ]));
+        }
+        hash.update("\n");
+    });
+    return hash.digest("hex");
+}
+
+function createProtectHistoryPaginationGuard({
+    ttlMs = PROTECT_HISTORY_PAGINATION_TTL_MS,
+    maxQueries = PROTECT_HISTORY_PAGINATION_MAX_QUERIES
+} = {}) {
+    const states = new Map();
+    const normalizedTtl = Math.max(1000, Number(ttlMs) || PROTECT_HISTORY_PAGINATION_TTL_MS);
+    const normalizedMaxQueries = Math.max(1, Math.floor(Number(maxQueries) || PROTECT_HISTORY_PAGINATION_MAX_QUERIES));
+
+    function prune(now, currentKey) {
+        states.forEach((state, key) => {
+            if (key !== currentKey && now - state.updatedAt > normalizedTtl) states.delete(key);
+        });
+        while (!states.has(currentKey) && states.size >= normalizedMaxQueries) {
+            const oldest = Array.from(states.entries())
+                .sort((left, right) => left[1].updatedAt - right[1].updatedAt)[0];
+            if (!oldest) break;
+            states.delete(oldest[0]);
+        }
+    }
+
+    return {
+        evaluate({ key, offset = 0, pageSize = PROTECT_HISTORY_PAGE_SIZE, events, now = Date.now() } = {}) {
+            const queryKey = normalizeText(key, 4096) || "default";
+            const pageOffset = Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.floor(Number(offset) || 0)));
+            const normalizedPageSize = Math.max(1, Math.floor(Number(pageSize) || PROTECT_HISTORY_PAGE_SIZE));
+            const page = Array.isArray(events) ? events : [];
+            const signature = fingerprintProtectHistoryPage(page);
+            const checkedAt = Number.isFinite(Number(now)) ? Number(now) : Date.now();
+            prune(checkedAt, queryKey);
+
+            let state = states.get(queryKey);
+            if (!state || pageOffset === 0) {
+                state = { signatures: new Map(), updatedAt: checkedAt };
+                states.set(queryKey, state);
+            }
+            const previousOffset = signature ? state.signatures.get(signature) : undefined;
+            // Re-reading an explicit offset is legitimate. A controller returning
+            // a page already seen at a different offset is not: continuing from
+            // it would let callers paginate forever without new evidence.
+            const duplicatePage = pageOffset > 0
+                && previousOffset !== undefined
+                && previousOffset !== pageOffset;
+            if (signature) state.signatures.set(signature, pageOffset);
+            state.updatedAt = checkedAt;
+
+            const candidateOffset = pageOffset + page.length;
+            const madeProgress = page.length > 0
+                && Number.isSafeInteger(candidateOffset)
+                && candidateOffset > pageOffset
+                && !duplicatePage;
+            const hasMore = page.length >= normalizedPageSize && madeProgress;
+            return {
+                duplicatePage,
+                duplicateOffset: duplicatePage ? previousOffset : null,
+                madeProgress,
+                hasMore,
+                nextOffset: hasMore ? candidateOffset : null,
+                signature
+            };
+        },
+        clear() {
+            states.clear();
+        }
+    };
+}
+
 function selectProtectHistoryEvents(events, request) {
     const normalized = normalizeProtectHistoryRequest(request, { now: request && request.end || Date.now() });
     const wantedCameraId = normalizeText(normalized.cameraId, 200);
@@ -145,8 +236,10 @@ module.exports = {
     PROTECT_HISTORY_DEFAULT_WINDOW_MS,
     PROTECT_HISTORY_MAX_RESULTS,
     PROTECT_HISTORY_PAGE_SIZE,
+    createProtectHistoryPaginationGuard,
     expandHistoryEventTypes,
     extractProtectHistorySessionHeaders,
+    fingerprintProtectHistoryPage,
     normalizeProtectHistoryRequest,
     selectProtectHistoryEvents
 };

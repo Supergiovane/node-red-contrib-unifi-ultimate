@@ -19,12 +19,14 @@ const {
     summarizeDevice
 } = require("./utils/unifi-protect-device-registry");
 const {
+    SMART_CAMERA_EVENTS,
     collectNamedScopes,
     getKnxAiCameraRegistry,
     normalizeProtectCameraEvent,
     normalizeSearchText
 } = require("./utils/knx-ai-camera-registry");
 const {
+    createProtectHistoryPaginationGuard,
     extractProtectHistorySessionHeaders,
     normalizeProtectHistoryRequest,
     selectProtectHistoryEvents
@@ -108,9 +110,12 @@ module.exports = function(RED) {
         node.reconnectTimer = null;
         node.isClosing = false;
         node.knxAiCameraCache = { at: 0, cameras: [] };
+        node.knxAiCameraRefresh = null;
+        node.knxAiCameraRefreshAgain = false;
         node.knxAiCameraListeners = new Set();
         node.protectHistorySessionHeaders = null;
         node.protectHistoryAuthentication = null;
+        node.protectHistoryPaginationGuard = createProtectHistoryPaginationGuard();
 
         node.getApiKey = () => node.credentials && node.credentials.apiKey;
 
@@ -315,45 +320,76 @@ module.exports = function(RED) {
             return getCapabilitiesForType(deviceType, selectedDevice);
         };
 
-        node.listKnxAiCameras = async ({ force = false } = {}) => {
+        node.listKnxAiCameras = async ({ force = false, allowStale = false } = {}) => {
             const now = Date.now();
-            if (!force && node.knxAiCameraCache.cameras.length > 0 && (now - node.knxAiCameraCache.at) < 30000) {
+            const cachedCameras = Array.isArray(node.knxAiCameraCache.cameras)
+                ? node.knxAiCameraCache.cameras.slice()
+                : [];
+            const cacheIsFresh = node.knxAiCameraCache.at > 0
+                && (now - node.knxAiCameraCache.at) < 30000;
+            if (!force && cacheIsFresh) {
                 return node.knxAiCameraCache.cameras.slice();
             }
-            const cameras = (await node.fetchDevices("camera")).map((camera) => {
-                const nativeCameraId = String(camera && camera.id || "").trim();
-                const cameraName = String(camera && (camera.name || camera.displayName) || nativeCameraId).trim();
-                const cameraState = String(camera && camera.state || "").trim().toUpperCase();
-                const objectTypes = Array.from(new Set([].concat(
-                    camera && camera.smartDetectSettings && Array.isArray(camera.smartDetectSettings.objectTypes)
-                        ? camera.smartDetectSettings.objectTypes
-                        : [],
-                    camera && camera.featureFlags && Array.isArray(camera.featureFlags.smartDetectTypes)
-                        ? camera.featureFlags.smartDetectTypes
-                        : []
-                ).map((value) => String(value || "").trim()).filter(Boolean)));
-                return {
-                    id: `${node.id}:${nativeCameraId}`,
-                    cameraId: `${node.id}:${nativeCameraId}`,
-                    nativeCameraId,
-                    cameraName,
-                    name: cameraName,
-                    aliases: [cameraName, nativeCameraId].filter(Boolean),
-                    controllerId: node.id,
-                    controllerName: node.name || node.host || node.id,
-                    adapterId: "unifi-ultimate",
-                    adapterTitle: "UniFi Ultimate / Protect",
-                    source: "unifi-ultimate",
-                    state: cameraState,
-                    online: cameraState ? cameraState === "CONNECTED" : null,
-                    objectTypes,
-                    lines: collectNamedScopes(camera, "line"),
-                    zones: collectNamedScopes(camera, "zone"),
-                    raw: camera
-                };
-            }).filter((camera) => camera.nativeCameraId);
-            node.knxAiCameraCache = { at: now, cameras };
-            return cameras.slice();
+            if (node.knxAiCameraRefresh) {
+                if (!force && allowStale && cachedCameras.length > 0) return cachedCameras;
+                return (await node.knxAiCameraRefresh).slice();
+            }
+
+            let refresh;
+            refresh = Promise.resolve().then(() => node.fetchDevices("camera")).then((devices) => {
+                const cameras = devices.map((camera) => {
+                    const nativeCameraId = String(camera && camera.id || "").trim();
+                    const cameraName = String(camera && (camera.name || camera.displayName) || nativeCameraId).trim();
+                    const cameraState = String(camera && camera.state || "").trim().toUpperCase();
+                    const objectTypes = Array.from(new Set([].concat(
+                        camera && camera.smartDetectSettings && Array.isArray(camera.smartDetectSettings.objectTypes)
+                            ? camera.smartDetectSettings.objectTypes
+                            : [],
+                        camera && camera.featureFlags && Array.isArray(camera.featureFlags.smartDetectTypes)
+                            ? camera.featureFlags.smartDetectTypes
+                            : []
+                    ).map((value) => String(value || "").trim()).filter(Boolean)));
+                    return {
+                        id: `${node.id}:${nativeCameraId}`,
+                        cameraId: `${node.id}:${nativeCameraId}`,
+                        nativeCameraId,
+                        cameraName,
+                        name: cameraName,
+                        aliases: [cameraName, nativeCameraId].filter(Boolean),
+                        controllerId: node.id,
+                        controllerName: node.name || node.host || node.id,
+                        adapterId: "unifi-ultimate",
+                        adapterTitle: "UniFi Ultimate / Protect",
+                        source: "unifi-ultimate",
+                        state: cameraState,
+                        online: cameraState ? cameraState === "CONNECTED" : null,
+                        objectTypes,
+                        lines: collectNamedScopes(camera, "line"),
+                        zones: collectNamedScopes(camera, "zone"),
+                        raw: camera
+                    };
+                }).filter((camera) => camera.nativeCameraId);
+                node.knxAiCameraCache = { at: Date.now(), cameras };
+                return cameras;
+            }).finally(() => {
+                if (node.knxAiCameraRefresh !== refresh) return;
+                node.knxAiCameraRefresh = null;
+                if (!node.knxAiCameraRefreshAgain || node.isClosing) return;
+                node.knxAiCameraRefreshAgain = false;
+                node.knxAiCameraCache = { at: 0, cameras: node.knxAiCameraCache.cameras };
+                Promise.resolve(node.listKnxAiCameras({ force: true })).catch((error) => {
+                    node.warn(`Unable to refresh the KNX AI camera catalog: ${error && error.message ? error.message : error}`);
+                });
+            });
+            node.knxAiCameraRefresh = refresh;
+
+            if (!force && allowStale && cachedCameras.length > 0) {
+                refresh.catch((error) => {
+                    node.warn(`Unable to refresh the KNX AI camera catalog: ${error && error.message ? error.message : error}`);
+                });
+                return cachedCameras;
+            }
+            return (await refresh).slice();
         };
 
         node.resolveKnxAiCamera = async ({ cameraId, cameraName } = {}) => {
@@ -429,6 +465,15 @@ module.exports = function(RED) {
 
         node.queryKnxAiCameraEvents = async (request = {}) => {
             const normalized = normalizeProtectHistoryRequest(request);
+            const requestSource = request && typeof request === "object" && !Array.isArray(request) ? request : {};
+            const paginationKey = JSON.stringify({
+                cameraId: normalized.cameraId,
+                cameraName: normalized.cameraName,
+                start: requestSource.from !== undefined || requestSource.start !== undefined ? normalized.start : "default",
+                end: requestSource.to !== undefined || requestSource.end !== undefined ? normalized.end : "default",
+                eventTypes: normalized.eventTypes,
+                objectTypes: normalized.objectTypes
+            });
             const requestedCamera = normalized.cameraId || normalized.cameraName
                 ? await node.resolveKnxAiCamera({ cameraId: normalized.cameraId, cameraName: normalized.cameraName })
                 : null;
@@ -485,14 +530,26 @@ module.exports = function(RED) {
             const selected = selectProtectHistoryEvents(events, Object.assign({}, normalized, {
                 cameraId: requestedCamera && requestedCamera.id || ""
             }));
+            const continuation = node.protectHistoryPaginationGuard.evaluate({
+                key: paginationKey,
+                offset: normalized.offset,
+                pageSize: normalized.pageSize,
+                events: payload
+            });
             return {
-                events: selected,
+                events: continuation.duplicatePage ? [] : selected,
                 from: normalized.from,
                 to: normalized.to,
                 offset: normalized.offset,
-                nextOffset: payload.length >= normalized.pageSize ? normalized.offset + payload.length : null,
-                hasMore: payload.length >= normalized.pageSize,
-                scannedEvents: payload.length
+                nextOffset: continuation.nextOffset,
+                hasMore: continuation.hasMore,
+                scannedEvents: payload.length,
+                duplicatePage: continuation.duplicatePage,
+                continuationStoppedReason: continuation.duplicatePage
+                    ? "duplicate_page"
+                    : !continuation.madeProgress && payload.length >= normalized.pageSize
+                        ? "no_progress"
+                        : ""
             };
         };
 
@@ -712,12 +769,17 @@ module.exports = function(RED) {
             id: `knx-ai-camera-adapter:${node.id}`,
             handleProtectDeviceUpdate(update) {
                 const item = update && update.item;
-                if (item && item.modelKey === "camera") node.knxAiCameraCache = { at: 0, cameras: [] };
+                if (item && item.modelKey === "camera") {
+                    node.knxAiCameraCache = { at: 0, cameras: node.knxAiCameraCache.cameras };
+                    if (node.knxAiCameraRefresh) node.knxAiCameraRefreshAgain = true;
+                }
             },
             handleProtectEventUpdate(update) {
                 const item = update && update.item;
                 if (!item || item.modelKey !== "event" || node.knxAiCameraListeners.size === 0) return;
-                Promise.resolve(node.listKnxAiCameras()).then((cameras) => {
+                const eventType = String(item.type || "").trim();
+                if (!SMART_CAMERA_EVENTS.has(eventType)) return;
+                Promise.resolve(node.listKnxAiCameras({ allowStale: true })).then((cameras) => {
                     const camera = cameras.find((entry) => entry.nativeCameraId === String(item.device || ""));
                     const event = normalizeProtectCameraEvent({
                         event: item,
@@ -770,6 +832,7 @@ module.exports = function(RED) {
                 knxAiCameraRegistry.unregisterProvider(knxAiProvider.id);
                 node.knxAiCameraListeners.clear();
                 node.protectHistorySessionHeaders = null;
+                node.protectHistoryPaginationGuard.clear();
                 node.removeClient(knxAiBridgeClient);
                 node.closeWebSockets();
             } catch (error) {
