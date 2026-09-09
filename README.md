@@ -126,16 +126,21 @@ Things you can do:
 - Play or stop a siren, control relay outputs, and test speaker or siren sound.
 - Read and select Protect Arm Profiles, then arm or disarm the local Alarm Manager from the NVR control.
 
-### Automatic KNX AI camera adapter
+### Automatic Cerebrum / KNX AI camera adapter
 
-When `node-red-contrib-knx-ultimate` is installed, every configured **Unifi Protect Config** instance automatically publishes its cameras to the KNX AI chat runtime. No Protect Device node, selector, or intermediate wire is required. KNX AI can then:
+Every configured **Unifi Protect Config** instance automatically publishes its cameras through the shared `node-red.knx-ai.camera-adapters.v1` runtime contract. Cerebrum and KNX AI can discover the installed provider without a Protect Device node, camera selector, or intermediate wire. They can then:
 
-- send a current camera snapshot to Telegram or RedBot;
+- send a current camera snapshot to the chat channel;
 - describe a fresh snapshot with the configured vision-capable LLM;
-- create persistent chat notifications for unclassified motion or generic smart detections, as well as line crossings, intrusion zones, and loiter zones;
-- filter smart events by the camera's supported classifications, including people, animals, vehicles, faces, license plates, and packages, and optionally by an exact line or zone exposed by Protect.
+- subscribe to motion, line-crossing, intrusion-zone and loiter-zone events;
+- filter smart events by classifications such as people, animals, vehicles, faces, license plates and packages, and by an exact Protect line or zone;
+- search recorded events with time, camera and detection filters, follow explicit pagination, and retrieve the thumbnail belonging to an exact returned event.
 
-The integration uses the generic `node-red.knx-ai.camera-adapters.v1` runtime contract, so other camera packages can register the same catalog/snapshot/event capabilities without vendor-specific code in KNX AI. Protect API keys remain inside this config node and are never copied into KNX AI.
+Recorded history requires the optional **History user/password** in the Protect config node. Use a dedicated local UniFi OS account that can view the required cameras. The Integration API key remains responsible for the official live-event and current-snapshot endpoints; the local account opens only the separate recorded-history session. Credentials and session cookies stay in the Node-RED credential/config node and are never published to Cerebrum, KNX AI, flows or chat context.
+
+Other camera packages can implement the same catalog, event, snapshot and recorded-history methods without adding vendor-specific code to Cerebrum.
+
+
 
 <br/>
 <br/>

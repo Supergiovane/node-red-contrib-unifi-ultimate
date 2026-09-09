@@ -124,7 +124,11 @@ describe("UniFi Protect KNX AI provider", () => {
                 createNode(node) {
                     const emitter = new EventEmitter();
                     node.id = "protect-config-1";
-                    node.credentials = { apiKey: "secret" };
+                    node.credentials = {
+                        apiKey: "secret",
+                        historyUsername: "cerebrum-history",
+                        historyPassword: "history-secret"
+                    };
                     node.on = emitter.on.bind(emitter);
                     node.emit = emitter.emit.bind(emitter);
                     node.warn = jest.fn();
@@ -146,6 +150,9 @@ describe("UniFi Protect KNX AI provider", () => {
         });
         const provider = registry.providers.get("unifi-ultimate:protect-config-1");
         expect(provider).toBeDefined();
+        expect(provider.capabilities).toEqual(expect.arrayContaining(["event_history", "event_snapshot"]));
+        expect(provider.queryEvents).toEqual(expect.any(Function));
+        expect(provider.takeEventSnapshot).toEqual(expect.any(Function));
 
         configNode.fetchDevices = jest.fn(async () => [{
             id: "camera-1",
@@ -237,6 +244,60 @@ describe("UniFi Protect KNX AI provider", () => {
         await expect(provider.takeSnapshot({ cameraId: cameras[0].cameraId }))
             .rejects.toThrow("camera is offline (HTTP 503; state: DISCONNECTED)");
         expect(configNode.apiRequest).toHaveBeenCalledTimes(2);
+
+        configNode.executeProtectHistoryRequest = jest.fn(async () => ({
+            statusCode: 200,
+            headers: { "content-type": "application/json" },
+            payload: [{
+                id: "event-history-1",
+                modelKey: "event",
+                type: "motion",
+                device: "camera-1",
+                start: Date.now() - 5000,
+                end: Date.now() - 2000,
+                thumbnail: "e-event-history-1"
+            }, {
+                id: "malformed-event",
+                modelKey: "event",
+                type: "motion",
+                device: "camera-1",
+                start: "not-a-timestamp",
+                thumbnail: "e-malformed-event"
+            }]
+        }));
+        const history = await provider.queryEvents({
+            cameraId: cameras[0].cameraId,
+            eventType: "motion",
+            limit: 1
+        });
+        expect(history.events).toHaveLength(1);
+        expect(history.events[0]).toMatchObject({
+            eventId: "event-history-1",
+            cameraId: "protect-config-1:camera-1",
+            cameraName: "Ingresso principale",
+            eventType: "motion",
+            thumbnailAvailable: true
+        });
+        expect(configNode.executeProtectHistoryRequest).toHaveBeenCalledWith(expect.objectContaining({
+            path: "events",
+            query: expect.objectContaining({ orderDirection: "DESC", limit: 100 })
+        }));
+
+        configNode.executeProtectHistoryRequest = jest.fn(async () => ({
+            statusCode: 200,
+            headers: { "content-type": "image/jpeg" },
+            payload: Buffer.from([7, 8, 9])
+        }));
+        const eventSnapshot = await provider.takeEventSnapshot({ eventId: "event-history-1" });
+        expect(eventSnapshot).toMatchObject({
+            data: Buffer.from([7, 8, 9]),
+            mediaType: "image/jpeg",
+            eventId: "event-history-1"
+        });
+        expect(configNode.executeProtectHistoryRequest).toHaveBeenCalledWith(expect.objectContaining({
+            path: "events/event-history-1/thumbnail",
+            headers: { Accept: "image/jpeg" }
+        }));
 
         const events = [];
         const unsubscribe = provider.subscribe((event) => events.push(event));

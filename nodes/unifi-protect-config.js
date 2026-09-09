@@ -2,6 +2,7 @@
 
 const {
     buildBaseUrlFromHost,
+    buildControllerBaseUrlFromHost,
     normalizePort,
     buildQueryString,
     doRequest,
@@ -23,6 +24,11 @@ const {
     normalizeProtectCameraEvent,
     normalizeSearchText
 } = require("./utils/knx-ai-camera-registry");
+const {
+    extractProtectHistorySessionHeaders,
+    normalizeProtectHistoryRequest,
+    selectProtectHistoryEvents
+} = require("./utils/unifi-protect-history");
 
 function extractProtectErrorDetail(response) {
     let payload = response && response.payload;
@@ -81,7 +87,7 @@ module.exports = function(RED) {
         id: "unifi-ultimate",
         title: "UniFi Ultimate / Protect",
         packageName: "node-red-contrib-unifi-ultimate",
-        capabilities: ["camera_catalog", "snapshot", "motion", "smart_events", "zones", "lines"]
+        capabilities: ["camera_catalog", "snapshot", "motion", "smart_events", "zones", "lines", "event_history", "event_snapshot"]
     });
 
     function UnifiProtectConfigNode(config) {
@@ -92,6 +98,7 @@ module.exports = function(RED) {
         node.host = String(config.host || "").trim();
         node.port = normalizePort(config.port);
         node.baseUrl = buildBaseUrlFromHost(node.host, node.port);
+        node.controllerBaseUrl = buildControllerBaseUrlFromHost(node.host, node.port);
         // UniFi controllers almost always use self-signed certificates, so accept
         // them unless the user explicitly opted into strict verification.
         node.rejectUnauthorized = config.rejectUnauthorized === true || config.rejectUnauthorized === "true";
@@ -102,8 +109,84 @@ module.exports = function(RED) {
         node.isClosing = false;
         node.knxAiCameraCache = { at: 0, cameras: [] };
         node.knxAiCameraListeners = new Set();
+        node.protectHistorySessionHeaders = null;
+        node.protectHistoryAuthentication = null;
 
         node.getApiKey = () => node.credentials && node.credentials.apiKey;
+
+        node.getHistoryCredentials = () => ({
+            username: String(node.credentials && node.credentials.historyUsername || "").trim(),
+            password: String(node.credentials && node.credentials.historyPassword || "")
+        });
+
+        node.hasHistoryCredentials = () => {
+            const credentials = node.getHistoryCredentials();
+            return Boolean(credentials.username && credentials.password);
+        };
+
+        node.authenticateProtectHistory = async () => {
+            if (node.protectHistorySessionHeaders) return node.protectHistorySessionHeaders;
+            if (node.protectHistoryAuthentication) return node.protectHistoryAuthentication;
+            const authentication = Promise.resolve().then(async () => {
+                const credentials = node.getHistoryCredentials();
+                if (!credentials.username || !credentials.password) {
+                    const error = new Error("UniFi Protect historical events require the optional local history username and password in the Protect config node.");
+                    error.code = "UNIFI_PROTECT_HISTORY_CREDENTIALS_REQUIRED";
+                    throw error;
+                }
+                if (!node.controllerBaseUrl) throw new Error("The configured IP is empty or invalid.");
+                const headers = {
+                    Accept: "application/json",
+                    "Content-Type": "application/json"
+                };
+                const body = buildRequestBody(headers, "POST", {
+                    username: credentials.username,
+                    password: credentials.password,
+                    rememberMe: false
+                });
+                const response = await doRequest(new URL(`${node.controllerBaseUrl}/api/auth/login`), {
+                    method: "POST",
+                    headers,
+                    timeout: 15000,
+                    rejectUnauthorized: node.rejectUnauthorized
+                }, body);
+                if (response.statusCode < 200 || response.statusCode >= 300) {
+                    const detail = extractProtectErrorDetail(response);
+                    const error = new Error(`UniFi OS login for Protect history failed (HTTP ${response.statusCode || "unknown"}${detail ? `: ${detail}` : ""}).`);
+                    error.code = "UNIFI_PROTECT_HISTORY_LOGIN_FAILED";
+                    error.statusCode = Number(response.statusCode) || 0;
+                    throw error;
+                }
+                node.protectHistorySessionHeaders = extractProtectHistorySessionHeaders(response);
+                return node.protectHistorySessionHeaders;
+            }).finally(() => {
+                if (node.protectHistoryAuthentication === authentication) node.protectHistoryAuthentication = null;
+            });
+            node.protectHistoryAuthentication = authentication;
+            return authentication;
+        };
+
+        node.executeProtectHistoryRequest = async ({ path, method = "GET", query, headers, payload, timeout = 20000 } = {}, retryAuthentication = true) => {
+            const sessionHeaders = await node.authenticateProtectHistory();
+            const normalizedPath = String(path || "").replace(/^\/+/, "");
+            const requestUrl = new URL(`${node.controllerBaseUrl}/proxy/protect/api/${normalizedPath}${buildQueryString(query)}`);
+            const requestMethod = String(method || "GET").toUpperCase();
+            const requestHeaders = Object.assign({ Accept: "application/json" }, sessionHeaders, headers || {});
+            const requestBody = buildRequestBody(requestHeaders, requestMethod, payload);
+            const response = await doRequest(requestUrl, {
+                method: requestMethod,
+                headers: requestHeaders,
+                timeout,
+                rejectUnauthorized: node.rejectUnauthorized
+            }, requestBody);
+            const refreshedCsrf = response && response.headers && response.headers["x-csrf-token"];
+            if (refreshedCsrf && node.protectHistorySessionHeaders) node.protectHistorySessionHeaders["X-CSRF-Token"] = String(refreshedCsrf);
+            if (Number(response && response.statusCode) === 401 && retryAuthentication) {
+                node.protectHistorySessionHeaders = null;
+                return node.executeProtectHistoryRequest({ path, method, query, headers, payload, timeout }, false);
+            }
+            return response;
+        };
 
         node.apiRequest = async ({
             path,
@@ -344,6 +427,109 @@ module.exports = function(RED) {
             };
         };
 
+        node.queryKnxAiCameraEvents = async (request = {}) => {
+            const normalized = normalizeProtectHistoryRequest(request);
+            const requestedCamera = normalized.cameraId || normalized.cameraName
+                ? await node.resolveKnxAiCamera({ cameraId: normalized.cameraId, cameraName: normalized.cameraName })
+                : null;
+            const response = await node.executeProtectHistoryRequest({
+                path: "events",
+                method: "GET",
+                query: normalized.query,
+                timeout: 25000
+            });
+            if (response.statusCode < 200 || response.statusCode >= 300) {
+                const detail = extractProtectErrorDetail(response);
+                throw new Error(`Unable to retrieve UniFi Protect historical events (HTTP ${response.statusCode || "unknown"}${detail ? `: ${detail}` : ""}).`);
+            }
+            const payload = Array.isArray(response.payload)
+                ? response.payload
+                : response.payload && Array.isArray(response.payload.events)
+                    ? response.payload.events
+                    : response.payload && Array.isArray(response.payload.data)
+                        ? response.payload.data
+                        : [];
+            const cameras = await node.listKnxAiCameras();
+            const events = payload.map((item) => {
+                if (!item || typeof item !== "object") return null;
+                const nativeCameraId = String(item.device || item.camera || item.cameraId || "").trim();
+                const startValue = item.start === undefined || item.start === null ? item.timestamp : item.start;
+                const numericStart = Number(startValue);
+                const start = Number.isFinite(numericStart) ? numericStart : Date.parse(String(startValue || ""));
+                if (!nativeCameraId || !Number.isFinite(start)) return null;
+                const numericEnd = Number(item.end);
+                const parsedEnd = item.end === null || item.end === undefined
+                    ? null
+                    : Number.isFinite(numericEnd)
+                        ? numericEnd
+                        : Date.parse(String(item.end));
+                const camera = cameras.find((candidate) => candidate.nativeCameraId === nativeCameraId);
+                const event = normalizeProtectCameraEvent({
+                    event: Object.assign({}, item, {
+                        modelKey: "event",
+                        type: item.type || item.eventType,
+                        device: nativeCameraId,
+                        start
+                    }),
+                    camera: camera && camera.raw,
+                    controllerId: node.id,
+                    controllerName: node.name || node.host || node.id
+                });
+                if (!event) return null;
+                return Object.assign({}, event, {
+                    endAt: Number.isFinite(parsedEnd) ? new Date(parsedEnd).toISOString() : "",
+                    score: Number.isFinite(Number(item.score)) ? Number(item.score) : null,
+                    thumbnailAvailable: Boolean(item.thumbnail || item.thumbnailId)
+                });
+            }).filter(Boolean);
+            const selected = selectProtectHistoryEvents(events, Object.assign({}, normalized, {
+                cameraId: requestedCamera && requestedCamera.id || ""
+            }));
+            return {
+                events: selected,
+                from: normalized.from,
+                to: normalized.to,
+                offset: normalized.offset,
+                nextOffset: payload.length >= normalized.pageSize ? normalized.offset + payload.length : null,
+                hasMore: payload.length >= normalized.pageSize,
+                scannedEvents: payload.length
+            };
+        };
+
+        node.takeKnxAiCameraEventSnapshot = async ({ eventId } = {}) => {
+            const id = String(eventId || "").trim().replace(/^e-/, "");
+            if (!id || id.length > 200) throw new Error("A valid UniFi Protect event id is required.");
+            let response;
+            for (let attempt = 0; attempt < 4; attempt += 1) {
+                response = await node.executeProtectHistoryRequest({
+                    path: `events/${encodeURIComponent(id)}/thumbnail`,
+                    method: "GET",
+                    headers: { Accept: "image/jpeg" },
+                    timeout: 25000
+                });
+                if (response.statusCode !== 404 || attempt === 3) break;
+                await new Promise((resolve) => setTimeout(resolve, 500));
+            }
+            if (!response || response.statusCode < 200 || response.statusCode >= 300) {
+                const detail = extractProtectErrorDetail(response);
+                throw new Error(`Unable to retrieve the UniFi Protect event snapshot (HTTP ${response && response.statusCode || "unknown"}${detail ? `: ${detail}` : ""}).`);
+            }
+            if (!Buffer.isBuffer(response.payload) || response.payload.length === 0) {
+                throw new Error("UniFi Protect returned an empty or invalid event snapshot.");
+            }
+            const contentTypeHeader = response.headers && response.headers["content-type"];
+            const mediaType = String(Array.isArray(contentTypeHeader) ? contentTypeHeader[0] : contentTypeHeader || "image/jpeg")
+                .split(";")[0]
+                .trim()
+                .toLowerCase();
+            return {
+                data: response.payload,
+                mediaType,
+                eventId: id,
+                statusCode: response.statusCode
+            };
+        };
+
         node.buildWebSocketUrl = (path) => {
             // Reuse the configured HTTPS base URL and only swap protocol for the
             // matching websocket scheme.
@@ -549,6 +735,7 @@ module.exports = function(RED) {
             }
         };
 
+        const historyCapabilities = node.hasHistoryCredentials() ? ["event_history", "event_snapshot"] : [];
         const knxAiProvider = {
             id: `unifi-ultimate:${node.id}`,
             adapterId: "unifi-ultimate",
@@ -556,7 +743,7 @@ module.exports = function(RED) {
             packageName: "node-red-contrib-unifi-ultimate",
             controllerId: node.id,
             controllerName: node.name || node.host || node.id,
-            capabilities: ["camera_catalog", "snapshot", "motion", "smart_events", "zones", "lines"],
+            capabilities: ["camera_catalog", "snapshot", "motion", "smart_events", "zones", "lines"].concat(historyCapabilities),
             listCameras: (options) => node.listKnxAiCameras(options),
             takeSnapshot: (request) => node.takeKnxAiCameraSnapshot(request),
             subscribe(listener) {
@@ -570,6 +757,10 @@ module.exports = function(RED) {
                 };
             }
         };
+        if (node.hasHistoryCredentials()) {
+            knxAiProvider.queryEvents = (request) => node.queryKnxAiCameraEvents(request);
+            knxAiProvider.takeEventSnapshot = (request) => node.takeKnxAiCameraEventSnapshot(request);
+        }
         node.knxAiCameraProvider = knxAiProvider;
         knxAiCameraRegistry.registerProvider(knxAiProvider);
 
@@ -578,6 +769,7 @@ module.exports = function(RED) {
                 node.isClosing = true;
                 knxAiCameraRegistry.unregisterProvider(knxAiProvider.id);
                 node.knxAiCameraListeners.clear();
+                node.protectHistorySessionHeaders = null;
                 node.removeClient(knxAiBridgeClient);
                 node.closeWebSockets();
             } catch (error) {
@@ -591,7 +783,9 @@ module.exports = function(RED) {
 
     RED.nodes.registerType("unifi-protect-config", UnifiProtectConfigNode, {
         credentials: {
-            apiKey: { type: "password" }
+            apiKey: { type: "password" },
+            historyUsername: { type: "text" },
+            historyPassword: { type: "password" }
         }
     });
 

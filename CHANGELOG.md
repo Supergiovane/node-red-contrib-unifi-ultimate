@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.10 Sept 2026
+
+- **Protect recorded events for Cerebrum/KNX AI:** Protect config nodes can optionally use a dedicated local UniFi OS account to query recorded camera events and retrieve the JPEG thumbnail for an exact event. The shared provider exposes normalized, paginated history operations without leaking credentials, cookies, private URLs, or raw controller responses to the assistant.
+
 ## 1.1.9 Sept 2026
 
 - **Protect Alarm Manager:** NVR controls can now list and select Protect Arm Profiles, then arm or disarm the local Alarm Manager through the official Protect API.

@@ -26,6 +26,14 @@ function buildBaseUrlFromHost(value, port) {
     return `https://${host}/proxy/protect/integration`;
 }
 
+function buildControllerBaseUrlFromHost(value, port) {
+    const host = applyPortToHost(normalizeHost(value), port);
+    if (!host) {
+        return "";
+    }
+    return `https://${host}`;
+}
+
 function buildQueryString(query) {
     if (!query || typeof query !== "object" || Array.isArray(query)) {
         return "";
@@ -134,6 +142,7 @@ function buildRequestBody(headers, method, payload) {
 
 module.exports = {
     buildBaseUrlFromHost,
+    buildControllerBaseUrlFromHost,
     normalizePort,
     applyPortToHost,
     buildQueryString,
