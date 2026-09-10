@@ -221,7 +221,7 @@ describe("UniFi Protect KNX AI provider", () => {
         configNode.emit("close", jest.fn());
     });
 
-    test("registers cameras, snapshots and live smart events without a wired Protect node", async () => {
+    test("retrieves an event snapshot even when history omits thumbnail metadata", async () => {
         let ProtectConfigNode;
         const RED = {
             auth: { needsPermission: () => (req, res, next) => next() },
@@ -230,11 +230,7 @@ describe("UniFi Protect KNX AI provider", () => {
                 createNode(node) {
                     const emitter = new EventEmitter();
                     node.id = "protect-config-1";
-                    node.credentials = {
-                        apiKey: "secret",
-                        historyUsername: "cerebrum-history",
-                        historyPassword: "history-secret"
-                    };
+                    node.credentials = { apiKey: "secret" };
                     node.on = emitter.on.bind(emitter);
                     node.emit = emitter.emit.bind(emitter);
                     node.warn = jest.fn();
@@ -260,6 +256,10 @@ describe("UniFi Protect KNX AI provider", () => {
         expect(provider.capabilities).toEqual(expect.arrayContaining(["event_history", "event_snapshot"]));
         expect(provider.queryEvents).toEqual(expect.any(Function));
         expect(provider.takeEventSnapshot).toEqual(expect.any(Function));
+        expect(provider.connected).toBe(false);
+        expect(provider.ready).toBe(false);
+        expect(provider.isReady()).toBe(false);
+        expect(provider.health).toMatchObject({ status: "degraded", connected: false, ready: false });
 
         configNode.fetchDevices = jest.fn(async () => [{
             id: "camera-1",
@@ -285,6 +285,22 @@ describe("UniFi Protect KNX AI provider", () => {
         });
         expect(cameras[0]).not.toHaveProperty("raw");
         expect(configNode.knxAiCameraCache.cameras[0]).toHaveProperty("raw");
+        expect(provider.connected).toBe(true);
+        expect(provider.ready).toBe(true);
+        expect(provider.isReady()).toBe(true);
+        expect(provider.health).toMatchObject({ status: "healthy", connected: true, ready: true });
+        expect(provider.lastError).toBe("");
+        expect(provider.lastSeenAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+
+        configNode.fetchDevices.mockRejectedValueOnce(new Error("catalog unavailable"));
+        await expect(provider.listCameras({ force: true })).rejects.toThrow("catalog unavailable");
+        expect(provider.connected).toBe(false);
+        expect(provider.ready).toBe(false);
+        expect(provider.isReady()).toBe(false);
+        expect(provider.health.status).toBe("unavailable");
+        expect(provider.lastError).toBe("catalog unavailable");
+        await provider.listCameras({ force: true });
+        expect(provider.health.status).toBe("healthy");
 
         configNode.apiRequest = jest.fn(async (request) => ({
             statusCode: 200,
@@ -364,8 +380,7 @@ describe("UniFi Protect KNX AI provider", () => {
                 type: "motion",
                 device: "camera-1",
                 start: Date.now() - 5000,
-                end: Date.now() - 2000,
-                thumbnail: "e-event-history-1"
+                end: Date.now() - 2000
             }, {
                 id: "malformed-event",
                 modelKey: "event",
@@ -375,11 +390,17 @@ describe("UniFi Protect KNX AI provider", () => {
                 thumbnail: "e-malformed-event"
             }]
         }));
+        const historyOptions = {
+            historyCredentials: {
+                username: "cerebrum-history",
+                password: "history-secret"
+            }
+        };
         const history = await provider.queryEvents({
             cameraId: cameras[0].cameraId,
             eventType: "motion",
             limit: 1
-        });
+        }, historyOptions);
         expect(history.events).toHaveLength(1);
         expect(history.events[0]).toMatchObject({
             eventId: "event-history-1",
@@ -391,8 +412,11 @@ describe("UniFi Protect KNX AI provider", () => {
         expect(history.events[0]).not.toHaveProperty("raw");
         expect(configNode.executeProtectHistoryRequest).toHaveBeenCalledWith(expect.objectContaining({
             path: "events",
-            query: expect.objectContaining({ orderDirection: "DESC", limit: 100 })
-        }));
+            query: expect.objectContaining({ orderDirection: "DESC", limit: 100, cameras: ["camera-1"] })
+        }), historyOptions);
+        expect(configNode.executeProtectHistoryRequest.mock.calls[0][0]).not.toHaveProperty("historyCredentials");
+        expect(JSON.stringify(history)).not.toContain("cerebrum-history");
+        expect(JSON.stringify(history)).not.toContain("history-secret");
 
         const repeatedHistoryPage = Array.from({ length: 100 }, (_, index) => ({
             id: `repeated-history-${index}`,
@@ -414,8 +438,8 @@ describe("UniFi Protect KNX AI provider", () => {
             to: "2026-09-09T12:00:00.000Z",
             limit: 20
         };
-        const firstHistoryPage = await provider.queryEvents(historyRequest);
-        const duplicateHistoryPage = await provider.queryEvents({ ...historyRequest, offset: 100 });
+        const firstHistoryPage = await provider.queryEvents(historyRequest, historyOptions);
+        const duplicateHistoryPage = await provider.queryEvents({ ...historyRequest, offset: 100 }, historyOptions);
         expect(firstHistoryPage).toMatchObject({ hasMore: true, nextOffset: 100, duplicatePage: false });
         expect(duplicateHistoryPage).toMatchObject({
             events: [],
@@ -424,13 +448,33 @@ describe("UniFi Protect KNX AI provider", () => {
             duplicatePage: true,
             continuationStoppedReason: "duplicate_page"
         });
+        const scopedFirstPage = await provider.queryEvents(historyRequest, {
+            ...historyOptions,
+            historyQueryScope: "cerebrum-a"
+        });
+        const otherScopeSamePage = await provider.queryEvents({ ...historyRequest, offset: 100 }, {
+            ...historyOptions,
+            historyQueryScope: "cerebrum-b"
+        });
+        const scopedDuplicatePage = await provider.queryEvents({ ...historyRequest, offset: 100 }, {
+            ...historyOptions,
+            historyQueryScope: "cerebrum-a"
+        });
+        expect(scopedFirstPage.duplicatePage).toBe(false);
+        expect(otherScopeSamePage).toMatchObject({ duplicatePage: false, hasMore: true, nextOffset: 200 });
+        expect(scopedDuplicatePage).toMatchObject({
+            events: [],
+            duplicatePage: true,
+            hasMore: false,
+            nextOffset: null
+        });
 
         configNode.executeProtectHistoryRequest = jest.fn(async () => ({
             statusCode: 200,
             headers: { "content-type": "image/jpeg" },
             payload: Buffer.from([7, 8, 9])
         }));
-        const eventSnapshot = await provider.takeEventSnapshot({ eventId: "event-history-1" });
+        const eventSnapshot = await provider.takeEventSnapshot({ eventId: "event-history-1" }, historyOptions);
         expect(eventSnapshot).toMatchObject({
             data: Buffer.from([7, 8, 9]),
             mediaType: "image/jpeg",
@@ -439,12 +483,31 @@ describe("UniFi Protect KNX AI provider", () => {
         expect(configNode.executeProtectHistoryRequest).toHaveBeenCalledWith(expect.objectContaining({
             path: "events/event-history-1/thumbnail",
             headers: { Accept: "image/jpeg" }
-        }));
+        }), historyOptions, expect.any(Object));
+        expect(JSON.stringify(eventSnapshot)).not.toContain("history-secret");
 
+        const openedProtectSockets = new Map();
+        configNode.attachSocket = jest.fn((kind) => {
+            const socket = { close: jest.fn() };
+            openedProtectSockets.set(kind, socket);
+            configNode[kind === "devices" ? "wsDevices" : "wsEvents"] = socket;
+        });
         const events = [];
         const unsubscribe = provider.subscribe((event) => events.push(event));
         const bridgeClient = configNode.nodeClients.find((client) => String(client.id).startsWith("knx-ai-camera-adapter:"));
         expect(bridgeClient).toBeDefined();
+        expect(bridgeClient.protectStreams).toEqual(["events"]);
+        expect(configNode.attachSocket).toHaveBeenCalledTimes(1);
+        expect(configNode.attachSocket).toHaveBeenCalledWith("events", "/v1/subscribe/events", configNode.broadcastEventUpdate);
+        expect(configNode.wsDevices).toBeNull();
+
+        const deviceOnlyClient = { id: "device-only", handleProtectDeviceUpdate: jest.fn() };
+        configNode.addClient(deviceOnlyClient);
+        expect(configNode.attachSocket).toHaveBeenCalledWith("devices", "/v1/subscribe/devices", configNode.broadcastDeviceUpdate);
+        configNode.removeClient(deviceOnlyClient);
+        expect(openedProtectSockets.get("devices").close).toHaveBeenCalledTimes(1);
+        expect(configNode.wsDevices).toBeNull();
+        expect(configNode.wsEvents).toBe(openedProtectSockets.get("events"));
         const liveEventStart = Date.now();
         const liveEvent = {
             id: "event-1",

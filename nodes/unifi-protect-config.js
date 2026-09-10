@@ -202,67 +202,110 @@ module.exports = function(RED) {
         node.knxAiCameraRefresh = null;
         node.knxAiCameraRefreshAgain = false;
         node.knxAiCameraListeners = new Set();
-        node.protectHistorySessionHeaders = null;
-        node.protectHistoryAuthentication = null;
         node.protectHistoryPaginationGuard = createProtectHistoryPaginationGuard();
         node.protectCameraEventDeduper = createProtectCameraEventDeduper();
 
+        // Historical credentials used to belong to this config node. Remove any
+        // legacy values from the runtime credential cache so a subsequent deploy
+        // also removes them from Node-RED's encrypted credential file. History
+        // callers now own those credentials and provide them for each operation.
+        if (node.credentials && typeof node.credentials === "object") {
+            const hadLegacyHistoryCredentials = Object.prototype.hasOwnProperty.call(node.credentials, "historyUsername")
+                || Object.prototype.hasOwnProperty.call(node.credentials, "historyPassword");
+            if (hadLegacyHistoryCredentials) {
+                const apiKey = node.credentials.apiKey;
+                node.credentials = apiKey === undefined ? {} : { apiKey };
+                if (RED.nodes && typeof RED.nodes.addCredentials === "function") {
+                    // Do not log either the old credentials or failures from this
+                    // best-effort migration. Node-RED persists the sanitized cache
+                    // through its normal encrypted credential/deploy lifecycle.
+                    Promise.resolve(RED.nodes.addCredentials(node.id, node.credentials)).catch(() => { });
+                }
+            }
+        }
+
         node.getApiKey = () => node.credentials && node.credentials.apiKey;
 
-        node.getHistoryCredentials = () => ({
-            username: String(node.credentials && node.credentials.historyUsername || "").trim(),
-            password: String(node.credentials && node.credentials.historyPassword || "")
-        });
-
-        node.hasHistoryCredentials = () => {
-            const credentials = node.getHistoryCredentials();
-            return Boolean(credentials.username && credentials.password);
+        const providerIsConfigured = () => Boolean(node.baseUrl && node.getApiKey());
+        node.knxAiCameraProviderHealth = {
+            connected: false,
+            ready: false,
+            status: providerIsConfigured() ? "degraded" : "unavailable",
+            checkedAt: "",
+            lastSeenAt: "",
+            lastError: providerIsConfigured()
+                ? "The UniFi Protect camera catalog has not been checked yet."
+                : "The UniFi Protect host or API key is not configured."
+        };
+        node.updateKnxAiCameraProviderHealth = ({ ok, error } = {}) => {
+            const checkedAt = new Date().toISOString();
+            const configured = providerIsConfigured() && !node.isClosing;
+            const healthy = configured && ok === true;
+            const message = healthy
+                ? ""
+                : String(error && (error.message || error) || (configured
+                    ? "The UniFi Protect camera catalog is unavailable."
+                    : "The UniFi Protect host or API key is not configured."));
+            node.knxAiCameraProviderHealth = {
+                connected: healthy,
+                ready: healthy,
+                status: healthy ? "healthy" : "unavailable",
+                checkedAt,
+                lastSeenAt: healthy ? checkedAt : node.knxAiCameraProviderHealth.lastSeenAt,
+                lastError: message.slice(0, 500)
+            };
         };
 
-        node.authenticateProtectHistory = async () => {
-            if (node.protectHistorySessionHeaders) return node.protectHistorySessionHeaders;
-            if (node.protectHistoryAuthentication) return node.protectHistoryAuthentication;
-            const authentication = Promise.resolve().then(async () => {
-                const credentials = node.getHistoryCredentials();
-                if (!credentials.username || !credentials.password) {
-                    const error = new Error("UniFi Protect historical events require the optional local history username and password in the Protect config node.");
-                    error.code = "UNIFI_PROTECT_HISTORY_CREDENTIALS_REQUIRED";
-                    throw error;
-                }
-                if (!node.controllerBaseUrl) throw new Error("The configured IP is empty or invalid.");
-                const headers = {
-                    Accept: "application/json",
-                    "Content-Type": "application/json"
-                };
-                const body = buildRequestBody(headers, "POST", {
-                    username: credentials.username,
-                    password: credentials.password,
-                    rememberMe: false
-                });
-                const response = await doRequest(new URL(`${node.controllerBaseUrl}/api/auth/login`), {
-                    method: "POST",
-                    headers,
-                    timeout: 15000,
-                    rejectUnauthorized: node.rejectUnauthorized
-                }, body);
-                if (response.statusCode < 200 || response.statusCode >= 300) {
-                    const detail = extractProtectErrorDetail(response);
-                    const error = new Error(`UniFi OS login for Protect history failed (HTTP ${response.statusCode || "unknown"}${detail ? `: ${detail}` : ""}).`);
-                    error.code = "UNIFI_PROTECT_HISTORY_LOGIN_FAILED";
-                    error.statusCode = Number(response.statusCode) || 0;
-                    throw error;
-                }
-                node.protectHistorySessionHeaders = extractProtectHistorySessionHeaders(response);
-                return node.protectHistorySessionHeaders;
-            }).finally(() => {
-                if (node.protectHistoryAuthentication === authentication) node.protectHistoryAuthentication = null;
+        node.authenticateProtectHistory = async (historyCredentials) => {
+            const source = historyCredentials && typeof historyCredentials === "object" && !Array.isArray(historyCredentials)
+                ? historyCredentials
+                : {};
+            const username = String(source.username || "").trim();
+            const password = String(source.password || "");
+            if (!username || !password) {
+                const error = new Error("UniFi Protect historical events require a local history username and password supplied by the caller.");
+                error.code = "UNIFI_PROTECT_HISTORY_CREDENTIALS_REQUIRED";
+                throw error;
+            }
+            if (!node.controllerBaseUrl) throw new Error("The configured IP is empty or invalid.");
+            const headers = {
+                Accept: "application/json",
+                "Content-Type": "application/json"
+            };
+            const body = buildRequestBody(headers, "POST", {
+                username,
+                password,
+                rememberMe: false
             });
-            node.protectHistoryAuthentication = authentication;
-            return authentication;
+            const response = await doRequest(new URL(`${node.controllerBaseUrl}/api/auth/login`), {
+                method: "POST",
+                headers,
+                timeout: 15000,
+                rejectUnauthorized: node.rejectUnauthorized
+            }, body);
+            if (response.statusCode < 200 || response.statusCode >= 300) {
+                // Controller error bodies are deliberately excluded: some UniFi
+                // versions may echo submitted login fields in diagnostic details.
+                const error = new Error(`UniFi OS login for Protect history failed (HTTP ${response.statusCode || "unknown"}).`);
+                error.code = "UNIFI_PROTECT_HISTORY_LOGIN_FAILED";
+                error.statusCode = Number(response.statusCode) || 0;
+                throw error;
+            }
+            return extractProtectHistorySessionHeaders(response);
         };
 
-        node.executeProtectHistoryRequest = async ({ path, method = "GET", query, headers, payload, timeout = 20000 } = {}, retryAuthentication = true) => {
-            const sessionHeaders = await node.authenticateProtectHistory();
+        node.executeProtectHistoryRequest = async (
+            { path, method = "GET", query, headers, payload, timeout = 20000 } = {},
+            { historyCredentials, retryAuthentication = true } = {},
+            callSession = {}
+        ) => {
+            // The session may be reused only by HTTP attempts belonging to one
+            // provider operation (for example delayed thumbnail retries). This
+            // object is local to that operation and never retained on the node.
+            if (!callSession.sessionHeaders) {
+                callSession.sessionHeaders = await node.authenticateProtectHistory(historyCredentials);
+            }
+            const sessionHeaders = callSession.sessionHeaders;
             const normalizedPath = String(path || "").replace(/^\/+/, "");
             const requestUrl = new URL(`${node.controllerBaseUrl}/proxy/protect/api/${normalizedPath}${buildQueryString(query)}`);
             const requestMethod = String(method || "GET").toUpperCase();
@@ -275,10 +318,17 @@ module.exports = function(RED) {
                 rejectUnauthorized: node.rejectUnauthorized
             }, requestBody);
             const refreshedCsrf = response && response.headers && response.headers["x-csrf-token"];
-            if (refreshedCsrf && node.protectHistorySessionHeaders) node.protectHistorySessionHeaders["X-CSRF-Token"] = String(refreshedCsrf);
-            if (Number(response && response.statusCode) === 401 && retryAuthentication) {
-                node.protectHistorySessionHeaders = null;
-                return node.executeProtectHistoryRequest({ path, method, query, headers, payload, timeout }, false);
+            if (refreshedCsrf) callSession.sessionHeaders["X-CSRF-Token"] = String(refreshedCsrf);
+            if (Number(response && response.statusCode) === 401
+                && retryAuthentication
+                && callSession.authenticationRetries !== 1) {
+                callSession.authenticationRetries = 1;
+                callSession.sessionHeaders = null;
+                return node.executeProtectHistoryRequest(
+                    { path, method, query, headers, payload, timeout },
+                    { historyCredentials, retryAuthentication: false },
+                    callSession
+                );
             }
             return response;
         };
@@ -460,7 +510,11 @@ module.exports = function(RED) {
                     };
                 }).filter((camera) => camera.nativeCameraId);
                 node.knxAiCameraCache = { at: Date.now(), cameras };
+                node.updateKnxAiCameraProviderHealth({ ok: true });
                 return cameras;
+            }).catch((error) => {
+                node.updateKnxAiCameraProviderHealth({ ok: false, error });
+                throw error;
             }).finally(() => {
                 if (node.knxAiCameraRefresh !== refresh) return;
                 node.knxAiCameraRefresh = null;
@@ -553,10 +607,14 @@ module.exports = function(RED) {
             };
         };
 
-        node.queryKnxAiCameraEvents = async (request = {}) => {
+        node.queryKnxAiCameraEvents = async (request = {}, { historyCredentials, historyQueryScope } = {}) => {
             const normalized = normalizeProtectHistoryRequest(request);
             const requestSource = request && typeof request === "object" && !Array.isArray(request) ? request : {};
             const paginationKey = JSON.stringify({
+                // This is an opaque, non-secret caller id (for example a
+                // Cerebrum node id). It prevents otherwise identical paginated
+                // searches from different callers contaminating each other.
+                historyQueryScope: String(historyQueryScope || "").trim().slice(0, 200),
                 cameraId: normalized.cameraId,
                 cameraName: normalized.cameraName,
                 start: requestSource.from !== undefined || requestSource.start !== undefined ? normalized.start : "default",
@@ -570,12 +628,15 @@ module.exports = function(RED) {
             const response = await node.executeProtectHistoryRequest({
                 path: "events",
                 method: "GET",
-                query: normalized.query,
+                query: Object.assign({}, normalized.query, requestedCamera
+                    ? { cameras: [requestedCamera.nativeCameraId] }
+                    : {}),
                 timeout: 25000
-            });
+            }, { historyCredentials });
             if (response.statusCode < 200 || response.statusCode >= 300) {
-                const detail = extractProtectErrorDetail(response);
-                throw new Error(`Unable to retrieve UniFi Protect historical events (HTTP ${response.statusCode || "unknown"}${detail ? `: ${detail}` : ""}).`);
+                // History responses are source-owned and may contain sensitive
+                // controller diagnostics. Expose only the status code upstream.
+                throw new Error(`Unable to retrieve UniFi Protect historical events (HTTP ${response.statusCode || "unknown"}).`);
             }
             const payload = Array.isArray(response.payload)
                 ? response.payload
@@ -614,7 +675,11 @@ module.exports = function(RED) {
                 return Object.assign({}, event, {
                     endAt: Number.isFinite(parsedEnd) ? new Date(parsedEnd).toISOString() : "",
                     score: Number.isFinite(Number(item.score)) ? Number(item.score) : null,
-                    thumbnailAvailable: Boolean(item.thumbnail || item.thumbnailId)
+                    // Protect does not consistently include thumbnail/thumbnailId
+                    // in historical event rows even though the event-id endpoint
+                    // can return the JPEG. The endpoint is the authoritative
+                    // availability check; an exact event id is enough to try it.
+                    thumbnailAvailable: Boolean(event.eventId)
                 });
             }).filter(Boolean);
             const selected = selectProtectHistoryEvents(events, Object.assign({}, normalized, {
@@ -643,23 +708,27 @@ module.exports = function(RED) {
             };
         };
 
-        node.takeKnxAiCameraEventSnapshot = async ({ eventId } = {}) => {
-            const id = String(eventId || "").trim().replace(/^e-/, "");
+        node.takeKnxAiCameraEventSnapshot = async (request = {}, { historyCredentials } = {}) => {
+            const requestSource = request && typeof request === "object" && !Array.isArray(request) ? request : {};
+            const id = String(requestSource.eventId || "").trim().replace(/^e-/, "");
             if (!id || id.length > 200) throw new Error("A valid UniFi Protect event id is required.");
             let response;
+            // This session is scoped to the current provider invocation and lets
+            // 404 thumbnail retries avoid creating additional UniFi OS sessions.
+            const callSession = {};
             for (let attempt = 0; attempt < 4; attempt += 1) {
                 response = await node.executeProtectHistoryRequest({
                     path: `events/${encodeURIComponent(id)}/thumbnail`,
                     method: "GET",
                     headers: { Accept: "image/jpeg" },
                     timeout: 25000
-                });
+                }, { historyCredentials }, callSession);
                 if (response.statusCode !== 404 || attempt === 3) break;
                 await new Promise((resolve) => setTimeout(resolve, 500));
             }
             if (!response || response.statusCode < 200 || response.statusCode >= 300) {
-                const detail = extractProtectErrorDetail(response);
-                throw new Error(`Unable to retrieve the UniFi Protect event snapshot (HTTP ${response && response.statusCode || "unknown"}${detail ? `: ${detail}` : ""}).`);
+                // Do not forward controller response bodies into chat/tool errors.
+                throw new Error(`Unable to retrieve the UniFi Protect event snapshot (HTTP ${response && response.statusCode || "unknown"}).`);
             }
             if (!Buffer.isBuffer(response.payload) || response.payload.length === 0) {
                 throw new Error("UniFi Protect returned an empty or invalid event snapshot.");
@@ -770,13 +839,16 @@ module.exports = function(RED) {
 
             ws.on("close", () => {
                 try {
+                    let wasActive = false;
                     if (kind === "devices" && node.wsDevices === ws) {
                         node.wsDevices = null;
+                        wasActive = true;
                     }
                     if (kind === "events" && node.wsEvents === ws) {
                         node.wsEvents = null;
+                        wasActive = true;
                     }
-                    node.scheduleReconnect();
+                    if (wasActive) node.scheduleReconnect();
                 } catch (error) {
                 }
             });
@@ -795,18 +867,43 @@ module.exports = function(RED) {
             }
         };
 
+        const clientNeedsProtectStream = (client, kind, handlerName) => {
+            if (!client || typeof client[handlerName] !== "function") return false;
+            if (!Array.isArray(client.protectStreams)) return true;
+            return client.protectStreams.some((stream) => String(stream || "").trim().toLowerCase() === kind);
+        };
+
+        node.closeWebSocket = (kind) => {
+            const propertyName = kind === "devices" ? "wsDevices" : "wsEvents";
+            const socket = node[propertyName];
+            if (!socket) return;
+            // Clear ownership before close so the close callback knows this was
+            // intentional and does not schedule an unnecessary reconnect.
+            node[propertyName] = null;
+            try {
+                socket.close();
+            } catch (error) {
+            }
+        };
+
         node.ensureWebSockets = () => {
-            if (node.isClosing || node.nodeClients.length === 0) {
-                return;
-            }
+            if (node.isClosing) return;
 
-            // Devices and events are split into two streams by the Protect API.
-            if (!node.wsDevices) {
+            const needsDevices = node.nodeClients.some((client) => clientNeedsProtectStream(client, "devices", "handleProtectDeviceUpdate"));
+            const needsEvents = node.nodeClients.some((client) => clientNeedsProtectStream(client, "events", "handleProtectEventUpdate"));
+
+            // Devices and events are independent Protect streams. Open only the
+            // streams requested by active clients and close any no longer used.
+            if (needsDevices && !node.wsDevices) {
                 node.attachSocket("devices", "/v1/subscribe/devices", node.broadcastDeviceUpdate);
+            } else if (!needsDevices) {
+                node.closeWebSocket("devices");
             }
 
-            if (!node.wsEvents) {
+            if (needsEvents && !node.wsEvents) {
                 node.attachSocket("events", "/v1/subscribe/events", node.broadcastEventUpdate);
+            } else if (!needsEvents) {
+                node.closeWebSocket("events");
             }
         };
 
@@ -816,21 +913,8 @@ module.exports = function(RED) {
                 node.reconnectTimer = null;
             }
 
-            if (node.wsDevices) {
-                try {
-                    node.wsDevices.close();
-                } catch (error) {
-                }
-                node.wsDevices = null;
-            }
-
-            if (node.wsEvents) {
-                try {
-                    node.wsEvents.close();
-                } catch (error) {
-                }
-                node.wsEvents = null;
-            }
+            node.closeWebSocket("devices");
+            node.closeWebSocket("events");
         };
 
         node.addClient = (client) => {
@@ -852,11 +936,14 @@ module.exports = function(RED) {
             node.nodeClients = node.nodeClients.filter((entry) => entry && client && entry.id !== client.id);
             if (node.nodeClients.length === 0) {
                 node.closeWebSockets();
+            } else {
+                node.ensureWebSockets();
             }
         };
 
         const knxAiBridgeClient = {
             id: `knx-ai-camera-adapter:${node.id}`,
+            protectStreams: ["events"],
             handleProtectDeviceUpdate(update) {
                 const item = update && update.item;
                 if (item && item.modelKey === "camera") {
@@ -889,7 +976,6 @@ module.exports = function(RED) {
             }
         };
 
-        const historyCapabilities = node.hasHistoryCredentials() ? ["event_history", "event_snapshot"] : [];
         const knxAiProvider = {
             id: `unifi-ultimate:${node.id}`,
             adapterId: "unifi-ultimate",
@@ -898,9 +984,30 @@ module.exports = function(RED) {
             controllerId: node.id,
             controllerName: node.name || node.host || node.id,
             eventRetention: "none",
-            capabilities: ["camera_catalog", "snapshot", "motion", "smart_events", "zones", "lines"].concat(historyCapabilities),
+            get connected() {
+                return node.knxAiCameraProviderHealth.connected;
+            },
+            get ready() {
+                return node.knxAiCameraProviderHealth.ready;
+            },
+            isReady() {
+                return node.knxAiCameraProviderHealth.ready === true;
+            },
+            get health() {
+                return Object.assign({}, node.knxAiCameraProviderHealth);
+            },
+            get lastError() {
+                return node.knxAiCameraProviderHealth.lastError;
+            },
+            get lastSeenAt() {
+                return node.knxAiCameraProviderHealth.lastSeenAt;
+            },
+            capabilities: ["camera_catalog", "snapshot", "motion", "smart_events", "zones", "lines", "event_history", "event_snapshot"],
+            historyCredentialsMode: "per_call",
             listCameras: async (options) => (await node.listKnxAiCameras(options)).map(cloneProviderMetadataWithoutRaw),
             takeSnapshot: (request) => node.takeKnxAiCameraSnapshot(request),
+            queryEvents: (request, options) => node.queryKnxAiCameraEvents(request, options),
+            takeEventSnapshot: (request, options) => node.takeKnxAiCameraEventSnapshot(request, options),
             subscribe(listener) {
                 if (typeof listener !== "function") return () => { };
                 const wasEmpty = node.knxAiCameraListeners.size === 0;
@@ -912,19 +1019,15 @@ module.exports = function(RED) {
                 };
             }
         };
-        if (node.hasHistoryCredentials()) {
-            knxAiProvider.queryEvents = (request) => node.queryKnxAiCameraEvents(request);
-            knxAiProvider.takeEventSnapshot = (request) => node.takeKnxAiCameraEventSnapshot(request);
-        }
         node.knxAiCameraProvider = knxAiProvider;
         knxAiCameraRegistry.registerProvider(knxAiProvider);
 
         node.on("close", function(done) {
             try {
                 node.isClosing = true;
+                node.updateKnxAiCameraProviderHealth({ ok: false, error: "The UniFi Protect config node is closing." });
                 knxAiCameraRegistry.unregisterProvider(knxAiProvider.id);
                 node.knxAiCameraListeners.clear();
-                node.protectHistorySessionHeaders = null;
                 node.protectHistoryPaginationGuard.clear();
                 node.protectCameraEventDeduper.clear();
                 node.removeClient(knxAiBridgeClient);
@@ -940,9 +1043,7 @@ module.exports = function(RED) {
 
     RED.nodes.registerType("unifi-protect-config", UnifiProtectConfigNode, {
         credentials: {
-            apiKey: { type: "password" },
-            historyUsername: { type: "text" },
-            historyPassword: { type: "password" }
+            apiKey: { type: "password" }
         }
     });
 

@@ -27,7 +27,10 @@ function normalizeSearchText(value) {
 // shape aligned with KNX Ultimate: an adapter describes package capabilities,
 // while each configured controller registers a provider implementing
 // listCameras(), takeSnapshot(), and subscribe(). Optional queryEvents() and
-// takeEventSnapshot() expose recorded evidence on demand. Providers declaring
+// takeEventSnapshot() expose recorded evidence on demand. A provider requiring
+// private history authentication accepts it separately from public query data:
+// queryEvents(request, { historyCredentials, historyQueryScope }) and
+// takeEventSnapshot(request, { historyCredentials }). Providers declaring
 // eventRetention: "none" keep their live feed transient in consumers. The
 // shared Symbol avoids any direct package dependency or flow wiring.
 function getKnxAiCameraRegistry() {
