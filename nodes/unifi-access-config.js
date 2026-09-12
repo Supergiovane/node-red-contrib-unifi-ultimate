@@ -79,6 +79,7 @@ module.exports = function(RED) {
         node.isClosing = false;
         node.activeDoorbells = new Map();
         node.activeDoorbellRequests = new Map();
+        node.doorbellStateUpdatedAt = new Map();
         node.doorbellLogPollTimer = null;
         node.doorbellLogPollInFlight = false;
         node.doorbellLogPollCursor = 0;
@@ -243,31 +244,39 @@ module.exports = function(RED) {
 
             const normalizedEntry = entry && typeof entry === "object" ? { ...entry } : {};
             normalizedEntry.requestId = normalizeString(normalizedEntry.requestId);
+            normalizedEntry.updatedAt = Number(normalizedEntry.updatedAt) || Date.now();
             node.activeDoorbells.set(normalizedId, normalizedEntry);
+            node.doorbellStateUpdatedAt.set(normalizedId, normalizedEntry.updatedAt);
 
             if (normalizedEntry.requestId) {
                 node.activeDoorbellRequests.set(normalizedEntry.requestId, normalizedId);
             }
         };
 
-        node.clearActiveDoorbell = (deviceId, expectedRequestIds) => {
+        node.clearActiveDoorbell = (deviceId, expectedRequestIds, updatedAt = Date.now()) => {
             const normalizedId = normalizeString(deviceId);
             if (!normalizedId) {
                 return false;
             }
 
             const current = node.activeDoorbells.get(normalizedId);
-            if (!current) {
-                return false;
-            }
-
-            const requestId = normalizeString(current.requestId);
+            const requestId = normalizeString(current && current.requestId);
             const expectedIds = Array.isArray(expectedRequestIds)
                 ? expectedRequestIds.map((value) => normalizeString(value)).filter(Boolean)
                 : [];
 
             // Ignore stale completion events that target an older request id.
             if (expectedIds.length > 0 && requestId && !expectedIds.includes(requestId)) {
+                return false;
+            }
+
+            // Remember completions even without an active entry: a delayed
+            // incoming log must not re-enable cancel for a call that has ended.
+            node.doorbellStateUpdatedAt.set(normalizedId, Math.max(
+                node.doorbellStateUpdatedAt.get(normalizedId) || 0,
+                updatedAt
+            ));
+            if (!current) {
                 return false;
             }
 
@@ -407,15 +416,31 @@ module.exports = function(RED) {
             const eventType = normalizeEventName(event.type);
             const logKey = normalizeEventName(event.log_key);
             const deviceId = node.extractDoorbellDeviceIdFromLogEntry(entry);
+            const isIncoming = eventType === DOORBELL_LOG_EVENT_REMOTE_CALL_REQUEST;
+            const isCompleted = eventType === DOORBELL_LOG_EVENT_DOOR_UNLOCK && logKey.includes("access.doorbell.");
+            const publishedMs = Number(event.published);
+
+            // Logs are historical evidence. Without a timestamp they cannot
+            // safely establish that a ring is still active.
+            if ((!isIncoming && !isCompleted) || !deviceId || !Number.isFinite(publishedMs) || publishedMs <= 0) {
+                return false;
+            }
+
+            const current = node.getActiveDoorbell(deviceId);
+            const lastUpdatedAt = node.doorbellStateUpdatedAt.get(deviceId) || 0;
+            if (publishedMs < lastUpdatedAt || (isIncoming && publishedMs === lastUpdatedAt)) {
+                return false;
+            }
 
             // Doorbell request log means a ring has just started.
-            if (eventType === DOORBELL_LOG_EVENT_REMOTE_CALL_REQUEST) {
-                if (!deviceId) {
+            if (isIncoming) {
+                // Polling is a fallback, not a replacement for a live call.
+                // Overwriting it loses the websocket request id and reduces
+                // its lifetime from three minutes to the 25-second log window.
+                if (current && current.source !== "logs") {
                     return false;
                 }
 
-                const published = Number(event.published);
-                const publishedMs = Number.isFinite(published) && published > 0 ? published : Date.now();
                 const expiresAt = Math.min(
                     publishedMs + DOORBELL_LOG_ACTIVE_WINDOW_MS,
                     Date.now() + DOORBELL_LOG_ACTIVE_WINDOW_MS
@@ -437,11 +462,8 @@ module.exports = function(RED) {
             // Access writes call-end outcomes as access.door.unlock with a
             // doorbell-specific log key (for example "missed"). Treat those as
             // completion signals and clear the tracked ring.
-            if (eventType === DOORBELL_LOG_EVENT_DOOR_UNLOCK && logKey.includes("access.doorbell.")) {
-                if (!deviceId) {
-                    return false;
-                }
-                node.clearActiveDoorbell(deviceId);
+            if (isCompleted) {
+                node.clearActiveDoorbell(deviceId, [], publishedMs);
                 return true;
             }
 
@@ -473,7 +495,13 @@ module.exports = function(RED) {
             }
 
             const logPayload = extractAccessData(response.payload);
-            const hits = Array.isArray(logPayload && logPayload.hits) ? logPayload.hits : [];
+            // Access returns newest-first batches. Apply starts before their
+            // corresponding completions, independent of API response order.
+            const hits = Array.isArray(logPayload && logPayload.hits)
+                ? logPayload.hits.slice().sort((left, right) =>
+                    (Number(left && left._source && left._source.event && left._source.event.published) || 0)
+                    - (Number(right && right._source && right._source.event && right._source.event.published) || 0))
+                : [];
             let matchedEvents = 0;
 
             for (const entry of hits) {
@@ -558,7 +586,12 @@ module.exports = function(RED) {
             Array.from(node.activeDoorbells.entries()).forEach(([deviceId, entry]) => {
                 const expiresAt = Number(entry && entry.expiresAt);
                 if (Number.isFinite(expiresAt) && expiresAt > 0 && expiresAt <= now) {
-                    node.clearActiveDoorbell(deviceId);
+                    node.clearActiveDoorbell(deviceId, [], expiresAt);
+                }
+            });
+            node.doorbellStateUpdatedAt.forEach((updatedAt, deviceId) => {
+                if (updatedAt + ACTIVE_DOORBELL_TTL_MS <= now) {
+                    node.doorbellStateUpdatedAt.delete(deviceId);
                 }
             });
         };
@@ -600,8 +633,7 @@ module.exports = function(RED) {
         node.markDoorbellCanceled = (deviceId) => {
             const normalizedId = normalizeString(deviceId);
             if (!normalizedId) {
-                node.activeDoorbells.clear();
-                node.activeDoorbellRequests.clear();
+                Array.from(node.activeDoorbells.keys()).forEach((id) => node.clearActiveDoorbell(id));
                 return;
             }
 
@@ -736,6 +768,7 @@ module.exports = function(RED) {
                 node.isClosing = true;
                 node.activeDoorbells.clear();
                 node.activeDoorbellRequests.clear();
+                node.doorbellStateUpdatedAt.clear();
                 node.closeWebSocket();
                 node.stopDoorbellLogPolling();
             } catch (error) {

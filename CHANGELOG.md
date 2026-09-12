@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.14 Sept 2026
+
+- **Access Cancel Doorbell:** fixed active calls being reported as `no ring` after 25 seconds when system-log polling overwrote WebSocket tracking. Live calls now retain their request ID and full tracking window. Logs are applied chronologically, and delayed entries cannot revive completed calls or clear newer ones.
+
 ## 1.1.13 Sept 2026
 
 - **Protect recorded events for Cerebrum/KNX AI:** Protect config nodes can optionally use a dedicated local UniFi OS account to query recorded camera events and retrieve the JPEG thumbnail for an exact event. The shared provider exposes normalized, paginated history operations without leaking credentials, cookies, private URLs, or raw controller responses to the assistant.
