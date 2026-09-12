@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.15 Sept 2026
+
+- **Faster LPR delivery:** OCR lookups start at vehicle detection and live OCR bypasses pending lookups; configured LPR sessions are prepared at deploy and reused across reads. The first available text is sent immediately, followed by bounded background refinements. Corrected text and increased OCR confidence emit a new message with the plate string in `msg.payload`; `confidence` and `isUpdate` remain supporting metadata.
+- **Concise editor:** added a few short tips with a light-blue background for local credentials, known plates, history and alert thresholds. Protect actions needing local credentials show only the API-key permission sentence below Action; detailed guidance remains in HTML help.
+- **Guided setup:** added **Verify Connection** to all three configurations, using current editor values and safe reuse of saved credentials. Results explain reachability, certificates, authentication and read permissions. Inline notes stay minimal; detailed requirements and examples are in the HTML help.
+- **Protect detections:** added **Receive Events with Photo** for exact recorded-event thumbnails, **Read Recent Detections** with type/time filters and bounded pagination, and optional **Known plates** names across LPR, event photos and history. Queues and duplicate caches are bounded; late responses are discarded after close.
+- **Access monitoring:** added **Door Open Too Long**, based on the physical DPS with shared 5-second polling, a configurable threshold and closure recovery. Missing sensors and controller errors never become open-door alerts.
+- **Network monitoring:** added debounced **Device Offline / Restored** and **Monitor Internet and WAN**. Internet health and native WAN transitions stay distinct; reads are scoped to the selected site, shared per connection and active independently of WebSocket state. Local API limitations are explained in help and errors.
+- **Examples:** added importable flows for LPR and guided monitoring, including named plates, event photos and recent detections, with separate result/error Debug outputs.
+- **Optional local account:** Protect, Network, and Access configuration nodes now offer **Local User** and **Local Password**, with product-specific help. Protect shares the account for LPR and recorded-event operations while accepting complete per-request overrides. Network Internet/WAN monitoring can use a shared local session when the API key is rejected by local endpoints. Access continues to use its API token.
+- **Protect LPR:** added **Camera → Receive Events → License Plate (LPR)** to emit recognized plate text, event details and available OCR confidence. Supports legacy and Protect 6 thumbnail metadata, multiple plates, delayed OCR and duplicate suppression within an event. The shared Protect connection's optional local account enables retrieval of text omitted by the official live event schema.
+- **Protect event selection:** preserve camel-case observable IDs so smart-detection and sensor events match the editor's saved selection correctly.
+
 ## 1.1.14 Sept 2026
 
 - **Access Cancel Doorbell:** fixed active calls being reported as `no ring` after 25 seconds when system-log polling overwrote WebSocket tracking. Live calls now retain their request ID and full tracking window. Logs are applied chronologically, and delayed entries cannot revive completed calls or clear newer ones.

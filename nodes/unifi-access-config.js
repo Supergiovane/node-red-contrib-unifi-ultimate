@@ -1,5 +1,10 @@
 "use strict";
 
+const { registerConnectionCheck } = require("./utils/unifi-connection-check");
+const { actionGuidance } = require("./utils/unifi-action-guidance");
+
+const { installSimpleMonitorScheduler } = require("./utils/unifi-simple-monitor");
+
 const {
     buildBaseUrlFromHost,
     normalizePort,
@@ -19,6 +24,7 @@ const {
 } = require("./utils/unifi-access-device-registry");
 
 module.exports = function(RED) {
+    registerConnectionCheck(RED, "access");
     // Doorbell requests are "best effort" from the public API perspective, so
     // keep a short-lived in-memory ledger to validate later cancel requests.
     const ACTIVE_DOORBELL_TTL_MS = 180000;
@@ -195,12 +201,13 @@ module.exports = function(RED) {
                 ? await node.fetchDeviceByTypeAndId(deviceType, deviceId)
                 : null;
 
-            return getCapabilityOptions(deviceType, capabilityId, {
+            const result = await getCapabilityOptions(deviceType, capabilityId, {
                 deviceId,
                 device: selectedDevice,
                 capabilityConfig,
                 fetchDevices: node.fetchDevices
             });
+            return { ...result, requirements: actionGuidance("access", capabilityId, capabilityConfig, selectedDevice, node.credentials) };
         };
 
         node.fetchCapabilities = async (deviceType, deviceId) => {
@@ -738,6 +745,11 @@ module.exports = function(RED) {
             }
         };
 
+        installSimpleMonitorScheduler(node, ({ kind, target }) => {
+            if (kind !== "observeDoorOpenTooLong") throw new Error("Unsupported Access monitor.");
+            return node.fetchDeviceByTypeAndId("door", target);
+        });
+
         node.addClient = (client) => {
             if (!client) {
                 return;
@@ -747,6 +759,7 @@ module.exports = function(RED) {
             // when the first client subscribes.
             node.nodeClients = node.nodeClients.filter((entry) => entry && entry.id !== client.id);
             node.nodeClients.push(client);
+            node.refreshSimpleMonitorScheduler();
             try {
                 node.ensureWebSocket();
                 node.ensureDoorbellLogPolling();
@@ -757,6 +770,7 @@ module.exports = function(RED) {
 
         node.removeClient = (client) => {
             node.nodeClients = node.nodeClients.filter((entry) => entry && client && entry.id !== client.id);
+            node.refreshSimpleMonitorScheduler();
             if (node.nodeClients.length === 0) {
                 node.closeWebSocket();
                 node.stopDoorbellLogPolling();
@@ -766,6 +780,7 @@ module.exports = function(RED) {
         node.on("close", function(done) {
             try {
                 node.isClosing = true;
+                node.stopSimpleMonitorScheduler();
                 node.activeDoorbells.clear();
                 node.activeDoorbellRequests.clear();
                 node.doorbellStateUpdatedAt.clear();
@@ -782,7 +797,9 @@ module.exports = function(RED) {
 
     RED.nodes.registerType("unifi-access-config", UnifiAccessConfigNode, {
         credentials: {
-            apiToken: { type: "password" }
+            apiToken: { type: "password" },
+            localUsername: { type: "text" },
+            localPassword: { type: "password" }
         }
     });
 

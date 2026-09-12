@@ -1,5 +1,7 @@
 "use strict";
 
+const { boundedNumber, createSimpleMonitorProcessor } = require("./utils/unifi-simple-monitor");
+
 const {
     buildCapabilityRequest,
     composeCapabilityExecution,
@@ -104,6 +106,28 @@ module.exports = function(RED) {
         node.timeout = DEFAULT_REQUEST_TIMEOUT_MS;
         node.currentDevice = null;
         node.isObserving = false;
+        const isSimpleMonitor = () => node.capability === "observeDoorOpenTooLong";
+        const monitorOptions = parseCapabilityConfig(node.capabilityConfig);
+        const monitorProcessor = createSimpleMonitorProcessor({
+            kind: node.capability, options: monitorOptions, status: setNodeStatus,
+            reportError: (error) => node.send([null, buildErrorOutputMessage(error, node.name)]),
+            emit: (payload, eventName, details) => {
+                const output = { payload };
+                decorateOutputMessage(output, node.currentDevice, eventName);
+                attachDetails(output, { ...details, unifiAccess: buildBaseMetadata(node.deviceType, node.deviceId, node.capability, { source: details.monitor.source }) });
+                node.send(output);
+            }
+        });
+        node.getSimpleMonitorDescriptor = () => node.isObserving && isSimpleMonitor() && node.deviceId ? {
+            kind: node.capability, target: node.deviceId,
+            intervalMs: 5000
+        } : null;
+        node.handleSimpleMonitorUpdate = (update) => {
+            if (!node.isObserving || !isSimpleMonitor()) return;
+            if (update.latest && node.capability !== "observeInternet") node.currentDevice = update.latest;
+            monitorProcessor.handle(update);
+        };
+
 
         function setNodeStatus(status) {
             if (!status || typeof status !== "object" || Array.isArray(status)) {
@@ -166,6 +190,10 @@ module.exports = function(RED) {
         async function fetchDeviceState(deviceType, deviceId, capabilityId, send, source) {
             const payload = await node.server.fetchDeviceByTypeAndId(deviceType, deviceId);
             node.currentDevice = payload;
+            if (isSimpleMonitor()) {
+                node.handleSimpleMonitorUpdate({ latest: payload, source });
+                return;
+            }
 
             const stateMsg = {
                 payload
@@ -372,6 +400,11 @@ module.exports = function(RED) {
             }
 
             node.isObserving = true;
+            if (isSimpleMonitor() && typeof node.server.refreshSimpleMonitorScheduler === "function") {
+                node.server.refreshSimpleMonitorScheduler();
+                node.server.pollSimpleMonitors().catch(() => {});
+                return;
+            }
 
             // Emit one initial snapshot so the flow starts with a known state
             // before websocket events arrive.
@@ -449,9 +482,26 @@ module.exports = function(RED) {
             try {
                 // Event matching is delegated to the registry because Access
                 // events differ across doors, hubs, intercoms and devices.
-                if (!node.isObserving || !matchesEvent(node.deviceType, node.deviceId, node.currentDevice, eventPayload)) {
+                if (!node.isObserving) {
                     return;
                 }
+                if (isSimpleMonitor()) {
+                    // Ignore relay/unlock notifications. Only the selected
+                    // door's physical DPS event can cancel the pending timer.
+                    if (eventPayload.event === "access.device.dps_status" && eventPayload.data
+                        && eventPayload.data.location && eventPayload.data.location.id === node.deviceId) {
+                        const state = eventPayload.data.object && eventPayload.data.object.status;
+                        if (state === "close" || state === "closed") {
+                            node.handleSimpleMonitorUpdate({ latest: { ...node.currentDevice, door_position_status: "close" }, source: "events" });
+                        } else {
+                            // Polling confirms opening; a new open after a missed
+                            // close must not reuse a stale pending interval.
+                            if (state !== "open") monitorProcessor.invalidate();
+                        }
+                    }
+                    return;
+                }
+                if (!matchesEvent(node.deviceType, node.deviceId, node.currentDevice, eventPayload)) return;
                 const capabilityConfig = parseCapabilityConfig(node.capabilityConfig);
                 const observable = resolveConfiguredObservable(capabilityConfig);
                 if (!matchesObservable(eventPayload, observable)) {

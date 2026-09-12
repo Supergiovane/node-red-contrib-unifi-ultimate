@@ -1,0 +1,398 @@
+[
+  {
+    "id": "guided-unifi-tab",
+    "type": "tab",
+    "label": "UniFi guided monitoring",
+    "disabled": false,
+    "info": "Select connections and devices before deploying. The examples use Debug outputs only."
+  },
+  {
+    "id": "guided-unifi-comment",
+    "type": "comment",
+    "z": "guided-unifi-tab",
+    "name": "1. Select connections and devices in each node. 2. Verify Connection. 3. Deploy.",
+    "info": "Local credentials belong in each shared connection. Protect photos/history need camera recording permissions. Door monitoring needs DPS. Network Internet monitoring requires a UniFi gateway and local API support. No credentials are included here.",
+    "x": 420,
+    "y": 40,
+    "wires": []
+  },
+  {
+    "id": "guided-unifi-0",
+    "type": "unifi-protect-device",
+    "z": "guided-unifi-tab",
+    "name": "Known license plates",
+    "server": "",
+    "deviceType": "camera",
+    "deviceId": "",
+    "deviceName": "",
+    "capability": "observe",
+    "capabilityConfig": "{\"observable\": \"licensePlate\", \"knownPlates\": \"AB123CD = Family car\"}",
+    "inputs": 0,
+    "autoEmit": false,
+    "autoEmitInterval": 60,
+    "x": 420,
+    "y": 120,
+    "wires": [
+      [
+        "guided-unifi-0-result"
+      ],
+      [
+        "guided-unifi-0-error"
+      ]
+    ]
+  },
+  {
+    "id": "guided-unifi-0-result",
+    "type": "debug",
+    "z": "guided-unifi-tab",
+    "name": "Known license plates: result",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 790,
+    "y": 100,
+    "wires": []
+  },
+  {
+    "id": "guided-unifi-0-error",
+    "type": "debug",
+    "z": "guided-unifi-tab",
+    "name": "Known license plates: error",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 790,
+    "y": 140,
+    "wires": []
+  },
+  {
+    "id": "guided-unifi-1",
+    "type": "unifi-protect-device",
+    "z": "guided-unifi-tab",
+    "name": "Person with event photo",
+    "server": "",
+    "deviceType": "camera",
+    "deviceId": "",
+    "deviceName": "",
+    "capability": "observeWithImage",
+    "capabilityConfig": "{\"detectionType\": \"person\"}",
+    "inputs": 0,
+    "autoEmit": false,
+    "autoEmitInterval": 60,
+    "x": 420,
+    "y": 220,
+    "wires": [
+      [
+        "guided-unifi-1-result"
+      ],
+      [
+        "guided-unifi-1-error"
+      ]
+    ]
+  },
+  {
+    "id": "guided-unifi-1-result",
+    "type": "debug",
+    "z": "guided-unifi-tab",
+    "name": "Person with event photo: result",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 790,
+    "y": 200,
+    "wires": []
+  },
+  {
+    "id": "guided-unifi-1-error",
+    "type": "debug",
+    "z": "guided-unifi-tab",
+    "name": "Person with event photo: error",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 790,
+    "y": 240,
+    "wires": []
+  },
+  {
+    "id": "guided-unifi-2",
+    "type": "unifi-protect-device",
+    "z": "guided-unifi-tab",
+    "name": "Plates in the last 24 hours",
+    "server": "",
+    "deviceType": "camera",
+    "deviceId": "",
+    "deviceName": "",
+    "capability": "getRecentDetections",
+    "capabilityConfig": "{\"detectionType\": \"licensePlate\", \"hours\": 24, \"limit\": 20, \"offset\": 0, \"knownPlates\": \"AB123CD = Family car\"}",
+    "inputs": 1,
+    "autoEmit": false,
+    "autoEmitInterval": 60,
+    "x": 420,
+    "y": 320,
+    "wires": [
+      [
+        "guided-unifi-2-result"
+      ],
+      [
+        "guided-unifi-2-error"
+      ]
+    ]
+  },
+  {
+    "id": "guided-unifi-2-result",
+    "type": "debug",
+    "z": "guided-unifi-tab",
+    "name": "Plates in the last 24 hours: result",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 790,
+    "y": 300,
+    "wires": []
+  },
+  {
+    "id": "guided-unifi-2-error",
+    "type": "debug",
+    "z": "guided-unifi-tab",
+    "name": "Plates in the last 24 hours: error",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 790,
+    "y": 340,
+    "wires": []
+  },
+  {
+    "id": "guided-history-trigger",
+    "type": "inject",
+    "z": "guided-unifi-tab",
+    "name": "Read history",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 150,
+    "y": 320,
+    "wires": [
+      [
+        "guided-unifi-2"
+      ]
+    ]
+  },
+  {
+    "id": "guided-unifi-3",
+    "type": "unifi-access-device",
+    "z": "guided-unifi-tab",
+    "name": "Door open for 2 minutes",
+    "server": "",
+    "deviceType": "door",
+    "deviceId": "",
+    "deviceName": "",
+    "capability": "observeDoorOpenTooLong",
+    "capabilityConfig": "{\"delaySeconds\": 120}",
+    "inputs": 0,
+    "autoEmit": false,
+    "autoEmitInterval": 60,
+    "x": 420,
+    "y": 420,
+    "wires": [
+      [
+        "guided-unifi-3-result"
+      ],
+      [
+        "guided-unifi-3-error"
+      ]
+    ]
+  },
+  {
+    "id": "guided-unifi-3-result",
+    "type": "debug",
+    "z": "guided-unifi-tab",
+    "name": "Door open for 2 minutes: result",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 790,
+    "y": 400,
+    "wires": []
+  },
+  {
+    "id": "guided-unifi-3-error",
+    "type": "debug",
+    "z": "guided-unifi-tab",
+    "name": "Door open for 2 minutes: error",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 790,
+    "y": 440,
+    "wires": []
+  },
+  {
+    "id": "guided-unifi-4",
+    "type": "unifi-network-device",
+    "z": "guided-unifi-tab",
+    "name": "Device outage and recovery",
+    "server": "",
+    "deviceType": "device",
+    "deviceId": "",
+    "deviceName": "",
+    "capability": "observeAvailability",
+    "capabilityConfig": "{\"delaySeconds\": 60, \"pollSeconds\": 10}",
+    "inputs": 0,
+    "autoEmit": false,
+    "autoEmitInterval": 60,
+    "x": 420,
+    "y": 520,
+    "wires": [
+      [
+        "guided-unifi-4-result"
+      ],
+      [
+        "guided-unifi-4-error"
+      ]
+    ]
+  },
+  {
+    "id": "guided-unifi-4-result",
+    "type": "debug",
+    "z": "guided-unifi-tab",
+    "name": "Device outage and recovery: result",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 790,
+    "y": 500,
+    "wires": []
+  },
+  {
+    "id": "guided-unifi-4-error",
+    "type": "debug",
+    "z": "guided-unifi-tab",
+    "name": "Device outage and recovery: error",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 790,
+    "y": 540,
+    "wires": []
+  },
+  {
+    "id": "guided-unifi-5",
+    "type": "unifi-network-device",
+    "z": "guided-unifi-tab",
+    "name": "Internet and WAN changes",
+    "server": "",
+    "deviceType": "site",
+    "deviceId": "",
+    "deviceName": "",
+    "capability": "observeInternet",
+    "capabilityConfig": "{\"delaySeconds\": 30, \"pollSeconds\": 15}",
+    "inputs": 0,
+    "autoEmit": false,
+    "autoEmitInterval": 60,
+    "x": 420,
+    "y": 620,
+    "wires": [
+      [
+        "guided-unifi-5-result"
+      ],
+      [
+        "guided-unifi-5-error"
+      ]
+    ]
+  },
+  {
+    "id": "guided-unifi-5-result",
+    "type": "debug",
+    "z": "guided-unifi-tab",
+    "name": "Internet and WAN changes: result",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 790,
+    "y": 600,
+    "wires": []
+  },
+  {
+    "id": "guided-unifi-5-error",
+    "type": "debug",
+    "z": "guided-unifi-tab",
+    "name": "Internet and WAN changes: error",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 790,
+    "y": 640,
+    "wires": []
+  }
+]

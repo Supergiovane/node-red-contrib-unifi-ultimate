@@ -71,6 +71,15 @@ const COMMON_CAPABILITIES = [
 const TYPE_CAPABILITIES = {
     site: [
         {
+            id: "observeInternet", label: "Monitor Internet and WAN", method: "GET",
+            description: "Report Internet loss/recovery and native WAN transitions.",
+            mode: "observe", opensEventStream: true,
+            editor: { fields: [
+                { id: "delaySeconds", label: "Outage delay (seconds)", type: "number", defaultValue: 30, min: 0, max: 3600, tip: "Ignore Internet outages shorter than this delay." },
+                { id: "pollSeconds", label: "Check every (seconds)", type: "number", defaultValue: 15, min: 5, max: 300, helpText: "Uses the local Network health and event APIs. Requires a UniFi gateway; WAN transitions depend on controller support." }
+            ] }
+        },
+        {
             id: "getApplicationInfo",
             label: "Read Application Info",
             description: "Fetch UniFi Network application metadata.",
@@ -203,6 +212,15 @@ const TYPE_CAPABILITIES = {
         }
     ],
     device: [
+        {
+            id: "observeAvailability", label: "Device Offline / Restored", method: "GET",
+            description: "Report confirmed device outages after a configurable delay.",
+            mode: "observe", opensEventStream: true,
+            editor: { fields: [
+                { id: "delaySeconds", label: "Offline for (seconds)", type: "number", defaultValue: 60, min: 0, max: 86400, tip: "Ignore disconnections shorter than this delay." },
+                { id: "pollSeconds", label: "Check every (seconds)", type: "number", defaultValue: 10, min: 5, max: 300, helpText: "Controller communication errors are reported separately and do not count as device outages." }
+            ] }
+        },
         {
             id: "readSwitchTemperatures",
             label: "Read Temperatures",

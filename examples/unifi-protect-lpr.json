@@ -1,0 +1,75 @@
+[
+  {
+    "id": "tab-protect-lpr",
+    "type": "tab",
+    "label": "UniFi Protect License Plates",
+    "disabled": false,
+    "info": "Enable LPR on a compatible Protect camera. Set the controller, API key and optional Local User/Local Password in the shared Protect connection. Use a local UniFi OS account with access to the camera's recordings. Select the camera. Listening starts at deploy; no Inject node is needed."
+  },
+  {
+    "id": "comment-protect-lpr",
+    "type": "comment",
+    "z": "tab-protect-lpr",
+    "name": "Configure connection, camera and local LPR account before deploying",
+    "info": "Output 1 emits each recognized plate as msg.payload (string). msg.details.lpr contains the event ID and available OCR confidence. Output 2 reports lookup/configuration errors. Enter the local account in the shared Protect connection. Credentials are not included in this example.",
+    "x": 380,
+    "y": 60,
+    "wires": []
+  },
+  {
+    "id": "node-protect-lpr",
+    "type": "unifi-protect-device",
+    "z": "tab-protect-lpr",
+    "name": "Driveway LPR",
+    "server": "config-protect-lpr",
+    "deviceType": "camera",
+    "deviceId": "replace-with-camera-id",
+    "deviceName": "Driveway",
+    "inputs": 0,
+    "capability": "observe",
+    "capabilityConfig": "{\"observable\":\"licensePlate\"}",
+    "autoEmit": false,
+    "autoEmitInterval": 60,
+    "x": 220,
+    "y": 160,
+    "wires": [["debug-protect-lpr"], ["debug-protect-lpr-error"]]
+  },
+  {
+    "id": "debug-protect-lpr",
+    "type": "debug",
+    "z": "tab-protect-lpr",
+    "name": "Recognized plate and details",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "x": 560,
+    "y": 140,
+    "wires": []
+  },
+  {
+    "id": "debug-protect-lpr-error",
+    "type": "debug",
+    "z": "tab-protect-lpr",
+    "name": "LPR errors",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "x": 510,
+    "y": 200,
+    "wires": []
+  },
+  {
+    "id": "config-protect-lpr",
+    "type": "unifi-protect-config",
+    "name": "My Protect",
+    "host": "192.168.1.10",
+    "port": "",
+    "rejectUnauthorized": false
+  }
+]

@@ -1,5 +1,7 @@
 "use strict";
 
+const { boundedNumber, createSimpleMonitorProcessor } = require("./utils/unifi-simple-monitor");
+
 const {
     buildCapabilityRequest,
     composeCapabilityExecution,
@@ -508,6 +510,28 @@ module.exports = function(RED) {
         node.timeout = DEFAULT_REQUEST_TIMEOUT_MS;
         node.currentDevice = null;
         node.isObserving = false;
+        const isSimpleMonitor = () => ["observeAvailability", "observeInternet"].includes(node.capability);
+        const monitorOptions = parseCapabilityConfig(node.capabilityConfig);
+        const monitorProcessor = createSimpleMonitorProcessor({
+            kind: node.capability, options: monitorOptions, status: setNodeStatus,
+            reportError: (error) => node.send([null, buildErrorOutputMessage(error, node.name)]),
+            emit: (payload, eventName, details) => {
+                const output = { payload };
+                decorateOutputMessage(output, node.currentDevice, eventName);
+                attachDetails(output, { ...details, unifiNetwork: buildBaseMetadata(node.deviceType, node.deviceId, node.capability, { source: details.monitor.source }) });
+                node.send(output);
+            }
+        });
+        node.getSimpleMonitorDescriptor = () => node.isObserving && isSimpleMonitor() && node.deviceId ? {
+            kind: node.capability, target: node.deviceId,
+            intervalMs: boundedNumber(monitorOptions.pollSeconds, node.capability === "observeInternet" ? 15 : 10, 5, 300) * 1000
+        } : null;
+        node.handleSimpleMonitorUpdate = (update) => {
+            if (!node.isObserving || !isSimpleMonitor()) return;
+            if (update.latest && node.capability !== "observeInternet") node.currentDevice = update.latest;
+            monitorProcessor.handle(update);
+        };
+
         node.unofficialLastFingerprint = "";
 
         function setNodeStatus(status) {
@@ -882,6 +906,12 @@ module.exports = function(RED) {
                 throw new Error(`Unsupported capability '${capabilityId}' for device type '${deviceType}'.`);
             }
 
+            if (isSimpleMonitor()) {
+                try { node.handleSimpleMonitorUpdate({ latest: await node.server.readSimpleMonitor(node.getSimpleMonitorDescriptor()), source: "manual-refresh" }); }
+                catch (error) { node.handleSimpleMonitorUpdate({ error }); }
+                return;
+            }
+
             if (capability.mode === "observe" || capability.mode === "fetch") {
                 // "observe" and "fetch" are read-only capabilities, so they can
                 // reuse the same fetch path and only change the reported source.
@@ -1005,6 +1035,13 @@ module.exports = function(RED) {
             }
 
             node.isObserving = true;
+            if (isSimpleMonitor()) {
+                if (typeof node.server.refreshSimpleMonitorScheduler === "function") {
+                    node.server.refreshSimpleMonitorScheduler();
+                    node.server.pollSimpleMonitors().catch(() => {});
+                }
+                return;
+            }
             // The config node may have registered this client before it became
             // an active stream subscriber; force websocket bootstrap now.
             if (node.server && typeof node.server.ensureUnofficialNetworkWebSocket === "function") {

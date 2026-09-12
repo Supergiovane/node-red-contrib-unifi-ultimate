@@ -2,6 +2,7 @@
     href="resources/node-red-contrib-unifi-ultimate/editor/unifi-ultimate-editor-common.css">
 
 
+<script type="text/javascript" src="resources/node-red-contrib-unifi-ultimate/editor/unifi-connection-check.js"></script>
 <script type="text/javascript">
     RED.nodes.registerType("unifi-network-config", {
         category: "config",
@@ -31,13 +32,16 @@
             }
         },
         credentials: {
-            apiKey: { type: "password", required: true }
+            apiKey: { type: "password", required: true },
+            localUsername: { type: "text" },
+            localPassword: { type: "password" }
         },
         label: function () {
             return this.name || this.host || "Unifi Network Config";
         },
         oneditprepare: function () {
             const node = this;
+            UnifiUltimateConnectionCheck.bind(node, "network");
             const $hostInput = $("#node-config-input-host");
             const $port = $("#node-config-input-port");
             const $apiKey = $("#node-config-input-apiKey");
@@ -48,6 +52,7 @@
             const $securityRow = $allowSelfSigned.closest(".form-row");
             const $powerObservationRow = $powerObservationIntervalSeconds.closest(".form-row");
             const $advancedRow = $("#node-config-row-advanced");
+            const $localAccountRow = $("#node-config-row-localAccount");
 
             // The stored field is rejectUnauthorized, but the checkbox is shown as
             // its inverse ("Allow self-signed certificate") because UniFi
@@ -62,6 +67,7 @@
                 $securityRow.toggle(hasHost);
                 $powerObservationRow.toggle(hasHost);
                 $advancedRow.toggle(hasHost);
+                $localAccountRow.toggle(hasHost);
             }
 
             try {
@@ -76,7 +82,9 @@
                 syncProgressiveRows();
             });
         },
+        oneditcancel: function () { UnifiUltimateConnectionCheck.cleanup(this); },
         oneditsave: function () {
+            UnifiUltimateConnectionCheck.cleanup(this);
             // Persist the inverse of the "Allow self-signed certificate" checkbox.
             this.rejectUnauthorized = !$("#node-config-input-allowSelfSigned").prop("checked");
         }
@@ -105,6 +113,17 @@
         <label for="node-config-input-apiKey"><i class="fa fa-key"></i> API Key</label>
         <input type="password" id="node-config-input-apiKey" placeholder="Paste your UniFi Network API key">
     </div>
+    <div id="node-config-row-localAccount">
+        <div class="form-row">
+            <label for="node-config-input-localUsername"><i class="fa fa-user"></i> Local User</label>
+            <input type="text" id="node-config-input-localUsername" autocomplete="off" placeholder="Local UniFi OS username (optional)">
+        </div>
+        <div class="form-row">
+            <label for="node-config-input-localPassword"><i class="fa fa-lock"></i> Local Password</label>
+            <input type="password" id="node-config-input-localPassword" autocomplete="new-password" placeholder="Local UniFi OS password (optional)">
+        </div>
+        <p class="unifi-ultimate-tip">Used when Internet/WAN monitoring requires a local login.</p>
+    </div>
     <div class="form-row">
         <label for="node-config-input-allowSelfSigned"><i class="fa fa-lock"></i> Security</label>
         <input type="checkbox" id="node-config-input-allowSelfSigned" style="display:inline-block; width:auto; vertical-align:top;">
@@ -113,6 +132,10 @@
     <div class="form-row">
         <label for="node-config-input-powerObservationIntervalSeconds"><i class="fa fa-repeat"></i> Power Poll (s)</label>
         <input type="text" id="node-config-input-powerObservationIntervalSeconds" placeholder="15">
+    </div>
+    <div class="form-row">
+        <button type="button" class="red-ui-button" id="node-config-test-connection"><i class="fa fa-check-circle"></i> Verify Connection</button>
+        <div id="node-config-test-results" role="status" aria-live="polite" style="margin-top:10px; white-space:normal;"></div>
     </div>
     <div id="node-config-row-advanced" class="unifi-ultimate-advanced">
         <div class="form-row">
@@ -135,6 +158,13 @@
     <p><b>Power Poll (s)</b> is the global polling interval used by all <code>Control POE</code> nodes when action is <code>Emit Power Consumption</code>. It is optional and defaults to 15 seconds.</p>
     <p><b>Name</b> is the config node name shown in the editor.</p>
 
+    <h3>Optional local account</h3>
+    <p><b>Local User</b> and <b>Local Password</b> accept an account created locally on the UniFi OS console configured above. Enter both fields when using a feature that requires a user login, or leave both empty. These credentials are stored by Node-RED in its credential store, separately from ordinary flow properties, and are not included in output messages.</p>
+    <p>The required <b>API Key</b> authenticates the normal actions. <b>Monitor Internet and WAN</b> also reads local Network endpoints: when they reject the key, it uses the optional local UniFi OS account with read access to the selected site. This session is shared by monitors on the connection and renewed when necessary. The account does not replace the API key or change how other actions authenticate.</p>
+
+    <h3>Verify Connection</h3>
+    <p>Use <b>Verify Connection</b> to check the values currently entered, before saving. The test runs from the Node-RED host and reports reachability, API authentication and available read permissions. For Protect and Network, a complete optional local account is also checked. It does not modify devices or save credentials. A successful check does not guarantee every camera, door or site permission.</p>
+    <p>If you change the controller address while using a saved password, re-enter the credentials to test it. An undeployed configuration with a masked password also needs the password entered again. Errors explain whether to check the address, certificate, credentials or permissions.</p>
     <h3>Usage</h3>
     <p>This config node is used by Network Device, Network Presence, and Control POE nodes.</p>
     <p>All UniFi Network requests are executed by this config node. Runtime nodes subscribe through <code>addClient/removeClient</code> and receive updates/events from here.</p>

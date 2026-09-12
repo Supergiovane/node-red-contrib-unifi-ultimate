@@ -2,6 +2,7 @@
     href="resources/node-red-contrib-unifi-ultimate/editor/unifi-ultimate-editor-common.css">
 
 
+<script type="text/javascript" src="resources/node-red-contrib-unifi-ultimate/editor/unifi-connection-check.js"></script>
 <script type="text/javascript">
     RED.nodes.registerType("unifi-protect-config", {
         category: "config",
@@ -21,13 +22,16 @@
             rejectUnauthorized: { value: false }
         },
         credentials: {
-            apiKey: { type: "password", required: true }
+            apiKey: { type: "password", required: true },
+            localUsername: { type: "text" },
+            localPassword: { type: "password" }
         },
         label: function () {
             return this.name || this.host || "Unifi Protect Config";
         },
         oneditprepare: function () {
             const node = this;
+            UnifiUltimateConnectionCheck.bind(node, "protect");
             const $hostInput = $("#node-config-input-host");
             const $port = $("#node-config-input-port");
             const $apiKey = $("#node-config-input-apiKey");
@@ -36,6 +40,7 @@
             const $apiKeyRow = $apiKey.closest(".form-row");
             const $securityRow = $allowSelfSigned.closest(".form-row");
             const $advancedRow = $("#node-config-row-advanced");
+            const $localAccountRow = $("#node-config-row-localAccount");
 
             // The stored field is rejectUnauthorized, but the checkbox is shown as
             // its inverse ("Allow self-signed certificate") because UniFi
@@ -49,6 +54,7 @@
                 $apiKeyRow.toggle(hasHost);
                 $securityRow.toggle(hasHost);
                 $advancedRow.toggle(hasHost);
+                $localAccountRow.toggle(hasHost);
             }
 
             try {
@@ -65,7 +71,9 @@
             });
 
         },
+        oneditcancel: function () { UnifiUltimateConnectionCheck.cleanup(this); },
         oneditsave: function () {
+            UnifiUltimateConnectionCheck.cleanup(this);
             // Persist the inverse of the "Allow self-signed certificate" checkbox.
             this.rejectUnauthorized = !$("#node-config-input-allowSelfSigned").prop("checked");
         }
@@ -94,10 +102,25 @@
         <label for="node-config-input-apiKey"><i class="fa fa-key"></i> API Key</label>
         <input type="password" id="node-config-input-apiKey" placeholder="Paste your UniFi Protect API key">
     </div>
+    <div id="node-config-row-localAccount">
+        <div class="form-row">
+            <label for="node-config-input-localUsername"><i class="fa fa-user"></i> Local User</label>
+            <input type="text" id="node-config-input-localUsername" autocomplete="off" placeholder="Local UniFi OS username (optional)">
+        </div>
+        <div class="form-row">
+            <label for="node-config-input-localPassword"><i class="fa fa-lock"></i> Local Password</label>
+            <input type="password" id="node-config-input-localPassword" autocomplete="new-password" placeholder="Local UniFi OS password (optional)">
+        </div>
+        <p class="unifi-ultimate-tip">Used for LPR, event photos and detection history.</p>
+    </div>
     <div class="form-row">
         <label for="node-config-input-allowSelfSigned"><i class="fa fa-lock"></i> Security</label>
         <input type="checkbox" id="node-config-input-allowSelfSigned" style="display:inline-block; width:auto; vertical-align:top;">
         <span style="margin-left:8px;">Allow self-signed certificate</span>
+    </div>
+    <div class="form-row">
+        <button type="button" class="red-ui-button" id="node-config-test-connection"><i class="fa fa-check-circle"></i> Verify Connection</button>
+        <div id="node-config-test-results" role="status" aria-live="polite" style="margin-top:10px; white-space:normal;"></div>
     </div>
     <div id="node-config-row-advanced" class="unifi-ultimate-advanced">
         <div class="form-row">
@@ -116,16 +139,23 @@
     <p><b>Controller</b> accepts the UniFi OS host or IP address. The node builds the Protect integration URL automatically.</p>
     <p><b>Port</b> is optional. Leave it empty to use the default <code>443</code>. Set it when your UniFi OS server listens on a custom port (for example <code>11443</code>). A port embedded directly in the Controller field (<code>host:port</code>) takes precedence over this field.</p>
     <p><b>API Key</b> is required for authentication and is sent automatically as <code>X-API-Key</code>.</p>
-    <p>Recorded-event searches require a dedicated local UniFi OS account. Those history credentials belong to the calling consumer (for example Cerebrum), are supplied only with the individual history request, and are never stored by this config node. The official Integration API key covers live events and current snapshots but does not expose the recorded-event archive.</p>
     <p><b>Security</b> &mdash; <b>Allow self-signed certificate</b> is enabled by default because UniFi controllers almost always present a self-signed certificate. Leave it checked for UniFi OS setups. Uncheck it only if your controller serves a certificate signed by a trusted certificate authority and you want strict verification.</p>
     <p><b>Name</b> is the config node name shown in the editor.</p>
 
+    <h3>Optional local account</h3>
+    <p><b>Local User</b> and <b>Local Password</b> accept an account created locally on the UniFi OS console configured above. Enter both fields when using a feature that requires a user login, or leave both empty. These credentials are stored by Node-RED in its credential store, separately from ordinary flow properties, and are not included in output messages.</p>
+    <p>Protect uses this account to read recognized license plate text (<b>LPR</b>), search recorded events and retrieve an event's image. These features use Protect's local, unofficial events API and require permission to view the relevant cameras' recordings. Enter the account once here to share it with all Protect nodes using this connection.</p>
+    <p>The <b>API Key</b> remains required for the official integration API, live events and current snapshots. An active LPR node prepares the configured local session at deploy and reuses it for fast OCR reads, renewing it when the controller rejects an expired session. The cached session is cleared when the connection closes. Other history operations keep their own sessions; a caller may supply a complete per-request account override, which is never saved or placed in the LPR session cache.</p>
+
+    <h3>Verify Connection</h3>
+    <p>Use <b>Verify Connection</b> to check the values currently entered, before saving. The test runs from the Node-RED host and reports reachability, API authentication and available read permissions. For Protect and Network, a complete optional local account is also checked. It does not modify devices or save credentials. A successful check does not guarantee every camera, door or site permission.</p>
+    <p>If you change the controller address while using a saved password, re-enter the credentials to test it. An undeployed configuration with a masked password also needs the password entered again. Errors explain whether to check the address, certificate, credentials or permissions.</p>
     <h3>Usage</h3>
     <p>This config node is used by UniFi Protect Device nodes for API requests and live device/event updates.</p>
     <p>All Protect API calls and websocket streams are managed by this config node. Runtime nodes subscribe through <code>addClient/removeClient</code> and receive broadcast updates.</p>
 
     <h3>Automatic KNX AI camera adapter</h3>
     <p>If <code>node-red-contrib-knx-ultimate</code> is installed, this config node automatically publishes its available cameras to the KNX AI chat runtime. No Protect Device node, camera selector, or wire to KNX AI is required.</p>
-    <p>KNX AI and Cerebrum can request snapshots directly and subscribe to motion, smart line, intrusion-zone, and loiter-zone events. A caller that supplies <code>{ historyCredentials }</code> as the separate second argument of an individual history operation can also search recorded events with explicit pagination and retrieve the JPEG thumbnail belonging to an exact event. The provider neither stores nor returns those credentials; its temporary login session exists only for that operation. Persistent notification rules remain owned by the AI chat context. API keys, credentials, cookies, and raw controller responses stay private.</p>
+    <p>KNX AI and Cerebrum can request snapshots directly and subscribe to motion, smart line, intrusion-zone, and loiter-zone events. With the optional local account configured here, they can also search recorded events with explicit pagination and retrieve the JPEG thumbnail belonging to an exact event. A caller can override that account by supplying <code>{ historyCredentials }</code> as the separate second argument of an individual history operation. The provider never returns credentials or sessions. Persistent notification rules remain owned by the AI chat context. API keys, credentials, cookies, and raw controller responses stay private.</p>
     <p>The provider uses the generic <code>node-red.knx-ai.camera-adapters.v1</code> runtime contract, allowing other camera suites to expose the same capabilities independently.</p>
 </script>

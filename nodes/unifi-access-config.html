@@ -1,6 +1,7 @@
 <link rel="stylesheet" type="text/css"
     href="resources/node-red-contrib-unifi-ultimate/editor/unifi-ultimate-editor-common.css">
 
+<script type="text/javascript" src="resources/node-red-contrib-unifi-ultimate/editor/unifi-connection-check.js"></script>
 <script type="text/javascript">
     RED.nodes.registerType("unifi-access-config", {
         category: "config",
@@ -20,13 +21,16 @@
             rejectUnauthorized: { value: false }
         },
         credentials: {
-            apiToken: { type: "password", required: true }
+            apiToken: { type: "password", required: true },
+            localUsername: { type: "text" },
+            localPassword: { type: "password" }
         },
         label: function () {
             return this.name || this.host || "Unifi Access Config";
         },
         oneditprepare: function () {
             const node = this;
+            UnifiUltimateConnectionCheck.bind(node, "access");
             const $hostInput = $("#node-config-input-host");
             const $port = $("#node-config-input-port");
             const $apiToken = $("#node-config-input-apiToken");
@@ -35,6 +39,7 @@
             const $apiTokenRow = $apiToken.closest(".form-row");
             const $securityRow = $allowSelfSigned.closest(".form-row");
             const $advancedRow = $("#node-config-row-advanced");
+            const $localAccountRow = $("#node-config-row-localAccount");
 
             // The stored field is rejectUnauthorized, but the checkbox is shown as
             // its inverse ("Allow self-signed certificate") because UniFi
@@ -48,6 +53,7 @@
                 $apiTokenRow.toggle(hasHost);
                 $securityRow.toggle(hasHost);
                 $advancedRow.toggle(hasHost);
+                $localAccountRow.toggle(hasHost);
             }
 
             try {
@@ -63,7 +69,9 @@
                 syncProgressiveRows();
             });
         },
+        oneditcancel: function () { UnifiUltimateConnectionCheck.cleanup(this); },
         oneditsave: function () {
+            UnifiUltimateConnectionCheck.cleanup(this);
             // Persist the inverse of the "Allow self-signed certificate" checkbox.
             this.rejectUnauthorized = !$("#node-config-input-allowSelfSigned").prop("checked");
         }
@@ -92,10 +100,25 @@
         <label for="node-config-input-apiToken"><i class="fa fa-key"></i> API Token</label>
         <input type="password" id="node-config-input-apiToken" placeholder="Paste your UniFi Access token">
     </div>
+    <div id="node-config-row-localAccount">
+        <div class="form-row">
+            <label for="node-config-input-localUsername"><i class="fa fa-user"></i> Local User</label>
+            <input type="text" id="node-config-input-localUsername" autocomplete="off" placeholder="Local UniFi OS username (optional)">
+        </div>
+        <div class="form-row">
+            <label for="node-config-input-localPassword"><i class="fa fa-lock"></i> Local Password</label>
+            <input type="password" id="node-config-input-localPassword" autocomplete="new-password" placeholder="Local UniFi OS password (optional)">
+        </div>
+        <p class="unifi-ultimate-tip">Optional. Current actions use the API token.</p>
+    </div>
     <div class="form-row">
         <label for="node-config-input-allowSelfSigned"><i class="fa fa-lock"></i> Security</label>
         <input type="checkbox" id="node-config-input-allowSelfSigned" style="display:inline-block; width:auto; vertical-align:top;">
         <span style="margin-left:8px;">Allow self-signed certificate</span>
+    </div>
+    <div class="form-row">
+        <button type="button" class="red-ui-button" id="node-config-test-connection"><i class="fa fa-check-circle"></i> Verify Connection</button>
+        <div id="node-config-test-results" role="status" aria-live="polite" style="margin-top:10px; white-space:normal;"></div>
     </div>
     <div id="node-config-row-advanced" class="unifi-ultimate-advanced">
         <div class="form-row">
@@ -117,6 +140,13 @@
     <p><b>Security</b> &mdash; <b>Allow self-signed certificate</b> is enabled by default because UniFi controllers almost always present a self-signed certificate. Leave it checked for UniFi Access setups. Uncheck it only if your controller serves a certificate signed by a trusted certificate authority and you want strict verification.</p>
     <p><b>Name</b> is the config node name shown in the editor.</p>
 
+    <h3>Optional local account</h3>
+    <p><b>Local User</b> and <b>Local Password</b> accept an account created locally on the UniFi OS console configured above. Enter both fields when using a feature that requires a user login, or leave both empty. These credentials are stored by Node-RED in its credential store, separately from ordinary flow properties, and are not included in output messages.</p>
+    <p>The current Access implementation authenticates API calls and notification streams with the <b>API Token</b>. The optional local account is stored for integrations that need a user session; it is not used by the current Access actions and does not enable additional features or replace the required token.</p>
+
+    <h3>Verify Connection</h3>
+    <p>Use <b>Verify Connection</b> to check the values currently entered, before saving. The test runs from the Node-RED host and reports reachability, API authentication and available read permissions. For Protect and Network, a complete optional local account is also checked. It does not modify devices or save credentials. A successful check does not guarantee every camera, door or site permission.</p>
+    <p>If you change the controller address while using a saved password, re-enter the credentials to test it. An undeployed configuration with a masked password also needs the password entered again. Errors explain whether to check the address, certificate, credentials or permissions.</p>
     <h3>Usage</h3>
     <p>This config node is used by UniFi Access Device nodes for API requests and live notification events.</p>
     <p>All Access API calls and notification channels are managed by this config node. Runtime nodes subscribe through <code>addClient/removeClient</code> and receive fan-out updates.</p>

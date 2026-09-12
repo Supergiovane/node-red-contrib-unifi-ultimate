@@ -170,6 +170,14 @@ const COMMON_CAPABILITIES = [
 const TYPE_CAPABILITIES = {
     door: [
         {
+            id: "observeDoorOpenTooLong", label: "Door Open Too Long", method: "GET",
+            description: "Alert when a physical door stays open, then report its closure.",
+            mode: "observe", opensEventStream: true,
+            editor: { fields: [
+                { id: "delaySeconds", label: "Open for (seconds)", type: "number", defaultValue: 120, min: 1, max: 86400, tip: "Alerts once after this delay; reports when closed.", helpText: "Requires a working door position sensor (DPS). Confirmed by a fresh door read, every 5 seconds." }
+            ] }
+        },
+        {
             id: "unlockDoor",
             label: "Unlock Door",
             description: "Trigger a remote door unlock.",

@@ -708,6 +708,10 @@
             function renderCapabilityOptions(data, options) {
                 const renderOptions = options || {};
                 const fields = data && Array.isArray(data.fields) ? data.fields : [];
+                const $requirements = $("#node-capability-requirements").empty();
+                const requirements = data && Array.isArray(data.requirements) ? data.requirements : [];
+                requirements.forEach(function (text) { $("<p></p>").text(text).appendTo($requirements); });
+                $requirements.toggle(requirements.length > 0);
                 syncCapabilityConfigFromInputs();
                 $capabilityConfigContainer.empty();
 
@@ -759,6 +763,8 @@
                         });
                     } else if (field.type === "checkbox") {
                         $input = $("<input>").attr({ id: fieldId, type: "checkbox" });
+                    } else if (field.type === "textarea") {
+                        $input = $("<textarea></textarea>").attr({ id: fieldId, rows: 4, placeholder: field.placeholder || "" }).css("width", "calc(100% - 160px)");
                     } else if (field.type === "hidden") {
                         $input = $("<input>").attr({ id: fieldId, type: "hidden" });
                     } else {
@@ -769,6 +775,11 @@
                         }).css("width", "calc(100% - 160px)");
                     }
 
+                    if (field.type === "number") {
+                        if (field.min !== undefined) $input.attr("min", field.min);
+                        if (field.max !== undefined) $input.attr("max", field.max);
+                        $input.attr("step", field.id === "hours" ? "any" : "1");
+                    }
                     const currentValue = Object.prototype.hasOwnProperty.call(capabilityConfig, field.id)
                         ? capabilityConfig[field.id]
                         : undefined;
@@ -809,15 +820,12 @@
                         $wrapper.append($input);
                     } else {
                         $wrapper.append($label).append($input);
-                    }
-
-                    if (field.helpText) {
-                        $wrapper.append(
-                            $("<div></div>")
-                                .addClass("form-tips unifi-ultimate-info-tip")
-                                .css({ marginLeft: "0", width: "100%", boxSizing: "border-box" })
-                                .text(field.helpText)
-                        );
+                        if (field.tip) {
+                            const tipId = fieldId + "-tip";
+                            $input.attr("aria-describedby", tipId);
+                            $("<p></p>").attr({ id: tipId, class: "unifi-ultimate-tip" })
+                                .css("margin-left", "152px").text(field.tip).appendTo($wrapper);
+                        }
                     }
 
                     $capabilityConfigContainer.append($wrapper);
@@ -1118,6 +1126,7 @@
         <label for="node-input-capability"><i class="fa fa-tasks"></i> Action</label>
         <select id="node-input-capability"></select>
     </div>
+    <div id="node-capability-requirements" role="status" style="display:none; margin-bottom:12px;"></div>
     <div class="form-row" id="node-row-capabilityConfig" style="display:none;">
         <label></label>
         <div id="node-input-capabilityConfigContainer" style="width:70%; display:inline-block;"></div>
@@ -1162,6 +1171,18 @@
     <p>Request timeout is handled automatically by the node.</p>
     <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different item from the list.</p>
 
+    <h3>Door Open Too Long</h3>
+    <p>Select <b>Door → Door Open Too Long</b> and set <b>Open for (seconds)</b> (default: 120). Monitoring starts after deploy, with no Inject required. The door must have a working physical door position sensor (DPS), configured in Access; an unlocked door is not necessarily open. The API token needs <code>view:space</code> permission. The optional local account is not used.</p>
+    <p>The connection checks the physical position every 5 seconds and shares reads between nodes watching the same door. One alert is emitted after the threshold, followed by one recovery when the door closes. A DPS closure event can report recovery immediately. The first observed opening starts the clock, including when a door is already open at startup. Alerts can arrive up to one polling interval after the threshold, plus request time.</p>
+    <pre><code>// Door remained open for the configured duration
+msg.eventName = "doorOpenTooLong"
+msg.payload = { state: "openTooLong", open: true, at: "2026-09-12T12:00:00.000Z" }
+// Closure after the alert
+msg.eventName = "doorClosed"
+msg.payload = { state: "closed", open: false, at: "2026-09-12T12:01:00.000Z" }</code></pre>
+    <p><code>msg.details.monitor</code> contains the configured delay, observed start time and duration. Missing sensor data or controller errors go to output 2 and reset a pending alert; they do not create an open-door alarm or a false closure. Repeated identical errors are suppressed until data returns. Monitoring starts afresh after redeploy/restart.</p>
+    <p>The physical position and DPS notification format follow the <a href="https://assets.identity.ui.com/unifi-access/api_reference.pdf" target="_blank" rel="noopener noreferrer">UniFi Access API reference</a>.</p>
+
     <h3>Input</h3>
     <ul>
         <li>When <code>Receive Events</code> is selected, the input pin is hidden.</li>
@@ -1186,7 +1207,7 @@
     </dl>
     <dl class="message-properties">
         <dt>Output 2 — error</dt>
-        <dd>Emitted when the action fails (API error, timeout, or configuration problem). The node status also turns red. Errors are additionally forwarded to any connected <code>catch</code> node.</dd>
+        <dd>Emitted when the action fails (API error, timeout, or configuration problem). The node status indicates the problem. Use this output to handle errors; request failures are also forwarded to connected <code>catch</code> nodes.</dd>
         <dt class="optional">msg.payload</dt>
         <dd><code>null</code></dd>
         <dt class="optional">msg.topic</dt>

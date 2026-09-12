@@ -1,5 +1,8 @@
 "use strict";
 
+const { registerConnectionCheck } = require("./utils/unifi-connection-check");
+const { actionGuidance } = require("./utils/unifi-action-guidance");
+
 const {
     buildBaseUrlFromHost,
     buildControllerBaseUrlFromHost,
@@ -31,6 +34,8 @@ const {
     normalizeProtectHistoryRequest,
     selectProtectHistoryEvents
 } = require("./utils/unifi-protect-history");
+const { readRecentDetections } = require("./utils/unifi-protect-detections");
+const { extractLicensePlates } = require("./utils/unifi-protect-lpr");
 
 function extractProtectErrorDetail(response) {
     let payload = response && response.payload;
@@ -173,6 +178,7 @@ function createProtectCameraEventDeduper({
 }
 
 module.exports = function(RED) {
+    registerConnectionCheck(RED, "protect");
     const knxAiCameraRegistry = getKnxAiCameraRegistry();
     knxAiCameraRegistry.registerAdapter({
         id: "unifi-ultimate",
@@ -205,16 +211,14 @@ module.exports = function(RED) {
         node.protectHistoryPaginationGuard = createProtectHistoryPaginationGuard();
         node.protectCameraEventDeduper = createProtectCameraEventDeduper();
 
-        // Historical credentials used to belong to this config node. Remove any
-        // legacy values from the runtime credential cache so a subsequent deploy
-        // also removes them from Node-RED's encrypted credential file. History
-        // callers now own those credentials and provide them for each operation.
+        // Remove obsolete history-only fields while preserving the optional
+        // local account and other current credentials.
         if (node.credentials && typeof node.credentials === "object") {
             const hadLegacyHistoryCredentials = Object.prototype.hasOwnProperty.call(node.credentials, "historyUsername")
                 || Object.prototype.hasOwnProperty.call(node.credentials, "historyPassword");
             if (hadLegacyHistoryCredentials) {
-                const apiKey = node.credentials.apiKey;
-                node.credentials = apiKey === undefined ? {} : { apiKey };
+                const { historyUsername, historyPassword, ...currentCredentials } = node.credentials;
+                node.credentials = currentCredentials;
                 if (RED.nodes && typeof RED.nodes.addCredentials === "function") {
                     // Do not log either the old credentials or failures from this
                     // best-effort migration. Node-RED persists the sanitized cache
@@ -225,6 +229,12 @@ module.exports = function(RED) {
         }
 
         node.getApiKey = () => node.credentials && node.credentials.apiKey;
+        node.getLocalAccountCredentials = () => {
+            const credentials = node.credentials || {};
+            const username = String(credentials.localUsername || "").trim();
+            const password = String(credentials.localPassword || "");
+            return username && password ? { username, password } : undefined;
+        };
 
         const providerIsConfigured = () => Boolean(node.baseUrl && node.getApiKey());
         node.knxAiCameraProviderHealth = {
@@ -257,13 +267,18 @@ module.exports = function(RED) {
         };
 
         node.authenticateProtectHistory = async (historyCredentials) => {
-            const source = historyCredentials && typeof historyCredentials === "object" && !Array.isArray(historyCredentials)
-                ? historyCredentials
+            // An explicit per-call account takes precedence as a complete pair.
+            // Never combine a caller's username with the configured password.
+            const selected = historyCredentials === undefined
+                ? node.getLocalAccountCredentials()
+                : historyCredentials;
+            const source = selected && typeof selected === "object" && !Array.isArray(selected)
+                ? selected
                 : {};
             const username = String(source.username || "").trim();
             const password = String(source.password || "");
             if (!username || !password) {
-                const error = new Error("UniFi Protect historical events require a local history username and password supplied by the caller.");
+                const error = new Error("Configure Local User and Local Password in the UniFi Protect config node to read LPR text and recorded events, or supply a complete local account with the history request.");
                 error.code = "UNIFI_PROTECT_HISTORY_CREDENTIALS_REQUIRED";
                 throw error;
             }
@@ -299,9 +314,9 @@ module.exports = function(RED) {
             { historyCredentials, retryAuthentication = true } = {},
             callSession = {}
         ) => {
-            // The session may be reused only by HTTP attempts belonging to one
-            // provider operation (for example delayed thumbnail retries). This
-            // object is local to that operation and never retained on the node.
+            // Each request/retry object belongs to one operation. History caller
+            // accounts remain operation-scoped; fast LPR may seed this object
+            // with a copy of the configured account's reusable session headers.
             if (!callSession.sessionHeaders) {
                 callSession.sessionHeaders = await node.authenticateProtectHistory(historyCredentials);
             }
@@ -441,7 +456,7 @@ module.exports = function(RED) {
                 ? await node.fetchDeviceByTypeAndId(deviceType, deviceId)
                 : null;
 
-            return getCapabilityOptions(deviceType, capabilityId, {
+            const result = await getCapabilityOptions(deviceType, capabilityId, {
                 deviceId,
                 device: selectedDevice,
                 capabilityConfig,
@@ -450,6 +465,7 @@ module.exports = function(RED) {
                 fetchAssetFiles: node.fetchAssetFiles,
                 fetchArmProfiles: node.fetchArmProfiles
             });
+            return { ...result, requirements: actionGuidance("protect", capabilityId, capabilityConfig, selectedDevice, node.credentials) };
         };
 
         node.fetchCapabilities = async (deviceType, deviceId) => {
@@ -607,6 +623,80 @@ module.exports = function(RED) {
             };
         };
 
+        let lprSessionCache = null;
+        let lprSessionLogin = null;
+        async function getLprSession() {
+            if (node.isClosing) throw new Error("Protect connection is closing.");
+            if (lprSessionCache) return lprSessionCache;
+            if (!lprSessionLogin) {
+                lprSessionLogin = node.authenticateProtectHistory().then((sessionHeaders) => {
+                    const session = { sessionHeaders };
+                    if (!node.isClosing) lprSessionCache = session;
+                    return session;
+                }).finally(() => { lprSessionLogin = null; });
+            }
+            return lprSessionLogin;
+        }
+        // Warm only the configured LPR account. Caller-supplied history accounts
+        // retain operation-scoped sessions and are never cached here.
+        node.prepareLicensePlateSession = async () => { await getLprSession(); };
+
+        node.fetchLicensePlateEvent = async (eventId, deviceId, { historyCredentials, quick = false } = {}) => {
+            const id = String(eventId || "").trim();
+            if (!/^[a-zA-Z0-9_-]{1,200}$/.test(id) || !deviceId) {
+                throw new Error("A valid camera and event id are required to read a license plate.");
+            }
+            // Live LPR reads reuse a warm session and return the first response.
+            // The leaf schedules refinements without delaying an available plate.
+            const sharedSession = quick && historyCredentials === undefined ? await getLprSession() : null;
+            const callSession = sharedSession ? { sessionHeaders: { ...sharedSession.sessionHeaders } } : {};
+            const attempts = quick ? 1 : 4;
+            for (let attempt = 0; attempt < attempts; attempt += 1) {
+                if (node.isClosing) return null;
+                let response;
+                try {
+                    response = await node.executeProtectHistoryRequest({
+                        path: `events/${encodeURIComponent(id)}`,
+                        method: "GET",
+                        timeout: 15000
+                    }, { historyCredentials }, callSession);
+                } catch (error) {
+                    if (sharedSession && callSession.authenticationRetries === 1 && lprSessionCache === sharedSession) lprSessionCache = null;
+                    throw error;
+                }
+                if (sharedSession && lprSessionCache === sharedSession && !node.isClosing) {
+                    if (response.statusCode === 401) lprSessionCache = null;
+                    else sharedSession.sessionHeaders = callSession.sessionHeaders;
+                }
+                if (response.statusCode === 404 && quick) return null;
+                if (response.statusCode === 404 && attempt < attempts - 1) {
+                    await new Promise((resolve) => setTimeout(resolve, 500));
+                    continue;
+                }
+                if (response.statusCode < 200 || response.statusCode >= 300) {
+                    throw new Error(`Unable to read UniFi Protect license plate (HTTP ${response.statusCode || "unknown"}).`);
+                }
+                const event = response.payload;
+                const cameraId = event && (event.camera || event.device || event.cameraId);
+                if (!event || event.id !== id || cameraId !== deviceId) {
+                    throw new Error("UniFi Protect returned a license plate event for a different camera or event id.");
+                }
+                if (quick || extractLicensePlates(event).length || attempt === attempts - 1) return event;
+                // OCR can become available shortly after the live detection.
+                await new Promise((resolve) => setTimeout(resolve, 500));
+            }
+            return null;
+        };
+
+        node.readRecentDetections = async (cameraId, options) => {
+            if (!/^[a-zA-Z0-9_-]{1,200}$/.test(String(cameraId || ""))) throw new Error("Select a valid camera.");
+            const callSession = {};
+            return readRecentDetections((request) => {
+                if (node.isClosing) throw new Error("Protect connection is closing.");
+                return node.executeProtectHistoryRequest(request, {}, callSession);
+            }, cameraId, options);
+        };
+
         node.queryKnxAiCameraEvents = async (request = {}, { historyCredentials, historyQueryScope } = {}) => {
             const normalized = normalizeProtectHistoryRequest(request);
             const requestSource = request && typeof request === "object" && !Array.isArray(request) ? request : {};
@@ -717,6 +807,7 @@ module.exports = function(RED) {
             // 404 thumbnail retries avoid creating additional UniFi OS sessions.
             const callSession = {};
             for (let attempt = 0; attempt < 4; attempt += 1) {
+                if (node.isClosing) throw new Error("Protect connection is closing.");
                 response = await node.executeProtectHistoryRequest({
                     path: `events/${encodeURIComponent(id)}/thumbnail`,
                     method: "GET",
@@ -1003,7 +1094,9 @@ module.exports = function(RED) {
                 return node.knxAiCameraProviderHealth.lastSeenAt;
             },
             capabilities: ["camera_catalog", "snapshot", "motion", "smart_events", "zones", "lines", "event_history", "event_snapshot"],
-            historyCredentialsMode: "per_call",
+            get historyCredentialsMode() {
+                return node.getLocalAccountCredentials() ? "configured" : "per_call";
+            },
             listCameras: async (options) => (await node.listKnxAiCameras(options)).map(cloneProviderMetadataWithoutRaw),
             takeSnapshot: (request) => node.takeKnxAiCameraSnapshot(request),
             queryEvents: (request, options) => node.queryKnxAiCameraEvents(request, options),
@@ -1025,6 +1118,7 @@ module.exports = function(RED) {
         node.on("close", function(done) {
             try {
                 node.isClosing = true;
+                lprSessionCache = null;
                 node.updateKnxAiCameraProviderHealth({ ok: false, error: "The UniFi Protect config node is closing." });
                 knxAiCameraRegistry.unregisterProvider(knxAiProvider.id);
                 node.knxAiCameraListeners.clear();
@@ -1043,7 +1137,9 @@ module.exports = function(RED) {
 
     RED.nodes.registerType("unifi-protect-config", UnifiProtectConfigNode, {
         credentials: {
-            apiKey: { type: "password" }
+            apiKey: { type: "password" },
+            localUsername: { type: "text" },
+            localPassword: { type: "password" }
         }
     });
 

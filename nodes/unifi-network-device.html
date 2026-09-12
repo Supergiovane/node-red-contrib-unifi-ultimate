@@ -792,6 +792,10 @@
             function renderCapabilityOptions(data, options) {
                 const renderOptions = options || {};
                 const fields = data && Array.isArray(data.fields) ? data.fields : [];
+                const $requirements = $("#node-capability-requirements").empty();
+                const requirements = data && Array.isArray(data.requirements) ? data.requirements : [];
+                requirements.forEach(function (text) { $("<p></p>").text(text).appendTo($requirements); });
+                $requirements.toggle(requirements.length > 0);
                 syncCapabilityConfigFromInputs();
                 $capabilityConfigContainer.empty();
 
@@ -844,6 +848,8 @@
                         });
                     } else if (field.type === "checkbox") {
                         $input = $("<input>").attr({ id: fieldId, type: "checkbox" });
+                    } else if (field.type === "textarea") {
+                        $input = $("<textarea></textarea>").attr({ id: fieldId, rows: 4, placeholder: field.placeholder || "" }).css("width", "calc(100% - 160px)");
                     } else if (field.type === "hidden") {
                         $input = $("<input>").attr({ id: fieldId, type: "hidden" });
                     } else {
@@ -854,6 +860,11 @@
                         }).css("width", "calc(100% - 160px)");
                     }
 
+                    if (field.type === "number") {
+                        if (field.min !== undefined) $input.attr("min", field.min);
+                        if (field.max !== undefined) $input.attr("max", field.max);
+                        $input.attr("step", field.id === "hours" ? "any" : "1");
+                    }
                     const currentValue = Object.prototype.hasOwnProperty.call(capabilityConfig, field.id)
                         ? capabilityConfig[field.id]
                         : undefined;
@@ -890,15 +901,12 @@
                         $wrapper.append($input);
                     } else {
                         $wrapper.append($label).append($input);
-                    }
-
-                    if (field.helpText) {
-                        $wrapper.append(
-                            $("<div></div>")
-                                .addClass("form-tips unifi-ultimate-info-tip")
-                                .css({ marginLeft: "0", width: "100%", boxSizing: "border-box" })
-                                .text(field.helpText)
-                        );
+                        if (field.tip) {
+                            const tipId = fieldId + "-tip";
+                            $input.attr("aria-describedby", tipId);
+                            $("<p></p>").attr({ id: tipId, class: "unifi-ultimate-tip" })
+                                .css("margin-left", "152px").text(field.tip).appendTo($wrapper);
+                        }
                     }
 
                     $capabilityConfigContainer.append($wrapper);
@@ -1259,6 +1267,7 @@
         <label for="node-input-capability"><i class="fa fa-tasks"></i> Action</label>
         <select id="node-input-capability"></select>
     </div>
+    <div id="node-capability-requirements" role="status" style="display:none; margin-bottom:12px;"></div>
     <div class="form-row" id="node-row-capabilityConfig" style="display:none;">
         <label></label>
         <div id="node-input-capabilityConfigContainer" style="width:70%; display:inline-block;"></div>
@@ -1307,6 +1316,26 @@
     <p>Request timeout is handled automatically by the node.</p>
     <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different item from the list.</p>
 
+    <h3>Device Offline / Restored</h3>
+    <p>Select <b>UniFi Device → Device Offline / Restored</b> to watch a switch, AP or another adopted device. Set <b>Offline for (seconds)</b> (default: 60) and <b>Check every (seconds)</b> (default: 10). Monitoring starts after deploy without an Inject node. Only an explicit offline state from the controller counts; a request failure, a missing device or an adoption/update state does not count as an outage.</p>
+    <pre><code>msg.eventName = "deviceOffline"
+msg.payload = { state: "offline", online: false, at: "2026-09-12T12:00:00.000Z" }
+// After the device returns
+msg.eventName = "deviceRestored"
+msg.payload.online = true</code></pre>
+    <h3>Monitor Internet and WAN</h3>
+    <p>Select <b>Site → Monitor Internet and WAN</b>. A UniFi gateway must expose Internet health through the local Network API. The default outage delay is 30 seconds, with a check every 15 seconds. The API key is tried first; when rejected on these local endpoints, the connection uses its optional local UniFi OS account with site read permissions. Other actions continue to use the API key.</p>
+    <pre><code>msg.eventName = "internetOffline"  // or "internetRestored"
+msg.payload = { state: "offline", online: false, at: "2026-09-12T12:00:00.000Z" }
+// Native WAN transition, when provided by the controller
+msg.eventName = "wanFailover"      // or "wanActive", "wanInactive"
+msg.payload = { state: "failover", interface: "eth9", at: "2026-09-12T12:00:00.000Z" }</code></pre>
+    <p>Internet status uses the controller's WWW health, while WAN transitions come from native <code>EVT_GW_WANTransition</code> events for the selected site. A single inactive WAN does not imply a total Internet outage. <code>wanActive</code> identifies the interface reported active; it does not assume that interface is the primary connection. Event availability depends on controller version and permissions. If unavailable, output 2 explains that WAN transitions cannot be read while health monitoring continues.</p>
+    <p>The monitor reads the latest 100 source events per poll and ignores events before startup. Very busy sites or long interruptions can leave gaps in WAN history. These local Network endpoints are unofficial and can change between versions.</p>
+    <h3>Monitor behavior</h3>
+    <p>Alerts and recovery are emitted once per state transition. Initial online state is silent; an initially offline device starts the configured delay. Checks are shared on the connection even when a WebSocket is connected. Nodes watching the same target use the shortest configured check interval. Alerts can arrive up to one polling interval after the threshold, plus request time. Unknown state and connection errors go to output 2 and restart the pending delay, without fabricating an outage or recovery. Repeated identical errors are suppressed until data returns. Timers and state reset on redeploy/restart.</p>
+    <p><code>msg.details.monitor</code> contains observation timing and the source; <code>msg.details.raw</code> retains the source data.</p>
+
     <h3>Input</h3>
     <ul>
         <li>When <code>Receive Events (Unofficial Stream)</code> is selected, the input pin is hidden and listening starts automatically after deploy/restart.</li>
@@ -1331,7 +1360,7 @@
     </dl>
     <dl class="message-properties">
         <dt>Output 2 — error</dt>
-        <dd>Emitted when the action fails (API error, timeout, or configuration problem). The node status also turns red. Errors are additionally forwarded to any connected <code>catch</code> node.</dd>
+        <dd>Emitted when the action fails (API error, timeout, or configuration problem). The node status indicates the problem. Use this output to handle errors; request failures are also forwarded to connected <code>catch</code> nodes.</dd>
         <dt class="optional">msg.payload</dt>
         <dd><code>null</code></dd>
         <dt class="optional">msg.topic</dt>

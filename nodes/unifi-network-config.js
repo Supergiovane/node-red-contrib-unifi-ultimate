@@ -1,5 +1,11 @@
 "use strict";
 
+const { registerConnectionCheck } = require("./utils/unifi-connection-check");
+const { actionGuidance } = require("./utils/unifi-action-guidance");
+
+const { installNetworkMonitorReads } = require("./utils/unifi-network-monitor");
+const { installSimpleMonitorScheduler } = require("./utils/unifi-simple-monitor");
+
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -32,6 +38,7 @@ const {
 } = require("./utils/unifi-network-presence-utils");
 
 module.exports = function(RED) {
+    registerConnectionCheck(RED, "network");
     const MIN_POWER_OBSERVER_INTERVAL_SECONDS = 5;
     const DEFAULT_POWER_OBSERVER_INTERVAL_SECONDS = 15;
     const POWER_OBSERVER_SCHEDULER_TICK_MS = 1000;
@@ -812,7 +819,7 @@ module.exports = function(RED) {
                 ? await node.fetchDeviceByTypeAndId(deviceType, deviceId)
                 : null;
 
-            return getCapabilityOptions(deviceType, capabilityId, {
+            const result = await getCapabilityOptions(deviceType, capabilityId, {
                 deviceId,
                 device: selectedDevice,
                 capabilityConfig,
@@ -820,6 +827,7 @@ module.exports = function(RED) {
                 fetchDevice: node.fetchDeviceByTypeAndId,
                 fetchDevicePorts: node.fetchDevicePorts
             });
+            return { ...result, requirements: actionGuidance("network", capabilityId, capabilityConfig, selectedDevice, node.credentials) };
         };
 
         node.fetchCapabilities = async (deviceType, deviceId) => {
@@ -3356,6 +3364,9 @@ module.exports = function(RED) {
                 .filter((client) => client.mac);
         };
 
+        installNetworkMonitorReads(node);
+        installSimpleMonitorScheduler(node, (descriptor) => node.readSimpleMonitor(descriptor));
+
         node.addClient = (client) => {
             if (!client) {
                 return;
@@ -3364,6 +3375,7 @@ module.exports = function(RED) {
             // Store each consumer only once so config-node fan-out stays clean.
             node.nodeClients = node.nodeClients.filter((entry) => entry && entry.id !== client.id);
             node.nodeClients.push(client);
+            node.refreshSimpleMonitorScheduler();
             try {
                 node.ensureUnofficialNetworkWebSocket();
             } catch (error) {
@@ -3376,6 +3388,7 @@ module.exports = function(RED) {
 
         node.removeClient = (client) => {
             node.nodeClients = node.nodeClients.filter((entry) => entry && client && entry.id !== client.id);
+            node.refreshSimpleMonitorScheduler();
             const clientId = normalizeString(client && client.id);
             if (clientId) {
                 node.powerObserverNodeState.delete(clientId);
@@ -3404,6 +3417,8 @@ module.exports = function(RED) {
         node.on("close", function(done) {
             try {
                 node.isClosing = true;
+                node.stopSimpleMonitorScheduler();
+                node.clearMonitorLocalSession();
                 if (node.portOverrideCacheSaveTimer) {
                     clearTimeout(node.portOverrideCacheSaveTimer);
                     node.portOverrideCacheSaveTimer = null;
@@ -3427,7 +3442,9 @@ module.exports = function(RED) {
 
     RED.nodes.registerType("unifi-network-config", UnifiNetworkConfigNode, {
         credentials: {
-            apiKey: { type: "password" }
+            apiKey: { type: "password" },
+            localUsername: { type: "text" },
+            localPassword: { type: "password" }
         }
     });
 

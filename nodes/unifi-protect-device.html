@@ -712,6 +712,10 @@
             function renderCapabilityOptions(data, options) {
                 const renderOptions = options || {};
                 const fields = data && Array.isArray(data.fields) ? data.fields : [];
+                const $requirements = $("#node-capability-requirements").empty();
+                const requirements = data && Array.isArray(data.requirements) ? data.requirements : [];
+                requirements.forEach(function (text) { $("<p></p>").text(text).appendTo($requirements); });
+                $requirements.toggle(requirements.length > 0);
                 syncCapabilityConfigFromInputs();
                 $capabilityConfigContainer.empty();
 
@@ -761,6 +765,8 @@
                         });
                     } else if (field.type === "checkbox") {
                         $input = $("<input>").attr({ id: fieldId, type: "checkbox" });
+                    } else if (field.type === "textarea") {
+                        $input = $("<textarea></textarea>").attr({ id: fieldId, rows: 4, placeholder: field.placeholder || "" }).css("width", "calc(100% - 160px)");
                     } else if (field.type === "hidden") {
                         $input = $("<input>").attr({ id: fieldId, type: "hidden" });
                     } else {
@@ -771,6 +777,11 @@
                         }).css("width", "calc(100% - 160px)");
                     }
 
+                    if (field.type === "number") {
+                        if (field.min !== undefined) $input.attr("min", field.min);
+                        if (field.max !== undefined) $input.attr("max", field.max);
+                        $input.attr("step", field.id === "hours" ? "any" : "1");
+                    }
                     const currentValue = Object.prototype.hasOwnProperty.call(capabilityConfig, field.id)
                         ? capabilityConfig[field.id]
                         : undefined;
@@ -820,15 +831,12 @@
                         $wrapper.append($input);
                     } else {
                         $wrapper.append($label).append($input);
-                    }
-
-                    if (field.helpText) {
-                        $wrapper.append(
-                            $("<div></div>")
-                                .addClass("form-tips unifi-ultimate-info-tip")
-                                .css({ marginLeft: "0", width: "100%", boxSizing: "border-box" })
-                                .text(field.helpText)
-                        );
+                        if (field.tip) {
+                            const tipId = fieldId + "-tip";
+                            $input.attr("aria-describedby", tipId);
+                            $("<p></p>").attr({ id: tipId, class: "unifi-ultimate-tip" })
+                                .css("margin-left", "152px").text(field.tip).appendTo($wrapper);
+                        }
                     }
 
                     $capabilityConfigContainer.append($wrapper);
@@ -1129,6 +1137,7 @@
         <label for="node-input-capability"><i class="fa fa-tasks"></i> Action</label>
         <select id="node-input-capability"></select>
     </div>
+    <div id="node-capability-requirements" role="status" style="display:none; margin-bottom:12px;"></div>
     <div class="form-row" id="node-row-capabilityConfig" style="display:none;">
         <label></label>
         <div id="node-input-capabilityConfigContainer" style="width:70%; display:inline-block;"></div>
@@ -1168,10 +1177,44 @@
     <p><code>Play Siren</code> uses a duration in seconds. <code>Control Relay Output</code> requires an explicit output and on/off state; auto-off applies only when turning an output on. Sound-test actions use a configured volume and never read control values from the incoming message.</p>
     <p>Protect alarm arming is application-wide, so its actions are available under <code>NVR</code>, not on an individual Alarm Hub. Use <code>Read Arm Profiles</code>, <code>Select Arm Profile</code>, <code>Arm Alarm</code>, and <code>Disarm Alarm</code>. These endpoints require Protect's local Alarm Manager.</p>
     <p><code>Receive Events</code> performs an initial fetch and then subscribes to streams managed by the shared Protect config node. The config node keeps websocket channels and forwards matching updates to runtime nodes. In this mode, the input pin is hidden and listening starts automatically after deploy/restart.</p>
-    <p>For <code>Sensor</code>, <code>Camera</code>, and <code>Light</code> observables, <code>All</code> emits every event for the selected device. Choosing a specific observable normalizes the main output to a derived value and keeps the original context in <code>msg.details.raw</code>. Event observables emit <code>true/false</code>; sensor metrics such as <code>Temperature</code>, <code>Humidity</code>, <code>Light Level</code>, and <code>Battery Level</code> emit numeric values.</p>
+    <p>For <code>Sensor</code>, <code>Camera</code>, and <code>Light</code> observables, <code>All</code> emits every event for the selected device. Choosing a specific observable normalizes the main output to a derived value and keeps the original context in <code>msg.details.raw</code>. Event observables emit <code>true/false</code>; sensor metrics such as <code>Temperature</code>, <code>Humidity</code>, <code>Light Level</code>, and <code>Battery Level</code> emit numeric values. <code>License Plate (LPR)</code> emits recognized plate text.</p>
+    <p>To read plates, select <code>Camera</code> &rarr; <code>Receive Events</code> &rarr; <code>License Plate (LPR)</code>. Use an LPR-capable camera and enable license plate recognition in Protect. Open the shared <b>Connection</b> and enter its optional <b>Local User</b> and <b>Local Password</b> for a local UniFi OS account that can view the camera's recordings. All Protect nodes using that connection share this account. The official event stream identifies license plate detections but does not include OCR text in its documented schema, so the node retrieves the matching event's metadata through Protect's local, unofficial events API. Compatibility of this lookup depends on the Protect version.</p>
+    <p>LPR emits the first available reading immediately, including low-confidence text, as a string such as <code>"AB123CD"</code> in <code>msg.payload</code>, with <code>msg.eventName = "licensePlate"</code>. Text already present in a live event bypasses any outstanding HTTP lookup. Otherwise the node starts looking for OCR as soon as a vehicle is detected, using a prepared local session without waiting for the live LPR classification or for the event to end. Only actual plate metadata is emitted.</p>
+    <p>After a detection/update, up to five follow-up reads look for missing or improved OCR, with delays of 150, 350, 750, 1500 and 3000 milliseconds between requests. Corrected text, additional plates and higher confidence for the same text produce another message. Identical readings and lower confidence for previously emitted text are suppressed. The first text still depends on when Protect makes OCR available; a later reading is not a guarantee of accuracy.</p>
+    <p>Every reading puts the plate string in <code>msg.payload</code>, including corrections and higher-confidence readings of the same text. <code>msg.details.lpr</code> contains supporting metadata: <code>text</code>, <code>eventId</code>, timestamps, <code>confidence</code> (0&ndash;100, when supplied) and <code>isUpdate</code>, which is true after the first reading of an event. Use <code>eventId</code> to group readings of the same detection. The original event is in <code>msg.details.raw.event</code>. No empty startup value or extra raw-event message is emitted; a new event with the same plate produces a new reading.</p>
+    <pre><code>// First available reading
+msg.payload = "AB123CE"
+msg.details.lpr = { eventId: "event-123", confidence: 35, isUpdate: false }
+// Later correction of the same event
+msg.payload = "AB123CD"
+msg.details.lpr = { eventId: "event-123", confidence: 95, isUpdate: true }
+// Higher confidence with unchanged text: another message
+msg.payload = "AB123CD"
+msg.details.lpr = { eventId: "event-123", confidence: 99, isUpdate: true }</code></pre>
+    <p>If OCR metadata is delayed, the node briefly retries the event lookup and processes later live updates. Events without recognized text produce no result. Missing credentials and lookup failures are reported on output 2. Credentials are stored using Node-RED's credential system, separately from flow configuration, and are never included in output messages.</p>
     <p><b>Emit periodically</b> repeats read-only actions at the selected interval and sends each result to the flow. It is hidden for <code>Receive Events</code> and write actions.</p>
     <p>Request timeout is handled automatically by the node.</p>
     <p><b>Name</b> is the node name shown in the editor and is updated only when you manually select a different item from the list.</p>
+
+    <h3>Events with photos</h3>
+    <p>Select <b>Camera → Receive Events with Photo</b>, choose a detection filter and deploy. The node emits one message per event with its recorded thumbnail in <code>msg.image</code> (Buffer), its MIME type in <code>msg.imageType</code>, and the detection in <code>msg.payload</code>. It uses the image of that exact event; availability depends on recording retention and permissions. Missing images are reported on output 2. OCR and thumbnails can arrive after the initial detection; the node retries briefly and can retry on later event updates.</p>
+    <pre><code>msg.eventName = "detectionWithImage"
+msg.payload = { eventId: "event-123", cameraId: "camera-1",
+  type: "smartDetectZone", objectTypes: ["person"], plates: [] }
+msg.image       // Buffer containing the recorded event image
+msg.imageType = "image/jpeg"</code></pre>
+    <h3>Recent detections</h3>
+    <p>Select <b>Read Recent Detections</b>, choose a filter, a time window (default: 24 hours, maximum: 7 days) and up to 100 results, then connect an Inject node. Each trigger returns an array in <code>msg.payload</code>, newest first as provided by Protect. The time window is recalculated for each trigger. Both this action and event photos require the connection's optional local account with camera/recording read permissions.</p>
+    <p><code>msg.details.history</code> contains <code>from</code>, <code>to</code>, <code>hasMore</code>, <code>nextOffset</code> and <code>stoppedReason</code>. The node scans at most 1,000 source rows per trigger. When <code>hasMore</code> is true, the result is incomplete; use <b>History offset</b> to continue. If Protect repeats pages, <code>stoppedReason</code> is <code>repeated-page</code>; increasing the offset cannot guarantee a complete search on that controller. No images are downloaded for a history list.</p>
+    <pre><code>msg.eventName = "recentDetections"
+msg.payload = [{ eventId: "event-123", cameraId: "camera-1",
+  type: "smartDetectZone", objectTypes: ["licensePlate"],
+  plates: [{ text: "AB123CD", known: true, name: "Family car" }] }]</code></pre>
+    <h3>Optional Known plates</h3>
+    <p>For <b>License Plate (LPR)</b>, <b>Receive Events with Photo</b> and <b>Read Recent Detections</b>, the optional <b>Known plates</b> field accepts one <code>PLATE = friendly name</code> per line. Spaces, hyphens and letter case are ignored when matching. Similar characters (such as O and 0) are never guessed. Names are ordinary flow settings and are included in flow exports.</p>
+    <pre><code>AB123CD = Family car
+XY456ZT = Delivery van</code></pre>
+    <p>LPR keeps the recognized text in <code>msg.payload</code> and adds <code>msg.knownPlate</code> (boolean), <code>msg.plateName</code> (only for a match), and <code>known</code>/<code>name</code> in <code>msg.details.lpr</code>. Photo/history detections expose these fields in each <code>plates</code> entry. Unknown plates still produce messages.</p>
 
     <h3>Input</h3>
     <ul>
@@ -1194,10 +1237,12 @@
         <dd>Standardized metadata for the device and selected capability.</dd>
         <dt class="optional">msg.details.raw</dt>
         <dd>Raw event or context payload when available.</dd>
+        <dt class="optional">msg.details.lpr</dt>
+        <dd>Recognized plate text, event id, timestamps and optional OCR confidence for <code>License Plate (LPR)</code>.</dd>
     </dl>
     <dl class="message-properties">
         <dt>Output 2 — error</dt>
-        <dd>Emitted when the action fails (API error, timeout, or configuration problem). The node status also turns red. Errors are additionally forwarded to any connected <code>catch</code> node.</dd>
+        <dd>Emitted when the action fails (API error, timeout, or configuration problem). The node status indicates the problem. Use this output to handle errors; request failures are also forwarded to connected <code>catch</code> nodes.</dd>
         <dt class="optional">msg.payload</dt>
         <dd><code>null</code></dd>
         <dt class="optional">msg.topic</dt>

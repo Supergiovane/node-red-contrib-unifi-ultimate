@@ -59,6 +59,29 @@ In Node-RED:
 
 > **Self-signed certificates:** Each config node has an **Allow self-signed certificate** option, enabled by default. UniFi controllers almost always present a self-signed certificate, so keep it checked for UniFi OS / UXG setups. Uncheck it only if your controller uses a certificate signed by a trusted certificate authority and you want strict verification.
 
+> **Optional local account:** Protect, Network, and Access config nodes include **Local User** and **Local Password**, stored in Node-RED's credential store. Protect uses this shared account for LPR text, recorded-event searches, and event images. Network Internet/WAN monitors use the local account when the controller rejects the API key on local endpoints. Access stores the fields but its actions, including door monitoring, use the API token. Leave both fields empty when they are not needed. The API key/token remains required. Protect history callers can still supply a complete per-request account to override the configured one.
+
+### Guided setup and monitoring
+
+Every connection has a **Verify Connection** button. It tests the values in the editor from the Node-RED host and explains reachability, certificate, authentication and permission failures. It also checks complete local credentials where used. The editor keeps inline notes minimal; detailed requirements and output examples are in the HTML help.
+
+| Node / selection | New action or option | Result |
+| --- | --- | --- |
+| Protect / Camera | **Receive Events with Photo** | Detection in `msg.payload`, the exact event's recorded image in `msg.image`, MIME type in `msg.imageType`. |
+| Protect / Camera | **Read Recent Detections** | Inject-triggered event array, filter by detection type and time window (default 24 hours), up to 100 results. |
+| Protect / LPR, photos, history | **Known plates** | One `PLATE = friendly name` per line; LPR adds `msg.knownPlate` and optional `msg.plateName`, while photo/history rows include named `plates`. |
+| Access / Door | **Door Open Too Long** | `doorOpenTooLong` after the threshold (default 120 seconds), followed by `doorClosed`. Requires a physical DPS and token permission `view:space`. |
+| Network / UniFi Device | **Device Offline / Restored** | `deviceOffline` after a confirmed outage (default 60 seconds), then `deviceRestored`. |
+| Network / Site | **Monitor Internet and WAN** | `internetOffline` / `internetRestored`, plus native `wanFailover`, `wanActive`, `wanInactive` where supported. |
+
+All monitoring actions start on deploy, share polling on their connection (using the shortest interval for the same target) and emit one alert/recovery per transition. A controller error or unknown state goes to output 2 and resets the pending delay; it never becomes a fabricated device or Internet outage. Initial healthy state is silent. An initial open/offline state starts timing from observation, and monitoring restarts after redeploy. Polling adds up to one interval plus request time to detection. Plate names are ordinary flow settings and are included in exports; account credentials are kept in Node-RED's credential store.
+
+Protect event photos/history require the configured local account and retained recordings. Photos are retrieved by exact event ID, with brief retries for delayed availability. The node does not substitute a current camera snapshot. History metadata in `msg.details.history` includes `from`, `to`, `hasMore`, `nextOffset` and `stoppedReason`; a search scans at most 1,000 source rows and reports incomplete or repeated-page results. The time window is recalculated for each trigger, including when using **History offset**.
+
+Network Internet monitoring needs a UniFi gateway and local API support. It uses the controller's **WWW** health; one inactive WAN is not evidence of a total Internet outage. WAN transitions use native `EVT_GW_WANTransition` events for the selected site and identify the actual reported interface, without guessing which WAN is primary. The last 100 source events are checked per poll, so busy sites or long interruptions can leave gaps. Unsupported WAN event endpoints are reported separately while Internet health monitoring continues. These local APIs depend on controller version and permissions.
+
+Import [guided monitoring examples](examples/unifi-guided-monitoring.json), select your connections and devices, then deploy. Each action is wired to result/error Debug nodes. See the HTML help for example messages and the details of each option.
+
 <br/>
 <br/>
 <p align="left">
@@ -117,6 +140,7 @@ Use **Protect** nodes to work with:
 Things you can do:
 
 - Receive motion, ring, contact, tamper, leak, and low-battery alerts.
+- Read recognized license plates (LPR) from compatible cameras as text in `msg.payload`.
 - Read the current state of a camera or sensor.
 - Take a camera snapshot.
 - Control PTZ cameras (move to preset, start/stop patrol).
@@ -125,6 +149,19 @@ Things you can do:
 - Monitor bridges, Link Stations, alarm hubs, key fobs, sirens, relays, and speakers.
 - Play or stop a siren, control relay outputs, and test speaker or siren sound.
 - Read and select Protect Arm Profiles, then arm or disarm the local Alarm Manager from the NVR control.
+
+### Read license plates (LPR)
+
+1. Enable license plate recognition on a compatible camera in UniFi Protect.
+2. In the **PROTECT** node, select **Camera**, the camera, **Receive Events**, then **License Plate (LPR)**.
+3. Open the shared **Protect connection** and enter its optional **Local User** and **Local Password** for a local UniFi OS account with permission to view that camera's recordings. Keep the API key configured there. The account is shared by every Protect node using that connection.
+4. Deploy. Each recognized plate arrives as a string such as `"AB123CD"` in `msg.payload`, with `msg.eventName = "licensePlate"`.
+
+`msg.details.lpr` contains the plate text, event ID, timestamps, and OCR confidence (0–100) when available. The original event is preserved in `msg.details.raw.event`. The first available text is emitted immediately, even at low confidence. Multiple plates are emitted separately; corrected text or a confidence increase produces another message. Identical readings and lower confidence for previously emitted text are suppressed. Every reading carries the plate string in `msg.payload`, including higher-confidence readings of unchanged text. `msg.details.lpr.isUpdate` is true for subsequent readings of the same event; confidence stays in `msg.details.lpr.confidence`. A later event with the same plate produces a new message. Startup, unrelated detections, and events without plate text produce no result; lookup failures go to the error output.
+
+The [official Protect event schema](https://developer.ui.com/protect/v7.3.47/get-v1subscribeevents) exposes the `licensePlate` detection type but does not document the recognized text. The node therefore retrieves OCR metadata from the matching event through Protect's local, unofficial events API. An active LPR node prepares the configured account's session at deploy and reuses it until the controller requires renewal. OCR supplied in a live event bypasses pending lookups. The node starts looking for OCR at vehicle detection, before the live LPR classification arrives; vehicle detection alone never produces a plate. Up to five background follow-up reads, delayed by 150, 350, 750, 1500 and 3000 milliseconds between requests, retrieve missing text or refinements without holding the first reading. The first text still depends on when Protect exposes OCR, and later readings are not guaranteed accurate. This requires the local account above and may depend on the Protect version. Credentials use Node-RED's credential storage and are not included in messages or ordinary flow exports.
+
+Importable example: [Protect LPR](examples/unifi-protect-lpr.json).
 
 <br/>
 <br/>

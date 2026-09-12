@@ -7,6 +7,8 @@ const {
     formatObservableLabel,
     formatValueWithMetadata
 } = require("./unifi-protect-field-metadata");
+const { DETECTION_FIELD, KNOWN_PLATES_FIELD } = require("./unifi-protect-detections");
+const { LICENSE_PLATE_EVENT_TYPES, extractLicensePlates } = require("./unifi-protect-lpr");
 
 // Central Protect registry used by:
 // - the editor for device/capability discovery
@@ -219,6 +221,11 @@ const SENSOR_OBSERVABLE_DEFINITIONS = [
 
 const CAMERA_OBSERVABLE_DEFINITIONS = [
     {
+        id: "licensePlate",
+        label: "License Plate (LPR)",
+        eventTypes: LICENSE_PLATE_EVENT_TYPES
+    },
+    {
         id: "ring",
         label: "Ring",
         eventTypes: ["ring"]
@@ -333,6 +340,23 @@ function createSetPropertyCapability() {
 // custom request composers and additional runtime filtering heuristics.
 const TYPE_CAPABILITIES = {
     camera: [
+        {
+            id: "observeWithImage", label: "Receive Events with Photo", method: "GET",
+            description: "Receive a detection with the recorded image of that exact event.",
+            mode: "observe", opensEventStream: true,
+            editor: { fields: [{ ...DETECTION_FIELD }, { ...KNOWN_PLATES_FIELD }] }
+        },
+        {
+            id: "getRecentDetections", label: "Read Recent Detections", method: "GET",
+            description: "List recent detections for the selected camera.", mode: "request",
+            editor: { fields: [
+                { ...DETECTION_FIELD },
+                { id: "hours", label: "Last hours", type: "number", defaultValue: 24, min: 0.05, max: 168, helpText: "From 3 minutes (0.05 hours) to 7 days (168 hours)." },
+                { id: "limit", label: "Maximum results", type: "number", defaultValue: 20, min: 1, max: 100 },
+                { id: "offset", label: "History offset", type: "number", defaultValue: 0, min: 0, tip: "Leave at 0 to start from the latest events.", helpText: "Start at 0. If details.history.hasMore is true, use details.history.nextOffset to continue; each trigger recalculates the time window." },
+                { ...KNOWN_PLATES_FIELD }
+            ] }
+        },
         {
             id: "getSnapshot",
             label: "Take Snapshot",
@@ -1284,7 +1308,7 @@ function buildAssetFileOptions(files) {
 
 async function buildObservableFields(deviceType, context) {
     // Observables let the generic "Receive Events" capability expose a typed
-    // value (boolean or number) tailored to the selected Protect device family.
+    // value (boolean, number or plate text) tailored to the selected device.
     const capabilityConfig = normalizeObject(context && context.capabilityConfig);
     const observableOptions = getObservableOptions(deviceType);
     const selectedObservable = resolveSelectedObservable(observableOptions, capabilityConfig.observable);
@@ -1303,6 +1327,8 @@ async function buildObservableFields(deviceType, context) {
                 : "Select which observable value should be exposed on msg.payload."
         }
     ];
+
+    if (deviceType === "camera" && selectedObservable === "licensePlate") fields.push({ ...KNOWN_PLATES_FIELD });
 
     if (deviceType === "camera") {
         const scopeField = await buildCameraObservableScopeField(context, selectedObservable, capabilityConfig);
@@ -1959,6 +1985,16 @@ function resolveCameraObservableEventValue(event, observable, observableScopeId)
     const definition = getObservableDefinitions("camera").find((entry) => entry.id === observable);
     if (!definition || !definition.eventTypes.includes(eventType)) {
         return { matched: false };
+    }
+
+    if (observable === "licensePlate") {
+        const plates = extractLicensePlates(event);
+        return {
+            matched: plates.length > 0,
+            eventTypeMatched: true,
+            value: plates.length ? plates[0].text : undefined,
+            plates
+        };
     }
 
     const scopeDefinition = CAMERA_OBSERVABLE_SCOPE_DEFINITIONS[String(observable || "").trim()];

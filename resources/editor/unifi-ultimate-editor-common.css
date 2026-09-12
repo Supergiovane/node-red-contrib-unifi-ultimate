@@ -13,6 +13,16 @@
     margin: 0 0 14px 0;
 }
 
+.unifi-ultimate-tip {
+    margin: 4px 0 10px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    background: #eaf5ff;
+    color: #1e3a5f;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
 .unifi-ultimate-youtube-link {
     display: inline-flex;
     align-items: center;
@@ -64,13 +74,6 @@
 
 .unifi-ultimate-warning strong {
     color: #9a3412;
-}
-
-.unifi-ultimate-info-tip.form-tips {
-    border: 1px solid #b8daf3;
-    border-left: 3px solid #7db7e8;
-    background: #edf6ff;
-    color: #1f3f5b;
 }
 
 .unifi-ultimate-wait-overlay {

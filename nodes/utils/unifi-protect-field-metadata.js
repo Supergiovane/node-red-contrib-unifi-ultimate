@@ -171,6 +171,11 @@ const TYPE_FIELD_METADATA = {
 // editor when the user chooses which state/metric to expose.
 const OBSERVABLE_METADATA = {
     camera: {
+        licensePlate: {
+            label: "License Plate (LPR)",
+            description: "Emits each recognized license plate as text on msg.payload. Enable LPR in Protect and configure the optional Local User and Local Password in the shared Protect connection to retrieve plate text.",
+            source: "inferred"
+        },
         ring: {
             label: "Doorbell Ring",
             description: "True while the camera is reporting a ring event.",
