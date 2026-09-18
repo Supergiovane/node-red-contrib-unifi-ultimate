@@ -1,7 +1,15 @@
 # Changelog
 
-## 1.1.15 Sept 2026
+## 1.1.17 Sept 2026
 
+- **Startup and missing readings:** Protect, Access and Network device nodes now suppress initial state snapshots and missing, null or undefined payloads by default. The new advanced **Emit startup states and undefined payloads** checkbox explicitly enables these outputs; existing flows default to disabled. Valid false and zero readings remain enabled.
+- **Key Fob and Protect observables:** missing readings no longer replay the previous value, and unrelated events no longer produce a fallback message for a selected observable.
+- **Output filtering:** shared filtering also suppresses missing payloads from Presence, Clients Control and Restart result outputs. Added regression coverage for the default and opt-in behavior and documented the setting.
+
+## 1.1.16 Sept 2026
+
+- **Protect capabilities and events:** audited all Protect resource families against the current official API. Key Fob events now show Arm (1), Night (2), Disarm (3), Panic (4), Left, and Right; Camera, Sensor, Relay, and Alarm Hub selectors include their previously missing official event families; and Alarm Hub output triggering is available as a dedicated action. Changing **Control** now clears the previous device selection before loading the new device family.
+- **Access capability selection:** changing **Connection** or **Control** now clears the previous device before loading the new inventory, and stale device-list responses can no longer overwrite the latest selection. Doorbell actions are filtered after every device selection and now recognize Intercom, Reader Pro, and G2/G3 Reader Pro model identifiers while continuing to exclude Intercom Viewer.
 - **Faster LPR delivery:** OCR lookups start at vehicle detection and live OCR bypasses pending lookups; configured LPR sessions are prepared at deploy and reused across reads. The first available text is sent immediately, followed by bounded background refinements. Corrected text and increased OCR confidence emit a new message with the plate string in `msg.payload`; `confidence` and `isUpdate` remain supporting metadata.
 - **Concise editor:** added a few short tips with a light-blue background for local credentials, known plates, history and alert thresholds. Protect actions needing local credentials show only the API-key permission sentence below Action; detailed guidance remains in HTML help.
 - **Guided setup:** added **Verify Connection** to all three configurations, using current editor values and safe reuse of saved credentials. Results explain reachability, certificates, authentication and read permissions. Inline notes stay minimal; detailed requirements and examples are in the HTML help.

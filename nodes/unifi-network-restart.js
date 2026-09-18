@@ -7,7 +7,8 @@ const {
     appendStatusTimestamp,
     resolveNodeName,
     attachDetails,
-    buildErrorOutputMessage
+    buildErrorOutputMessage,
+    sendWithPayload
 } = require("./utils/common-utils");
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
@@ -343,7 +344,7 @@ module.exports = function(RED) {
                 setNodeStatus({ fill: "yellow", shape: "ring", text: `${succeeded}/${results.length} ok` });
             }
 
-            send([output, null]);
+            sendWithPayload(send, [output, null]);
         }
 
         node.on("input", async function(msg, send, done) {

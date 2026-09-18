@@ -21,7 +21,8 @@ const {
     extractDeviceNameFromPayload,
     attachDeviceNameToPayload,
     attachDetails,
-    buildErrorOutputMessage
+    buildErrorOutputMessage,
+    sendWithPayload
 } = require("./utils/common-utils");
 const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
 
@@ -98,6 +99,7 @@ module.exports = function(RED) {
         node.deviceId = config.deviceId || "";
         node.capability = config.capability || "observe";
         node.capabilityConfig = config.capabilityConfig || "{}";
+        node.emitStartupAndUndefined = parseBoolean(config.emitStartupAndUndefined);
         node.autoEmit = parseBoolean(config.autoEmit);
         node.autoEmitIntervalSeconds = parseIntervalSeconds(config.autoEmitInterval, 60);
         node.autoEmitTimer = null;
@@ -115,7 +117,7 @@ module.exports = function(RED) {
                 const output = { payload };
                 decorateOutputMessage(output, node.currentDevice, eventName);
                 attachDetails(output, { ...details, unifiAccess: buildBaseMetadata(node.deviceType, node.deviceId, node.capability, { source: details.monitor.source }) });
-                node.send(output);
+                sendWithPayload(node.send.bind(node), output, node.emitStartupAndUndefined);
             }
         });
         node.getSimpleMonitorDescriptor = () => node.isObserving && isSimpleMonitor() && node.deviceId ? {
@@ -163,10 +165,10 @@ module.exports = function(RED) {
             // event messages are available, forward them in sequence.
             try {
                 if (stateMsg) {
-                    send(stateMsg);
+                    sendWithPayload(send, stateMsg, node.emitStartupAndUndefined);
                 }
                 if (eventMsg) {
-                    send(eventMsg);
+                    sendWithPayload(send, eventMsg, node.emitStartupAndUndefined);
                 }
             } catch (error) {
                 node.warn(`Access output send failed: ${error && error.message ? error.message : error}`);
@@ -207,6 +209,7 @@ module.exports = function(RED) {
             });
 
             setNodeStatus({ fill: "green", shape: "dot", text: buildNodeStatus(deviceType, payload) });
+            if (source === "startup" && !node.emitStartupAndUndefined) return;
             sendOutputs(send, stateMsg, null);
         }
 
@@ -406,8 +409,7 @@ module.exports = function(RED) {
                 return;
             }
 
-            // Emit one initial snapshot so the flow starts with a known state
-            // before websocket events arrive.
+            // Load the initial snapshot; output at startup is opt-in.
             fetchDeviceState(node.deviceType, node.deviceId, "observe", node.send.bind(node), "startup").catch(() => {
             });
         }

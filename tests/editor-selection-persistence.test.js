@@ -24,6 +24,24 @@ describe("dynamic editor selection persistence", () => {
         expect(source).toContain('text(savedName + " (loading...)")');
     });
 
+    test("Protect clears the saved device when Control changes", () => {
+        const source = readNodeEditor("unifi-protect-device.html");
+        expect(source).toContain("function clearDeviceSelection()");
+        expect(source).toContain("preserveSavedDeviceSelection = false");
+        expect(source).toMatch(/\$deviceType\.on\("change"[\s\S]*?clearDeviceSelection\(\)/);
+    });
+
+    test("Access clears the saved device when Connection or Control changes", () => {
+        const source = readNodeEditor("unifi-access-device.html");
+        expect(source).toContain("function clearDeviceSelection()");
+        expect(source).toContain("preserveSavedDeviceSelection = false");
+        expect(source).toContain("const requestId = ++deviceListRequestId");
+        expect(source).toContain("capabilityListRequestId += 1");
+        expect(source).toContain("capabilityOptionsRequestId += 1");
+        expect(source).toMatch(/\$server\.on\("change"[\s\S]*?clearDeviceSelection\(\)/);
+        expect(source).toMatch(/\$deviceType\.on\("change"[\s\S]*?clearDeviceSelection\(\)/);
+    });
+
     test("presence protects both client and network selections", () => {
         const source = readNodeEditor("unifi-network-presence.html");
         const unavailableMarkers = source.match(/saved; currently unavailable/g) || [];

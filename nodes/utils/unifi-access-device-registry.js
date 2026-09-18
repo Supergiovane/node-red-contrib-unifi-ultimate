@@ -591,7 +591,9 @@ function isDoorbellCapableAccessDevice(device) {
         return true;
     }
 
-    return /READER[^A-Z0-9]*PRO/.test(joined) || /UA[-_ ]?G2[-_ ]?PRO/.test(joined);
+    return /READER[^A-Z0-9]*PRO/.test(joined)
+        || /UA[-_ ]?(?:G2|G3)[-_ ]?PRO/.test(joined)
+        || /(?:^|\s)UA[-_ ]?PRO(?:\s|$)/.test(joined);
 }
 
 function normalizeObjectArray(value) {

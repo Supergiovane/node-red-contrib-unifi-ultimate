@@ -73,3 +73,27 @@ describe("new read-only UniFi Access resources", () => {
         });
     });
 });
+
+describe("device-aware UniFi Access capabilities", () => {
+    test("only doorbell-capable devices expose doorbell actions", () => {
+        const viewerCapabilities = getCapabilitiesForType("device", {
+            model: "UA-INT-VIEWER"
+        }).map((capability) => capability.id);
+
+        expect(viewerCapabilities).not.toContain("triggerDoorbell");
+        expect(viewerCapabilities).not.toContain("cancelDoorbell");
+
+        [
+            "UA-INTERCOM",
+            "UA-G3-INTERCOM",
+            "UA-PRO",
+            "UA-G2-PRO",
+            "UA-G3-PRO"
+        ].forEach((model) => {
+            const capabilities = getCapabilitiesForType("device", { model })
+                .map((capability) => capability.id);
+            expect(capabilities).toContain("triggerDoorbell");
+            expect(capabilities).toContain("cancelDoorbell");
+        });
+    });
+});

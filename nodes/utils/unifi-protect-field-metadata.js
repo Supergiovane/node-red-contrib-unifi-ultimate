@@ -205,6 +205,16 @@ const OBSERVABLE_METADATA = {
             label: "Smart Detect Loiter",
             description: "True while a smart loitering detection event is active.",
             source: "inferred"
+        },
+        nfcCardScanned: {
+            label: "NFC Card Scanned",
+            description: "Emits true when an NFC card is scanned at the camera device.",
+            source: "official"
+        },
+        fingerprintIdentified: {
+            label: "Fingerprint Identified",
+            description: "Emits true when a fingerprint is scanned at the camera device.",
+            source: "official"
         }
     },
     sensor: {
@@ -248,6 +258,41 @@ const OBSERVABLE_METADATA = {
             description: "True while the sensor is reporting an active extreme-values event.",
             source: "official"
         },
+        vape: {
+            label: "Vape Detected",
+            description: "True while the sensor is reporting a vape detection.",
+            source: "official"
+        },
+        button: {
+            label: "Button Pressed",
+            description: "Emits true when the sensor reports a button press.",
+            source: "official"
+        },
+        smokeBatteryLow: {
+            label: "Smoke Detector Battery Low",
+            description: "True while the smoke or CO detector reports that its internal battery needs replacement.",
+            source: "official"
+        },
+        smokeNeedsCleaning: {
+            label: "Smoke Detector Needs Cleaning",
+            description: "True while the smoke detector reports that cleaning is required.",
+            source: "official"
+        },
+        smokeFault: {
+            label: "Smoke Detector Fault",
+            description: "True while the smoke detector reports a fault.",
+            source: "official"
+        },
+        coFault: {
+            label: "CO Detector Fault",
+            description: "True while the carbon-monoxide detector reports a fault.",
+            source: "official"
+        },
+        smokeEndOfLife: {
+            label: "Smoke Detector End of Life",
+            description: "True when the smoke or CO detector reports the end of its service life.",
+            source: "official"
+        },
         temperature: {
             label: "Temperature",
             description: "Current ambient temperature reported by the sensor.",
@@ -279,6 +324,92 @@ const OBSERVABLE_METADATA = {
             label: "Light On",
             description: "True when the light output is currently on.",
             source: "inferred"
+        }
+    },
+    fob: {
+        arm: {
+            label: "Arm (1)",
+            description: "Emits true when the Key Fob Arm button is pressed.",
+            source: "official"
+        },
+        night: {
+            label: "Night (2)",
+            description: "Emits true when the Key Fob Night button is pressed.",
+            source: "official"
+        },
+        disarm: {
+            label: "Disarm (3)",
+            description: "Emits true when the Key Fob Disarm button is pressed.",
+            source: "official"
+        },
+        panic: {
+            label: "Panic (4)",
+            description: "Emits true when the Key Fob Panic button is pressed.",
+            source: "official"
+        },
+        left: {
+            label: "Left",
+            description: "Emits true when the Key Fob left side button is pressed.",
+            source: "official"
+        },
+        right: {
+            label: "Right",
+            description: "Emits true when the Key Fob right side button is pressed.",
+            source: "official"
+        }
+    },
+    relay: {
+        inputChanged: {
+            label: "Input Changed",
+            description: "Emits true when the relay input circuit closes and false when it opens.",
+            source: "official"
+        }
+    },
+    alarmHub: {
+        motion: {
+            label: "Motion Input",
+            description: "True while an Alarm Hub motion input is active.",
+            source: "official"
+        },
+        entry: {
+            label: "Entry Open/Closed",
+            description: "True when an Alarm Hub entry input opens and false when it closes.",
+            source: "official"
+        },
+        smoke: {
+            label: "Smoke Input",
+            description: "True while an Alarm Hub smoke input is active.",
+            source: "official"
+        },
+        glassBreak: {
+            label: "Glass Break Input",
+            description: "True while an Alarm Hub glass-break input is active.",
+            source: "official"
+        },
+        emergencyButton: {
+            label: "Emergency Button",
+            description: "Emits true when an Alarm Hub emergency button is pressed.",
+            source: "official"
+        },
+        tamper: {
+            label: "Tamper",
+            description: "True while an Alarm Hub input reports tampering.",
+            source: "official"
+        },
+        relaySwitched: {
+            label: "Relay Switched",
+            description: "Emits true when an Alarm Hub relay output is switched.",
+            source: "official"
+        },
+        batteryLow: {
+            label: "Battery Low",
+            description: "True while the Alarm Hub reports a low battery condition.",
+            source: "official"
+        },
+        batteryConnected: {
+            label: "Battery Connected",
+            description: "Emits true when an Alarm Hub battery is connected.",
+            source: "official"
         }
     }
 };

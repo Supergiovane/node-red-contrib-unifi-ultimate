@@ -20,7 +20,8 @@ const {
     extractDeviceNameFromPayload,
     attachDeviceNameToPayload,
     attachDetails,
-    buildErrorOutputMessage
+    buildErrorOutputMessage,
+    sendWithPayload
 } = require("./utils/common-utils");
 const UNOFFICIAL_NETWORK_STREAM_CAPABILITY = "observeUnofficialEvents";
 const UNOFFICIAL_POLL_INTERVAL_MS = 3000;
@@ -502,6 +503,7 @@ module.exports = function(RED) {
         node.deviceId = config.deviceId || "";
         node.capability = config.capability || "observe";
         node.capabilityConfig = config.capabilityConfig || "{}";
+        node.emitStartupAndUndefined = parseBoolean(config.emitStartupAndUndefined);
         node.autoEmit = parseBoolean(config.autoEmit);
         node.autoEmitIntervalSeconds = parseIntervalSeconds(config.autoEmitInterval, 60);
         node.autoEmitTimer = null;
@@ -519,7 +521,7 @@ module.exports = function(RED) {
                 const output = { payload };
                 decorateOutputMessage(output, node.currentDevice, eventName);
                 attachDetails(output, { ...details, unifiNetwork: buildBaseMetadata(node.deviceType, node.deviceId, node.capability, { source: details.monitor.source }) });
-                node.send(output);
+                sendWithPayload(node.send.bind(node), output, node.emitStartupAndUndefined);
             }
         });
         node.getSimpleMonitorDescriptor = () => node.isObserving && isSimpleMonitor() && node.deviceId ? {
@@ -616,7 +618,8 @@ module.exports = function(RED) {
             decorateOutputMessage(outputMsg, payload, source || "observe");
 
             setNodeStatus({ fill: "green", shape: "dot", text: buildNodeStatus(deviceType, payload) });
-            send(outputMsg);
+            if (source === "startup" && !node.emitStartupAndUndefined) return;
+            sendWithPayload(send, outputMsg, node.emitStartupAndUndefined);
         }
 
         async function fetchDeviceTemperatures(deviceType, deviceId, capabilityId, send) {
@@ -660,7 +663,7 @@ module.exports = function(RED) {
                 ? `${statusTemperatureC} C`
                 : "no temperature";
             setNodeStatus({ fill: temperatures.length > 0 ? "green" : "yellow", shape: "dot", text: statusText });
-            send(outputMsg);
+            sendWithPayload(send, outputMsg, node.emitStartupAndUndefined);
         }
 
         async function executeConfiguredCapabilityRequest(deviceType, deviceId, capabilityId, capabilityConfig) {
@@ -742,7 +745,7 @@ module.exports = function(RED) {
             decorateOutputMessage(outputMsg, outputMsg.payload, `request:${capabilityId}`);
 
             setNodeStatus({ fill: online ? "green" : "yellow", shape: "dot", text: online ? "online" : "offline" });
-            send(outputMsg);
+            sendWithPayload(send, outputMsg, node.emitStartupAndUndefined);
         }
 
         async function countOnlineClients(deviceType, deviceId, capabilityId, send) {
@@ -777,7 +780,7 @@ module.exports = function(RED) {
             decorateOutputMessage(outputMsg, outputMsg.payload, `request:${capabilityId}`);
 
             setNodeStatus({ fill: "green", shape: "dot", text: `${onlineClients.length} online` });
-            send(outputMsg);
+            sendWithPayload(send, outputMsg, node.emitStartupAndUndefined);
         }
 
         async function fetchDeviceSimpleStatistic(deviceType, deviceId, capabilityId, capabilityConfig, send) {
@@ -836,7 +839,7 @@ module.exports = function(RED) {
                 ? `${metric.label} n/a`
                 : `${metric.label} ${payloadValue}${metric.unit}`;
             setNodeStatus({ fill: payloadValue === null ? "yellow" : "green", shape: "dot", text: statusText });
-            send(outputMsg);
+            sendWithPayload(send, outputMsg, node.emitStartupAndUndefined);
         }
 
         async function createGuestVoucher(deviceType, deviceId, capabilityId, capabilityConfig, send) {
@@ -882,7 +885,7 @@ module.exports = function(RED) {
             decorateOutputMessage(outputMsg, outputMsg.payload, `request:${capabilityId}`);
 
             setNodeStatus({ fill: vouchers.length > 0 ? "green" : "yellow", shape: "dot", text: `${vouchers.length} voucher` });
-            send(outputMsg);
+            sendWithPayload(send, outputMsg, node.emitStartupAndUndefined);
         }
 
         async function invokeCapability(send, triggerSource) {
@@ -977,7 +980,7 @@ module.exports = function(RED) {
             decorateOutputMessage(outputMsg, responseData, `request:${capabilityId}`);
 
             setNodeStatus({ fill: "green", shape: "dot", text: `${capability.label}` });
-            send(outputMsg);
+            sendWithPayload(send, outputMsg, node.emitStartupAndUndefined);
         }
 
         function resolveConfiguredCapabilityDefinition() {
@@ -1052,8 +1055,7 @@ module.exports = function(RED) {
             }
             const capabilityId = resolveCapabilityId(node.capability);
 
-            // Emit an initial snapshot at startup so the flow has a known state
-            // as soon as Node-RED starts.
+            // Load the initial snapshot; output at startup is opt-in.
             fetchDeviceState(node.deviceType, node.deviceId, capabilityId, node.send.bind(node), "startup").catch(() => {
             });
             refreshUnofficialPollingFallback();
@@ -1163,7 +1165,7 @@ module.exports = function(RED) {
                     })
                 });
                 decorateOutputMessage(output, output.payload, eventName);
-                node.send(output);
+                sendWithPayload(node.send.bind(node), output, node.emitStartupAndUndefined);
             } catch (error) {
             }
         };
@@ -1241,7 +1243,7 @@ module.exports = function(RED) {
                     })
                 });
                 decorateOutputMessage(output, output.payload, resolvedEventName);
-                node.send(output);
+                sendWithPayload(node.send.bind(node), output, node.emitStartupAndUndefined);
             } catch (error) {
             }
         };

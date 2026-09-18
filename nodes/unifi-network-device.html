@@ -15,6 +15,7 @@
             inputs: { value: 1 },
             capability: { value: "observe", required: true },
             capabilityConfig: { value: "{}" },
+            emitStartupAndUndefined: { value: false },
             autoEmit: { value: false },
             autoEmitInterval: { value: 60, validate: RED.validators.number() }
         },
@@ -1279,6 +1280,11 @@
             <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
             <input type="text" id="node-input-name" placeholder="Node name">
         </div>
+        <div class="form-row">
+            <label for="node-input-emitStartupAndUndefined"><i class="fa fa-sign-out"></i> Output</label>
+            <input type="checkbox" id="node-input-emitStartupAndUndefined" style="display:inline-block; width:auto; vertical-align:top;">
+            <label for="node-input-emitStartupAndUndefined" style="width:auto;">Emit startup states and undefined payloads</label>
+        </div>
         <div class="form-row" id="node-row-autoEmit">
             <label for="node-input-autoEmit"><i class="fa fa-repeat"></i> Repeat</label>
             <input type="checkbox" id="node-input-autoEmit" style="display:inline-block; width:auto; vertical-align:top;">
@@ -1293,6 +1299,7 @@
 </script>
 
 <script type="text/html" data-help-name="unifi-network-device">
+    <p><b>Emit startup states and undefined payloads</b> is disabled by default, including in existing flows. Enable it to emit the initial device state and readings with a missing, null or undefined payload. Otherwise these messages are suppressed; false and zero remain valid values. Missing readings never replay a previous value.</p>
     <p><a href="https://youtube.com/playlist?list=PL9Yh1bjbLAYrWKtMlopN0swuQXbdJ8MFJ&si=4MmW1nNTCLrJtEHv" target="_blank" rel="noopener noreferrer"><img src="resources/node-red-contrib-unifi-ultimate/logos/youtube-icon.svg" alt="YouTube" width="24" height="18" style="vertical-align:text-bottom; margin-right:6px;">Youtube Tutorials</a></p>
 
     <p>Use this node to execute a configured UniFi Network action on a selected site, UniFi device, or client.</p>

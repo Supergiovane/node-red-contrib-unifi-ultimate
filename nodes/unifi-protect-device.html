@@ -15,6 +15,7 @@
             inputs: { value: 1 },
             capability: { value: "observe", required: true },
             capabilityConfig: { value: "{}" },
+            emitStartupAndUndefined: { value: false },
             autoEmit: { value: false },
             autoEmitInterval: { value: 60, validate: RED.validators.number() }
         },
@@ -99,11 +100,13 @@
             const $capabilityRow = $capability.closest(".form-row");
             const $advancedRow = $("#node-row-advanced");
             let capabilityConfig = parseCapabilityConfig(node.capabilityConfig);
+            let deviceListRequestId = 0;
             let capabilityListRequestId = 0;
             let capabilityOptionsRequestId = 0;
             let suspendChangeHandling = false;
             let isInitializingEditor = true;
             let restoredPersistedAutoEmit = false;
+            let preserveSavedDeviceSelection = true;
             let deviceTypeDefinitions = [];
             let capabilityDefinitions = [];
 
@@ -557,6 +560,17 @@
                 $deviceName.val(selectedDeviceName);
             }
 
+            function clearDeviceSelection() {
+                preserveSavedDeviceSelection = false;
+                deviceListRequestId += 1;
+                capabilityListRequestId += 1;
+                capabilityOptionsRequestId += 1;
+                $deviceName.val("");
+                renderDevices([]);
+                renderCapabilities([]);
+                renderCapabilityOptions({ fields: [] }, { clearStoredConfig: false });
+            }
+
             function renderDeviceTypes(items) {
                 deviceTypeDefinitions = Array.isArray(items) ? items.slice() : [];
                 const currentValue = getCurrentOrNodeValue($deviceType, node.deviceType, "");
@@ -851,7 +865,8 @@
             }
 
             function renderDevices(items) {
-                const currentValue = getCurrentOrNodeValue($deviceId, node.deviceId, "");
+                const savedDeviceId = preserveSavedDeviceSelection ? node.deviceId : "";
+                const currentValue = getCurrentOrNodeValue($deviceId, savedDeviceId, "");
                 withSuppressedChanges(function () {
                     $deviceId.empty();
                     $deviceId.append($("<option></option>").val("").text("Choose a device"));
@@ -961,6 +976,7 @@
             }
 
             function loadDevices() {
+                const requestId = ++deviceListRequestId;
                 const serverId = $server.val();
                 const selectedType = getCurrentOrNodeValue($deviceType, node.deviceType, "");
                 if (!serverId || serverId === "_ADD_" || !selectedType) {
@@ -973,14 +989,22 @@
                 return requestJson(
                     "unifiProtect/devices?serverId=" + encodeURIComponent(serverId) + "&deviceType=" + encodeURIComponent(selectedType)
                 ).then(function (data) {
+                    if (requestId !== deviceListRequestId) {
+                        return;
+                    }
                     renderDevices(Array.isArray(data) ? data : []);
                 }).catch(function (xhr) {
+                    if (requestId !== deviceListRequestId) {
+                        return;
+                    }
                     renderDevices([]);
                     renderCapabilityOptions({ fields: [] }, { clearStoredConfig: false });
                     const errorText = xhr && xhr.responseJSON && xhr.responseJSON.error ? xhr.responseJSON.error : "Unable to load devices";
                     RED.notify(errorText, "error");
                 }).finally(function () {
-                    $refresh.find("i").removeClass("fa-spin");
+                    if (requestId === deviceListRequestId) {
+                        $refresh.find("i").removeClass("fa-spin");
+                    }
                 });
             }
 
@@ -1066,6 +1090,7 @@
                 if (suspendChangeHandling || isInitializingEditor) {
                     return;
                 }
+                clearDeviceSelection();
                 capabilityConfig = {};
                 writeCapabilityConfig();
                 refreshAfterTypeChange();
@@ -1149,6 +1174,11 @@
             <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
             <input type="text" id="node-input-name" placeholder="Node name">
         </div>
+        <div class="form-row">
+            <label for="node-input-emitStartupAndUndefined"><i class="fa fa-sign-out"></i> Output</label>
+            <input type="checkbox" id="node-input-emitStartupAndUndefined" style="display:inline-block; width:auto; vertical-align:top;">
+            <label for="node-input-emitStartupAndUndefined" style="width:auto;">Emit startup states and undefined payloads</label>
+        </div>
         <div class="form-row" id="node-row-autoEmit">
             <label for="node-input-autoEmit"><i class="fa fa-repeat"></i> Repeat</label>
             <input type="checkbox" id="node-input-autoEmit" style="display:inline-block; width:auto; vertical-align:top;">
@@ -1163,6 +1193,7 @@
 </script>
 
 <script type="text/html" data-help-name="unifi-protect-device">
+    <p><b>Emit startup states and undefined payloads</b> is disabled by default, including in existing flows. Enable it to emit the initial device state and readings with a missing, null or undefined payload. Otherwise these messages are suppressed; false and zero remain valid values. Missing readings never replay a previous value.</p>
     <p><a href="https://youtube.com/playlist?list=PL9Yh1bjbLAYrWKtMlopN0swuQXbdJ8MFJ&si=4MmW1nNTCLrJtEHv" target="_blank" rel="noopener noreferrer"><img src="resources/node-red-contrib-unifi-ultimate/logos/youtube-icon.svg" alt="YouTube" width="24" height="18" style="vertical-align:text-bottom; margin-right:6px;">Youtube Tutorials</a></p>
 
     <p>Use this node to execute a configured UniFi Protect action or listen for live Protect events.</p>
@@ -1174,10 +1205,12 @@
     <p>Additional fields appear only when the selected action needs extra input. For example, events, PTZ presets, live views, or discovered properties.</p>
     <p>Action highlights: <code>Receive Events</code>, <code>Read Device State</code>, <code>Take Snapshot</code>, <code>Show Doorbell Message</code>, siren play/stop/test, relay output control, speaker sound test, and application/alarm actions on <code>NVR</code>.</p>
     <p>Protect resources include cameras, sensors, lights, chimes, viewers, live views, NVRs, bridges, Link Stations, alarm hubs, key fobs, relays, sirens, and speakers. The newer device families expose read state and events without the generic raw-update action.</p>
-    <p><code>Play Siren</code> uses a duration in seconds. <code>Control Relay Output</code> requires an explicit output and on/off state; auto-off applies only when turning an output on. Sound-test actions use a configured volume and never read control values from the incoming message.</p>
+    <p><code>Play Siren</code> uses a duration in seconds. <code>Control Relay Output</code> requires an explicit output and on/off state; auto-off applies only when turning an output on. <code>Trigger Alarm Hub Output</code> can toggle an output or set it on/off, with an optional delay and duration. Sound-test actions use a configured volume and never read control values from the incoming message.</p>
     <p>Protect alarm arming is application-wide, so its actions are available under <code>NVR</code>, not on an individual Alarm Hub. Use <code>Read Arm Profiles</code>, <code>Select Arm Profile</code>, <code>Arm Alarm</code>, and <code>Disarm Alarm</code>. These endpoints require Protect's local Alarm Manager.</p>
     <p><code>Receive Events</code> performs an initial fetch and then subscribes to streams managed by the shared Protect config node. The config node keeps websocket channels and forwards matching updates to runtime nodes. In this mode, the input pin is hidden and listening starts automatically after deploy/restart.</p>
-    <p>For <code>Sensor</code>, <code>Camera</code>, and <code>Light</code> observables, <code>All</code> emits every event for the selected device. Choosing a specific observable normalizes the main output to a derived value and keeps the original context in <code>msg.details.raw</code>. Event observables emit <code>true/false</code>; sensor metrics such as <code>Temperature</code>, <code>Humidity</code>, <code>Light Level</code>, and <code>Battery Level</code> emit numeric values. <code>License Plate (LPR)</code> emits recognized plate text.</p>
+    <p>For <code>Sensor</code>, <code>Camera</code>, <code>Light</code>, <code>Key Fob</code>, <code>Relay</code>, and <code>Alarm Hub</code> observables, <code>All</code> emits every event for the selected device. Choosing a specific observable normalizes the main output to a derived value and keeps the original context in <code>msg.details.raw</code>. Event observables emit <code>true/false</code>; sensor metrics such as <code>Temperature</code>, <code>Humidity</code>, <code>Light Level</code>, and <code>Battery Level</code> emit numeric values. <code>License Plate (LPR)</code> emits recognized plate text.</p>
+    <p>For <code>Key Fob</code>, the event list includes <code>Arm (1)</code>, <code>Night (2)</code>, <code>Disarm (3)</code>, <code>Panic (4)</code>, <code>Left</code>, and <code>Right</code>. The two side buttons have no printed number. Selecting one emits <code>true</code> only for that button; the original <code>sensorButtonPressed</code> event remains available in <code>msg.details.raw</code>.</p>
+    <p>The event list also covers the official Protect event families for NFC and fingerprint scans on supported cameras; vape, smoke/CO health, and button events on sensors; relay input changes; and Alarm Hub motion, entry, smoke, glass-break, emergency-button, tamper, relay, and battery events. Resource families without a granular official event type retain only <code>All</code>.</p>
     <p>To read plates, select <code>Camera</code> &rarr; <code>Receive Events</code> &rarr; <code>License Plate (LPR)</code>. Use an LPR-capable camera and enable license plate recognition in Protect. Open the shared <b>Connection</b> and enter its optional <b>Local User</b> and <b>Local Password</b> for a local UniFi OS account that can view the camera's recordings. All Protect nodes using that connection share this account. The official event stream identifies license plate detections but does not include OCR text in its documented schema, so the node retrieves the matching event's metadata through Protect's local, unofficial events API. Compatibility of this lookup depends on the Protect version.</p>
     <p>LPR emits the first available reading immediately, including low-confidence text, as a string such as <code>"AB123CD"</code> in <code>msg.payload</code>, with <code>msg.eventName = "licensePlate"</code>. Text already present in a live event bypasses any outstanding HTTP lookup. Otherwise the node starts looking for OCR as soon as a vehicle is detected, using a prepared local session without waiting for the live LPR classification or for the event to end. Only actual plate metadata is emitted.</p>
     <p>After a detection/update, up to five follow-up reads look for missing or improved OCR, with delays of 150, 350, 750, 1500 and 3000 milliseconds between requests. Corrected text, additional plates and higher confidence for the same text produce another message. Identical readings and lower confidence for previously emitted text are suppressed. The first text still depends on when Protect makes OCR available; a later reading is not a guarantee of accuracy.</p>

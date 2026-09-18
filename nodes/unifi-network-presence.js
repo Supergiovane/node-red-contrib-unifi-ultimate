@@ -10,7 +10,8 @@ const {
     extractDeviceNameFromPayload,
     attachDetails,
     buildErrorOutputMessage,
-    parseBoolean
+    parseBoolean,
+    sendWithPayload
 } = require("./utils/common-utils");
 const DEFAULT_REQUEST_TIMEOUT_MS = 8000;
 
@@ -105,7 +106,7 @@ function setupNetworkClientWatch(node, config) {
         };
         attachDetails(outputMsg, { client });
 
-        node.send([outputMsg, null]);
+        sendWithPayload(node.send.bind(node), [outputMsg, null]);
     }
 
     function diffAndEmit(currentClients) {
@@ -389,7 +390,7 @@ module.exports = function(RED) {
             }
 
             try {
-                node.send(outputMsg);
+                sendWithPayload(node.send.bind(node), outputMsg);
             } catch (error) {
                 node.warn(`Presence output send failed: ${error && error.message ? error.message : error}`);
             }

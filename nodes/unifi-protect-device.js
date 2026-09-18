@@ -18,7 +18,9 @@ const {
     extractDeviceNameFromPayload,
     attachDeviceNameToPayload,
     attachDetails,
-    buildErrorOutputMessage
+    buildErrorOutputMessage,
+    sendWithPayload,
+    hasPayloadValue
 } = require("./utils/common-utils");
 const { parseKnownPlates, namePlate, matchesDetection, describeDetection } = require("./utils/unifi-protect-detections");
 const { LICENSE_PLATE_EVENT_TYPES, extractLicensePlates, isLicensePlateEvent } = require("./utils/unifi-protect-lpr");
@@ -106,6 +108,7 @@ module.exports = function(RED) {
         node.deviceId = config.deviceId || "";
         node.capability = config.capability || "observe";
         node.capabilityConfig = config.capabilityConfig || "{}";
+        node.emitStartupAndUndefined = parseBoolean(config.emitStartupAndUndefined);
         node.autoEmit = parseBoolean(config.autoEmit);
         node.autoEmitIntervalSeconds = parseIntervalSeconds(config.autoEmitInterval, 60);
         node.autoEmitTimer = null;
@@ -164,10 +167,10 @@ module.exports = function(RED) {
             // event messages are available, forward them in sequence.
             try {
                 if (stateMsg) {
-                    send(stateMsg);
+                    sendWithPayload(send, stateMsg, node.emitStartupAndUndefined);
                 }
                 if (eventMsg) {
-                    send(eventMsg);
+                    sendWithPayload(send, eventMsg, node.emitStartupAndUndefined);
                 }
             } catch (error) {
                 node.warn(`Protect output send failed: ${error && error.message ? error.message : error}`);
@@ -194,7 +197,8 @@ module.exports = function(RED) {
             if (observable) {
                 // Observables let the node collapse complex Protect payloads into
                 // a stable typed value while preserving the original context in details.raw.
-                const observableValue = resolveObservableState(deviceType, payload, observable, node.currentObservableValue);
+                const observableValue = resolveObservableState(deviceType, payload, observable);
+                if (!node.emitStartupAndUndefined && !hasPayloadValue(observableValue)) return null;
                 node.currentObservableValue = observableValue;
 
                 const outputMsg = {
@@ -254,6 +258,7 @@ module.exports = function(RED) {
             const stateMsg = buildObservedStateMessage(deviceType, deviceId, capabilityConfig, payload, source);
 
             setNodeStatus({ fill: "green", shape: "dot", text: buildNodeStatus(deviceType, payload) });
+            if (source === "startup" && !node.emitStartupAndUndefined) return;
             sendOutputs(send, stateMsg, null);
         }
 
@@ -293,7 +298,7 @@ module.exports = function(RED) {
                 const { events, ...history } = result;
                 attachDetails(output, { history, unifiProtect: buildBaseMetadata(deviceType, deviceId, capabilityId, { source: "history" }) });
                 setNodeStatus({ fill: result.hasMore ? "yellow" : "green", shape: "dot", text: `${events.length} detections${result.hasMore ? "; more available" : ""}` });
-                send(output);
+                sendWithPayload(send, output, node.emitStartupAndUndefined);
                 return;
             }
 
@@ -688,7 +693,7 @@ module.exports = function(RED) {
                     decorateOutputMessage(output, node.currentDevice, "detectionWithImage");
                     attachDetails(output, { raw: event, unifiProtect: buildBaseMetadata(node.deviceType, node.deviceId, node.capability, { source: "events" }) });
                     state.sent = true;
-                    node.send(output);
+                    sendWithPayload(node.send.bind(node), output, node.emitStartupAndUndefined);
                     setNodeStatus({ fill: "blue", shape: "dot", text: "event photo received" });
                 }).catch((error) => {
                     if (!node.isObserving) return;
@@ -726,6 +731,7 @@ module.exports = function(RED) {
                     // state output directly instead of only the event payload.
                     const observation = resolveObservableEventValue(node.deviceType, item, observable, observableScopeId);
                     if (observation.matched) {
+                        if (!node.emitStartupAndUndefined && !hasPayloadValue(observation.value)) return;
                         const resolvedDeviceName = resolveOutputDeviceName(node.currentDevice);
                         node.currentObservableValue = observation.value;
                         setNodeStatus({ fill: "blue", shape: "ring", text: `${item.type || "event"}` });
@@ -776,9 +782,9 @@ module.exports = function(RED) {
                         return;
                     }
 
-                    if (observation.eventTypeMatched) {
-                        return;
-                    }
+                    // No value for the selected observable: do not emit a raw
+                    // event as an alternative downstream command.
+                    return;
                 }
 
                 setNodeStatus({ fill: "blue", shape: "ring", text: `${item.type || "event"}` });

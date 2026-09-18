@@ -202,6 +202,8 @@ Every node has **two outputs**:
 
 When an error occurs, the node status turns red and the error message comes out of the second output. Connect it to a **debug** node to see what happened, or wire it to any notification logic in your flow.
 
+**Startup and missing readings** — Protect, Access and Network device nodes have an advanced **Emit startup states and undefined payloads** checkbox, disabled by default, including for existing flows. With it disabled, initial state snapshots and missing, null or `undefined` readings are suppressed. Valid `false` and `0` readings still pass through. Enable the checkbox to allow startup snapshots and missing payloads. Protect observables never replay an old value when a fresh reading is unavailable; LPR and event-photo actions continue to emit only actual readings or photos.
+
 **Repeat periodically** — for read actions, you can tick _Emit periodically_ in the node editor to have the node send the result automatically at a fixed interval, without needing an Inject node. The **Presence Detection** node offers a similar **Resend (s)** field: set it above `0` to re-emit the last known presence value on that cadence (even when unchanged). Resent messages carry `msg.eventName = "repeat"` so you can tell them apart from real state changes; leave it at `0` to disable.
 
 ## Example Flows

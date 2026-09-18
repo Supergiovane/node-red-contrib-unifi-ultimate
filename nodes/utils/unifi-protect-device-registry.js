@@ -198,6 +198,42 @@ const SENSOR_OBSERVABLE_DEFINITIONS = [
         eventTypes: ["sensorExtremeValues"]
     },
     {
+        id: "vape",
+        label: "Vape detected",
+        eventTypes: ["sensorVape"]
+    },
+    {
+        id: "button",
+        label: "Button pressed",
+        eventTypes: ["sensorButtonPressed"],
+        occurrence: true
+    },
+    {
+        id: "smokeBatteryLow",
+        label: "Smoke detector battery low",
+        eventTypes: ["sensorSmokeBatteryLow"]
+    },
+    {
+        id: "smokeNeedsCleaning",
+        label: "Smoke detector needs cleaning",
+        eventTypes: ["sensorSmokeNeedsCleaning"]
+    },
+    {
+        id: "smokeFault",
+        label: "Smoke detector fault",
+        eventTypes: ["sensorSmokeFault"]
+    },
+    {
+        id: "coFault",
+        label: "CO detector fault",
+        eventTypes: ["sensorCoFault"]
+    },
+    {
+        id: "smokeEndOfLife",
+        label: "Smoke detector end of life",
+        eventTypes: ["sensorSmokeEndOfLife"]
+    },
+    {
         id: "temperature",
         label: "Temperature",
         eventTypes: []
@@ -254,6 +290,18 @@ const CAMERA_OBSERVABLE_DEFINITIONS = [
         id: "smartDetectLoiterZone",
         label: "Smart detect loiter",
         eventTypes: ["smartDetectLoiterZone"]
+    },
+    {
+        id: "nfcCardScanned",
+        label: "NFC card scanned",
+        eventTypes: ["nfcCardScanned"],
+        occurrence: true
+    },
+    {
+        id: "fingerprintIdentified",
+        label: "Fingerprint identified",
+        eventTypes: ["fingerprintIdentified"],
+        occurrence: true
     }
 ];
 
@@ -267,6 +315,98 @@ const LIGHT_OBSERVABLE_DEFINITIONS = [
         id: "lightOn",
         label: "Light on",
         eventTypes: []
+    }
+];
+
+const FOB_OBSERVABLE_DEFINITIONS = [
+    {
+        id: "arm",
+        label: "Arm (1)",
+        eventTypes: ["sensorButtonPressed"]
+    },
+    {
+        id: "night",
+        label: "Night (2)",
+        eventTypes: ["sensorButtonPressed"]
+    },
+    {
+        id: "disarm",
+        label: "Disarm (3)",
+        eventTypes: ["sensorButtonPressed"]
+    },
+    {
+        id: "panic",
+        label: "Panic (4)",
+        eventTypes: ["sensorButtonPressed"]
+    },
+    {
+        id: "left",
+        label: "Left",
+        eventTypes: ["sensorButtonPressed"]
+    },
+    {
+        id: "right",
+        label: "Right",
+        eventTypes: ["sensorButtonPressed"]
+    }
+];
+
+const RELAY_OBSERVABLE_DEFINITIONS = [
+    {
+        id: "inputChanged",
+        label: "Input changed",
+        eventTypes: ["relayInputChanged"]
+    }
+];
+
+const ALARM_HUB_OBSERVABLE_DEFINITIONS = [
+    {
+        id: "motion",
+        label: "Motion input",
+        eventTypes: ["alarmHubMotion"]
+    },
+    {
+        id: "entry",
+        label: "Entry open/closed",
+        eventTypes: ["alarmHubEntryOpened", "alarmHubEntryClosed"]
+    },
+    {
+        id: "smoke",
+        label: "Smoke input",
+        eventTypes: ["alarmHubSmoke"]
+    },
+    {
+        id: "glassBreak",
+        label: "Glass break input",
+        eventTypes: ["alarmHubGlassBreak"]
+    },
+    {
+        id: "emergencyButton",
+        label: "Emergency button",
+        eventTypes: ["alarmHubButtonPress"],
+        occurrence: true
+    },
+    {
+        id: "tamper",
+        label: "Tamper",
+        eventTypes: ["alarmHubTamper"]
+    },
+    {
+        id: "relaySwitched",
+        label: "Relay switched",
+        eventTypes: ["alarmHubRelaySwitched"],
+        occurrence: true
+    },
+    {
+        id: "batteryLow",
+        label: "Battery low",
+        eventTypes: ["alarmHubBatteryLow"]
+    },
+    {
+        id: "batteryConnected",
+        label: "Battery connected",
+        eventTypes: ["alarmHubBatteryConnected"],
+        occurrence: true
     }
 ];
 
@@ -651,7 +791,74 @@ const TYPE_CAPABILITIES = {
     ],
     bridge: [],
     linkStation: [],
-    alarmHub: [],
+    alarmHub: [
+        {
+            id: "triggerAlarmHubOutput",
+            label: "Trigger Alarm Hub Output",
+            description: "Turn, toggle, or pulse an Alarm Hub output.",
+            method: "POST",
+            path: "/v1/alarm-hubs/:id/outputs/:outputId/trigger",
+            mode: "request",
+            ignoreInputPayload: true,
+            useConfiguredPayload: true,
+            editor: {
+                fields: [
+                    {
+                        id: "outputId",
+                        label: "Output",
+                        type: "select",
+                        options: [
+                            { value: "0", label: "Output 0" },
+                            { value: "1", label: "Output 1" }
+                        ],
+                        defaultValue: "0"
+                    },
+                    {
+                        id: "state",
+                        label: "State",
+                        type: "select",
+                        options: [
+                            { value: "toggle", label: "Toggle" },
+                            { value: "on", label: "On" },
+                            { value: "off", label: "Off" }
+                        ],
+                        defaultValue: "toggle"
+                    },
+                    {
+                        id: "delay",
+                        label: "Delay (ms)",
+                        type: "number",
+                        defaultValue: 0,
+                        min: 0
+                    },
+                    {
+                        id: "duration",
+                        label: "Duration (ms)",
+                        type: "number",
+                        defaultValue: 0,
+                        min: 0
+                    }
+                ]
+            },
+            requestComposer: ({ capabilityConfig }) => {
+                const state = String(capabilityConfig.state || "toggle").trim().toLowerCase();
+                const payload = {
+                    delay: parseConfiguredInteger(capabilityConfig.delay, 0, Number.MAX_SAFE_INTEGER, 0),
+                    duration: parseConfiguredInteger(capabilityConfig.duration, 0, Number.MAX_SAFE_INTEGER, 0)
+                };
+                if (state === "on" || state === "off") {
+                    payload.enable = state === "on";
+                }
+
+                return {
+                    params: {
+                        outputId: parseConfiguredInteger(capabilityConfig.outputId, 0, 1, 0)
+                    },
+                    payload
+                };
+            }
+        }
+    ],
     fob: [],
     relay: [
         {
@@ -1713,7 +1920,10 @@ function getObservableDefinitions(deviceType) {
     const definitionsByDeviceType = {
         sensor: SENSOR_OBSERVABLE_DEFINITIONS,
         camera: CAMERA_OBSERVABLE_DEFINITIONS,
-        light: LIGHT_OBSERVABLE_DEFINITIONS
+        light: LIGHT_OBSERVABLE_DEFINITIONS,
+        fob: FOB_OBSERVABLE_DEFINITIONS,
+        relay: RELAY_OBSERVABLE_DEFINITIONS,
+        alarmHub: ALARM_HUB_OBSERVABLE_DEFINITIONS
     };
 
     return definitionsByDeviceType[String(deviceType || "").trim()] || [];
@@ -1942,6 +2152,18 @@ function resolveObservableEventValue(deviceType, event, observable, observableSc
         return resolveLightObservableEventValue(event, observable);
     }
 
+    if (deviceType === "fob") {
+        return resolveFobObservableEventValue(event, observable);
+    }
+
+    if (deviceType === "relay") {
+        return resolveRelayObservableEventValue(event, observable);
+    }
+
+    if (deviceType === "alarmHub") {
+        return resolveAlarmHubObservableEventValue(event, observable);
+    }
+
     return { matched: false };
 }
 
@@ -1970,6 +2192,13 @@ function resolveSensorObservableEventValue(event, observable) {
         return { matched: false };
     }
 
+    if (definition.occurrence) {
+        return {
+            matched: true,
+            value: true
+        };
+    }
+
     return {
         matched: true,
         value: event.end === null || event.end === undefined
@@ -1994,6 +2223,14 @@ function resolveCameraObservableEventValue(event, observable, observableScopeId)
             eventTypeMatched: true,
             value: plates.length ? plates[0].text : undefined,
             plates
+        };
+    }
+
+    if (definition.occurrence) {
+        return {
+            matched: true,
+            eventTypeMatched: true,
+            value: true
         };
     }
 
@@ -2033,6 +2270,84 @@ function resolveLightObservableEventValue(event, observable) {
     }
 
     return { matched: false };
+}
+
+function resolveFobObservableEventValue(event, observable) {
+    if (!event || typeof event !== "object") {
+        return { matched: false };
+    }
+
+    const eventType = String(event.type || "").trim();
+    if (eventType !== "sensorButtonPressed") {
+        return { matched: false };
+    }
+
+    const button = String(firstDefinedValue(event, [
+        "metadata.button.text",
+        "metadata.button.value",
+        "metadata.button.name",
+        "button"
+    ]) || "").trim().toLowerCase();
+    const selectedButton = String(observable || "").trim().toLowerCase();
+
+    if (!button || !selectedButton || button !== selectedButton) {
+        return {
+            matched: false,
+            eventTypeMatched: true
+        };
+    }
+
+    return {
+        matched: true,
+        eventTypeMatched: true,
+        value: true
+    };
+}
+
+function resolveRelayObservableEventValue(event, observable) {
+    if (!event || typeof event !== "object" || observable !== "inputChanged" || event.type !== "relayInputChanged") {
+        return { matched: false };
+    }
+
+    const inputState = String(firstDefinedValue(event, [
+        "metadata.inputState.text",
+        "metadata.inputState.value",
+        "inputState"
+    ]) || "").trim();
+
+    return {
+        matched: true,
+        eventTypeMatched: true,
+        value: inputState === "circuitClosed"
+    };
+}
+
+function resolveAlarmHubObservableEventValue(event, observable) {
+    if (!event || typeof event !== "object") {
+        return { matched: false };
+    }
+
+    const eventType = String(event.type || "").trim();
+    if (observable === "entry") {
+        if (eventType === "alarmHubEntryOpened") {
+            return { matched: true, eventTypeMatched: true, value: true };
+        }
+        if (eventType === "alarmHubEntryClosed") {
+            return { matched: true, eventTypeMatched: true, value: false };
+        }
+        return { matched: false };
+    }
+
+    const definition = ALARM_HUB_OBSERVABLE_DEFINITIONS.find((entry) => entry.id === observable);
+    if (!definition || !definition.eventTypes.includes(eventType)) {
+        return { matched: false };
+    }
+
+    return {
+        matched: true,
+        eventTypeMatched: true,
+        value: definition.occurrence === true || event.end === null || event.end === undefined
+    };
 }
 
 function normalizeBooleanState(value, fallbackValue) {

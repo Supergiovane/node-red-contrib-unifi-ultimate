@@ -13,7 +13,8 @@ const {
     extractDeviceNameFromPayload,
     attachDeviceNameToPayload,
     attachDetails,
-    buildErrorOutputMessage
+    buildErrorOutputMessage,
+    sendWithPayload
 } = require("./utils/common-utils");
 const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
 
@@ -864,7 +865,7 @@ module.exports = function(RED) {
                 shape: "dot",
                 text: `p${portIdx} ${formatPowerText(powerW)}W`
             });
-            send(output);
+            sendWithPayload(send, output);
         }
 
         function handlePowerObservationEvent(send, action, event) {
@@ -919,7 +920,7 @@ module.exports = function(RED) {
                 shape: "dot",
                 text: `p${portIdx} ${formatPowerText(normalizedPowerW)}W`
             });
-            send(output);
+            sendWithPayload(send, output);
         }
 
         function stopPowerObservation() {
@@ -1074,7 +1075,7 @@ module.exports = function(RED) {
                 setNodeStatus({ fill: "yellow", shape: "dot", text: `${effectiveAction.payloadAction} ${okCount}/${results.length}` });
             }
 
-            send(output);
+            sendWithPayload(send, output);
         }
 
         node.on("input", async function(msg, send, done) {

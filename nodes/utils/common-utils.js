@@ -131,6 +131,24 @@ function attachDetails(outputMsg, details) {
     };
 }
 
+// Missing readings must never become downstream commands. Keep false and zero.
+function hasPayloadValue(value) {
+    return value !== undefined && value !== null
+        && !(typeof value === "string" && value.trim().toLowerCase() === "undefined");
+}
+
+function sendWithPayload(send, messages, allowMissing = false) {
+    function filter(message) {
+        if (Array.isArray(message)) {
+            const filtered = message.map(filter);
+            return filtered.some((item) => item !== null) ? filtered : null;
+        }
+        return message && (allowMissing || hasPayloadValue(message.payload)) ? message : null;
+    }
+    const filtered = filter(messages);
+    if (filtered !== null) send(filtered);
+}
+
 function buildErrorOutputMessage(error, nodeName) {
     return {
         topic: String(nodeName || "").trim() || undefined,
@@ -153,5 +171,7 @@ module.exports = {
     extractDeviceNameFromPayload,
     attachDeviceNameToPayload,
     attachDetails,
-    buildErrorOutputMessage
+    buildErrorOutputMessage,
+    hasPayloadValue,
+    sendWithPayload
 };

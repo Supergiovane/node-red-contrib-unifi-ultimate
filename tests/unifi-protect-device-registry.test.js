@@ -5,7 +5,8 @@ const {
     composeCapabilityExecution,
     getCapabilityOptions,
     getCapabilitiesForType,
-    getDeviceTypeDefinition
+    getDeviceTypeDefinition,
+    resolveObservableEventValue
 } = require("../nodes/utils/unifi-protect-device-registry");
 
 describe("new UniFi Protect resource families", () => {
@@ -167,6 +168,105 @@ describe("new UniFi Protect actions", () => {
                     label: "profile-saved (saved; currently unavailable)"
                 }
             ]
+        });
+    });
+});
+
+describe("UniFi Protect Key Fob events", () => {
+    test("lists every Key Fob button as an event option", async () => {
+        const result = await getCapabilityOptions("fob", "observe", {
+            capabilityConfig: {}
+        });
+
+        expect(result.fields[0]).toMatchObject({
+            id: "observable",
+            defaultValue: "all",
+            options: [
+                { value: "all", label: "All" },
+                { value: "arm", label: "Arm (1)" },
+                { value: "night", label: "Night (2)" },
+                { value: "disarm", label: "Disarm (3)" },
+                { value: "panic", label: "Panic (4)" },
+                { value: "left", label: "Left" },
+                { value: "right", label: "Right" }
+            ]
+        });
+    });
+
+    test("matches only the selected Key Fob button", () => {
+        const event = {
+            type: "sensorButtonPressed",
+            metadata: { button: { text: "left" } }
+        };
+
+        expect(resolveObservableEventValue("fob", event, "left")).toEqual({
+            matched: true,
+            eventTypeMatched: true,
+            value: true
+        });
+        expect(resolveObservableEventValue("fob", event, "right")).toEqual({
+            matched: false,
+            eventTypeMatched: true
+        });
+    });
+});
+
+describe("official UniFi Protect event capabilities", () => {
+    test.each([
+        ["camera", ["nfcCardScanned", "fingerprintIdentified"]],
+        ["sensor", ["vape", "button", "smokeBatteryLow", "smokeNeedsCleaning", "smokeFault", "coFault", "smokeEndOfLife"]],
+        ["relay", ["inputChanged"]],
+        ["alarmHub", ["motion", "entry", "smoke", "glassBreak", "emergencyButton", "tamper", "relaySwitched", "batteryLow", "batteryConnected"]]
+    ])("lists the audited %s events", async (deviceType, expectedValues) => {
+        const result = await getCapabilityOptions(deviceType, "observe", {
+            capabilityConfig: {}
+        });
+        const values = result.fields[0].options.map((option) => option.value);
+
+        expect(values).toEqual(expect.arrayContaining(expectedValues));
+    });
+
+    test("normalizes a relay input event to its circuit state", () => {
+        const closed = {
+            type: "relayInputChanged",
+            metadata: { inputState: { text: "circuitClosed" }, inputChannel: { text: "0" } }
+        };
+        const open = {
+            type: "relayInputChanged",
+            metadata: { inputState: { text: "circuitOpen" }, inputChannel: { text: "0" } }
+        };
+
+        expect(resolveObservableEventValue("relay", closed, "inputChanged").value).toBe(true);
+        expect(resolveObservableEventValue("relay", open, "inputChanged").value).toBe(false);
+    });
+
+    test("normalizes Alarm Hub entry open and closed events", () => {
+        expect(resolveObservableEventValue("alarmHub", { type: "alarmHubEntryOpened" }, "entry").value).toBe(true);
+        expect(resolveObservableEventValue("alarmHub", { type: "alarmHubEntryClosed" }, "entry").value).toBe(false);
+    });
+
+    test("builds the official Alarm Hub output trigger request", () => {
+        const execution = composeCapabilityExecution("alarmHub", "triggerAlarmHubOutput", {
+            outputId: "1",
+            state: "on",
+            delay: "250",
+            duration: "5000"
+        });
+        const request = buildCapabilityRequest(
+            "alarmHub",
+            "triggerAlarmHubOutput",
+            "hub-1",
+            execution.params
+        );
+
+        expect(request).toMatchObject({
+            method: "POST",
+            path: "/v1/alarm-hubs/hub-1/outputs/1/trigger"
+        });
+        expect(execution.payload).toEqual({
+            delay: 250,
+            duration: 5000,
+            enable: true
         });
     });
 });
