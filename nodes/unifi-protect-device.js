@@ -24,6 +24,7 @@ const {
 } = require("./utils/common-utils");
 const { parseKnownPlates, namePlate, matchesDetection, describeDetection } = require("./utils/unifi-protect-detections");
 const { LICENSE_PLATE_EVENT_TYPES, extractLicensePlates, isLicensePlateEvent } = require("./utils/unifi-protect-lpr");
+const { readAlarmState, matchesDeviceUpdate, mergeDeviceUpdate, buildRequestError } = require("./utils/unifi-protect-alarm");
 const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
 const LPR_FOLLOW_UP_DELAYS_MS = [150, 350, 750, 1500, 3000];
 
@@ -141,6 +142,12 @@ module.exports = function(RED) {
                 ...status,
                 text: appendStatusTimestamp(status.text)
             });
+        }
+
+        function protectErrorOutput(error) {
+            const message = buildErrorOutputMessage(error, node.name);
+            if (error.protectResponse) attachDetails(message, { response: error.protectResponse });
+            return message;
         }
 
         function resolveOutputDeviceName(payload) {
@@ -324,7 +331,9 @@ module.exports = function(RED) {
 
             if (response.statusCode < 200 || response.statusCode >= 300) {
                 setNodeStatus({ fill: "yellow", shape: "ring", text: `${response.statusCode}` });
-                throw new Error(`UniFi Protect request failed with status ${response.statusCode}`);
+                const secrets = Object.values(node.server.credentials || {});
+                if (typeof node.server.getApiKey === "function") secrets.push(node.server.getApiKey());
+                throw buildRequestError(response, request.method, request.path, secrets);
             }
 
             if (response.payload && typeof response.payload === "object" && !Array.isArray(response.payload)) {
@@ -335,6 +344,13 @@ module.exports = function(RED) {
                 payload: response.payload
             };
             decorateOutputMessage(stateMsg, response.payload, `request:${capabilityId}`);
+            if (capabilityId === "getAlarmState") {
+                const alarmState = readAlarmState(deviceType, response.payload);
+                if (alarmState === undefined) {
+                    throw new Error(`The ${deviceType} response has no supported alarm state. Check the Protect version and alarm mode; missing state does not mean disarmed.`);
+                }
+                stateMsg.payload = alarmState;
+            }
             attachDetails(stateMsg, {
                 response: {
                     statusCode: response.statusCode,
@@ -410,9 +426,10 @@ module.exports = function(RED) {
             }
 
             fetchDeviceState(node.deviceType, node.deviceId, parseCapabilityConfig(node.capabilityConfig), node.send.bind(node), "startup").catch((error) => {
-                if (node.isObserving && (isPhotoObservation() || isLicensePlateObservation())) {
+                if (node.isObserving && (isPhotoObservation() || isLicensePlateObservation() || node.deviceType === "alarmHub" || node.deviceType === "nvr")) {
                     setNodeStatus({ fill: "red", shape: "ring", text: "check camera configuration" });
-                    node.send([null, buildErrorOutputMessage(error, node.name)]);
+                    if (node.deviceType === "alarmHub" || node.deviceType === "nvr") setNodeStatus({ fill: "red", shape: "ring", text: "alarm state unavailable" });
+                    node.send([null, protectErrorOutput(error)]);
                 }
             });
         }
@@ -444,7 +461,7 @@ module.exports = function(RED) {
             invokeCapability(node.send.bind(node), "interval")
                 .catch((error) => {
                     setNodeStatus({ fill: "red", shape: "ring", text: "auto error" });
-                    node.send([null, buildErrorOutputMessage(error, node.name)]);
+                    node.send([null, protectErrorOutput(error)]);
                     node.error(error);
                 })
                 .finally(() => {
@@ -474,7 +491,7 @@ module.exports = function(RED) {
                 }
             } catch (error) {
                 setNodeStatus({ fill: "red", shape: "ring", text: "error" });
-                node.send([null, buildErrorOutputMessage(error, node.name)]);
+                node.send([null, protectErrorOutput(error)]);
                 if (typeof done === "function") {
                     done(error);
                 } else {
@@ -493,19 +510,32 @@ module.exports = function(RED) {
                 // Only react to device updates that match both the selected
                 // model family and the exact configured device id.
                 const deviceDefinition = getDeviceTypeDefinition(node.deviceType);
-                if (!deviceDefinition || item.modelKey !== deviceDefinition.modelKey || item.id !== node.deviceId) {
+                const alarmDevice = node.deviceType === "alarmHub" || node.deviceType === "nvr";
+                if (!deviceDefinition || (alarmDevice
+                    ? !matchesDeviceUpdate(node.deviceType, node.deviceId, item, deviceDefinition.modelKey)
+                    : item.modelKey !== deviceDefinition.modelKey || item.id !== node.deviceId)) {
                     return;
                 }
 
-                node.currentDevice = item;
+                if (alarmDevice && ["remove", "delete"].includes(update.type)) {
+                    node.currentDevice = null;
+                    node.currentObservableValue = undefined;
+                    setNodeStatus({ fill: "yellow", shape: "ring", text: "device removed" });
+                    return;
+                }
+                node.currentDevice = alarmDevice ? mergeDeviceUpdate(node.currentDevice, item) : item;
                 if (isLicensePlateObservation() || isPhotoObservation()) return;
                 const capabilityConfig = parseCapabilityConfig(node.capabilityConfig);
+                const observable = resolveConfiguredObservable(capabilityConfig);
+                // An unrelated partial update must not replay an old alarm value.
+                if ((node.deviceType === "alarmHub" && observable === "armed" && !(item.alarmHub && Object.prototype.hasOwnProperty.call(item.alarmHub, "armed")))
+                    || (node.deviceType === "nvr" && observable === "armStatus" && !(item.armMode && Object.prototype.hasOwnProperty.call(item.armMode, "status")))) return;
                 setNodeStatus({ fill: "green", shape: "dot", text: buildNodeStatus(node.deviceType, item) });
                 sendOutputs(node.send.bind(node), buildObservedStateMessage(
                     node.deviceType,
                     node.deviceId,
                     capabilityConfig,
-                    item,
+                    node.currentDevice,
                     "devices",
                     { updateType: update.type || "" },
                     update.type || "devices"

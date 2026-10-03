@@ -4,7 +4,7 @@
     "type": "tab",
     "label": "Protect Alarm State",
     "disabled": false,
-    "info": "Select your existing Protect connection and NVR in the Read Alarm State node. Polls every 60 seconds and after deployment."
+    "info": "Select your Protect connection and Alarm Hub in Read Alarm State. Polls every 60 seconds and after deployment. Hub payload is boolean; NVR payload is the local armMode.status string. Requires a version with Read Alarm State support."
   },
   {
     "id": "inject-protect-alarm-poll",
@@ -29,41 +29,19 @@
     "id": "read-protect-alarm-state",
     "type": "unifi-protect-device",
     "z": "flow-protect-alarm-poll",
-    "name": "Read Alarm State (NVR)",
+    "name": "Read Alarm State (Hub)",
     "server": "",
-    "deviceType": "nvr",
+    "deviceType": "alarmHub",
     "deviceId": "",
     "deviceName": "",
     "inputs": 1,
-    "capability": "getDetails",
+    "capability": "getAlarmState",
     "capabilityConfig": "{}",
     "emitStartupAndUndefined": false,
     "autoEmit": false,
     "autoEmitInterval": 60,
     "x": 440,
     "y": 120,
-    "wires": [
-      [
-        "extract-protect-alarm-status"
-      ],
-      [
-        "debug-protect-alarm-error"
-      ]
-    ]
-  },
-  {
-    "id": "extract-protect-alarm-status",
-    "type": "function",
-    "z": "flow-protect-alarm-poll",
-    "name": "Extract armMode.status",
-    "func": "const armMode = msg.payload && msg.payload.armMode;\nif (!armMode || typeof armMode.status !== 'string') {\n    node.error('NVR response does not contain armMode.status. Check Protect version and the full response.', msg);\n    return [null, msg];\n}\nmsg.armMode = armMode;\nmsg.payload = armMode.status;\nreturn [msg, null];",
-    "outputs": 2,
-    "noerr": 0,
-    "initialize": "",
-    "finalize": "",
-    "libs": [],
-    "x": 720,
-    "y": 100,
     "wires": [
       [
         "debug-protect-alarm-status"

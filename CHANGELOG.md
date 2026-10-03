@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.18 Oct 2026
+
+- **Protect alarm state:** added **Read Alarm State** for Alarm Hubs (boolean armed state) and NVRs (local Alarm Manager status string), with periodic reads and an updated importable example. Missing or unsupported state produces an error rather than a disarmed reading.
+- **Protect live alarm state:** added **Armed** and **Alarm status (local)** observables; accept Alarm Hubs represented as Link Stations, merge partial state updates and avoid replaying alarm state for unrelated patches.
+- **Protect API diagnostics:** errors expose HTTP status, method, endpoint and a bounded, redacted API message. Authentication and permission hints distinguish 401/403 from 400 responses; arm profile commands still require the local Alarm Manager.
+
 ## 1.1.17 Sept 2026
 
 - **Startup and missing readings:** Protect, Access and Network device nodes now suppress initial state snapshots and missing, null or undefined payloads by default. The new advanced **Emit startup states and undefined payloads** checkbox explicitly enables these outputs; existing flows default to disabled. Valid false and zero readings remain enabled.

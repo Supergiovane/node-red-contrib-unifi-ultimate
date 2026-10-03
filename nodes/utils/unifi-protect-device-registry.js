@@ -9,6 +9,7 @@ const {
 } = require("./unifi-protect-field-metadata");
 const { DETECTION_FIELD, KNOWN_PLATES_FIELD } = require("./unifi-protect-detections");
 const { LICENSE_PLATE_EVENT_TYPES, extractLicensePlates } = require("./unifi-protect-lpr");
+const { readAlarmState } = require("./unifi-protect-alarm");
 
 // Central Protect registry used by:
 // - the editor for device/capability discovery
@@ -360,6 +361,7 @@ const RELAY_OBSERVABLE_DEFINITIONS = [
 ];
 
 const ALARM_HUB_OBSERVABLE_DEFINITIONS = [
+    { id: "armed", label: "Armed", eventTypes: [] },
     {
         id: "motion",
         label: "Motion input",
@@ -724,6 +726,7 @@ const TYPE_CAPABILITIES = {
         createSetPropertyCapability()
     ],
     nvr: [
+        { id: "getAlarmState", label: "Read Alarm State", description: "Read the local Alarm Manager status from the NVR.", method: "GET", pathKind: "detail", mode: "request" },
         {
             id: "getApplicationInfo",
             label: "Read Application Info",
@@ -792,6 +795,7 @@ const TYPE_CAPABILITIES = {
     bridge: [],
     linkStation: [],
     alarmHub: [
+        { id: "getAlarmState", label: "Read Alarm State", description: "Read the selected Alarm Hub's armed state.", method: "GET", pathKind: "detail", mode: "request" },
         {
             id: "triggerAlarmHubOutput",
             label: "Trigger Alarm Hub Output",
@@ -1923,7 +1927,8 @@ function getObservableDefinitions(deviceType) {
         light: LIGHT_OBSERVABLE_DEFINITIONS,
         fob: FOB_OBSERVABLE_DEFINITIONS,
         relay: RELAY_OBSERVABLE_DEFINITIONS,
-        alarmHub: ALARM_HUB_OBSERVABLE_DEFINITIONS
+        alarmHub: ALARM_HUB_OBSERVABLE_DEFINITIONS,
+        nvr: [{ id: "armStatus", label: "Alarm status (local)", eventTypes: [] }]
     };
 
     return definitionsByDeviceType[String(deviceType || "").trim()] || [];
@@ -1952,6 +1957,10 @@ function resolveSelectedObservable(options, configuredObservable) {
 }
 
 function resolveObservableState(deviceType, device, observable, fallbackValue) {
+    if ((deviceType === "alarmHub" && observable === "armed") || (deviceType === "nvr" && observable === "armStatus")) {
+        const value = readAlarmState(deviceType, device);
+        return value === undefined ? fallbackValue : value;
+    }
     if (deviceType === "sensor") {
         return resolveSensorObservableState(device, observable, fallbackValue);
     }

@@ -28,6 +28,13 @@ const COMMON_FIELD_METADATA = {
 
 // Device-family-specific metadata overrides or extends the common dictionary.
 const TYPE_FIELD_METADATA = {
+    nvr: {
+        armStatus: {
+            label: "Alarm Status (Local)",
+            description: "Local Alarm Manager status from armMode.status. Kept as a string, including transitional states; it may differ from an Alarm Hub's armed state.",
+            source: "official"
+        }
+    },
     camera: {
         isMicEnabled: {
             label: "Microphone Enabled",
@@ -366,6 +373,11 @@ const OBSERVABLE_METADATA = {
         }
     },
     alarmHub: {
+        armed: {
+            label: "Armed",
+            description: "Current Alarm Hub armed state: on becomes true and off becomes false. Updated by device state messages, not a dedicated arm/disarm event.",
+            source: "official"
+        },
         motion: {
             label: "Motion Input",
             description: "True while an Alarm Hub motion input is active.",

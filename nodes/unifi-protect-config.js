@@ -2,6 +2,7 @@
 
 const { registerConnectionCheck } = require("./utils/unifi-connection-check");
 const { actionGuidance } = require("./utils/unifi-action-guidance");
+const { buildRequestError } = require("./utils/unifi-protect-alarm");
 
 const {
     buildBaseUrlFromHost,
@@ -411,7 +412,7 @@ module.exports = function(RED) {
                 method: "GET"
             });
             if (response.statusCode < 200 || response.statusCode >= 300) {
-                throw new Error(`Failed to load ${deviceType} ${deviceId || ""} (${response.statusCode})`);
+                throw buildRequestError(response, "GET", path, [...Object.values(node.credentials || {}), node.getApiKey()]);
             }
             return response.payload;
         };
