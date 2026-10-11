@@ -2,6 +2,7 @@
 
 const { registerConnectionCheck } = require("./utils/unifi-connection-check");
 const { actionGuidance } = require("./utils/unifi-action-guidance");
+const { attachHeartbeat, stopHeartbeat, createReconnectBackoff } = require("./utils/unifi-websocket-resilience");
 
 const { installSimpleMonitorScheduler } = require("./utils/unifi-simple-monitor");
 
@@ -82,6 +83,7 @@ module.exports = function(RED) {
         node.nodeClients = [];
         node.wsNotifications = null;
         node.reconnectTimer = null;
+        node.reconnectBackoff = createReconnectBackoff();
         node.isClosing = false;
         node.activeDoorbells = new Map();
         node.activeDoorbellRequests = new Map();
@@ -652,8 +654,8 @@ module.exports = function(RED) {
                 return;
             }
 
-            // Delay reconnect attempts slightly to avoid a busy loop while the
-            // controller is restarting or upgrading.
+            // Back off exponentially to avoid a busy loop while the controller
+            // is restarting or upgrading.
             node.reconnectTimer = setTimeout(() => {
                 node.reconnectTimer = null;
                 try {
@@ -661,7 +663,7 @@ module.exports = function(RED) {
                 } catch (error) {
                     node.warn(`Access websocket reconnect failed: ${error && error.message ? error.message : error}`);
                 }
-            }, 5000);
+            }, node.reconnectBackoff.nextDelay());
         };
 
         node.ensureWebSocket = () => {
@@ -698,6 +700,11 @@ module.exports = function(RED) {
                 return;
             }
 
+            ws.on("open", () => {
+                node.reconnectBackoff.reset();
+            });
+            attachHeartbeat(ws);
+
             ws.on("message", (rawData) => {
                 try {
                     // Ignore malformed websocket frames rather than killing the
@@ -712,10 +719,12 @@ module.exports = function(RED) {
 
             ws.on("close", () => {
                 try {
+                    // A socket closed on purpose has already been detached and
+                    // must not schedule a reconnect.
                     if (node.wsNotifications === ws) {
                         node.wsNotifications = null;
+                        node.scheduleReconnect();
                     }
-                    node.scheduleReconnect();
                 } catch (error) {
                 }
             });
@@ -736,12 +745,15 @@ module.exports = function(RED) {
                 node.reconnectTimer = null;
             }
 
-            if (node.wsNotifications) {
+            const socket = node.wsNotifications;
+            if (socket) {
+                // Detach first so the close callback does not reconnect.
+                node.wsNotifications = null;
+                stopHeartbeat(socket);
                 try {
-                    node.wsNotifications.close();
+                    socket.close();
                 } catch (error) {
                 }
-                node.wsNotifications = null;
             }
         };
 

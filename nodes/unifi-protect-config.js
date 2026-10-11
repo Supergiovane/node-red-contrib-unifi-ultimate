@@ -3,6 +3,7 @@
 const { registerConnectionCheck } = require("./utils/unifi-connection-check");
 const { actionGuidance } = require("./utils/unifi-action-guidance");
 const { buildRequestError } = require("./utils/unifi-protect-alarm");
+const { attachHeartbeat, stopHeartbeat, createReconnectBackoff } = require("./utils/unifi-websocket-resilience");
 
 const {
     buildBaseUrlFromHost,
@@ -204,6 +205,7 @@ module.exports = function(RED) {
         node.wsDevices = null;
         node.wsEvents = null;
         node.reconnectTimer = null;
+        node.reconnectBackoff = createReconnectBackoff();
         node.isClosing = false;
         node.knxAiCameraCache = { at: 0, cameras: [] };
         node.knxAiCameraRefresh = null;
@@ -875,8 +877,8 @@ module.exports = function(RED) {
                 return;
             }
 
-            // Back off a little before reconnecting so temporary controller
-            // restarts do not cause a tight reconnect loop.
+            // Back off exponentially so temporary controller restarts do not
+            // cause a tight reconnect loop.
             node.reconnectTimer = setTimeout(() => {
                 node.reconnectTimer = null;
                 try {
@@ -884,7 +886,7 @@ module.exports = function(RED) {
                 } catch (error) {
                     node.warn(`Protect websocket reconnect failed: ${error && error.message ? error.message : error}`);
                 }
-            }, 5000);
+            }, node.reconnectBackoff.nextDelay());
         };
 
         node.attachSocket = (kind, path, handler) => {
@@ -917,6 +919,11 @@ module.exports = function(RED) {
                 node.scheduleReconnect();
                 return;
             }
+
+            ws.on("open", () => {
+                node.reconnectBackoff.reset();
+            });
+            attachHeartbeat(ws);
 
             ws.on("message", (rawData) => {
                 try {
@@ -972,6 +979,7 @@ module.exports = function(RED) {
             // Clear ownership before close so the close callback knows this was
             // intentional and does not schedule an unnecessary reconnect.
             node[propertyName] = null;
+            stopHeartbeat(socket);
             try {
                 socket.close();
             } catch (error) {

@@ -1008,6 +1008,8 @@ module.exports = function(RED) {
         }
 
         node.shouldReceiveUnofficialNetworkEvents = () => Boolean(node.isObserving && isUnofficialNetworkStreamCapabilitySelected());
+        // The config node opens the event stream of the site this node belongs to.
+        node.getUnofficialNetworkSiteId = () => resolveScopedIdentifiers(node.deviceType, node.deviceId, node.currentDevice).siteId;
 
         function shouldAutoReceiveConfiguredDevice() {
             return node.server
