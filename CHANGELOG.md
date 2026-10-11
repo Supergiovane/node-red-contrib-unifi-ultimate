@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.19 Oct 2026
+
+- **Network event stream per site:** the experimental Network WebSocket now connects to the site of each listening node instead of always using `default`, and delivers each event only to nodes of that site. A site that cannot be resolved still falls back to `default`; a site's stream closes when its last listener is removed.
+- **Live stream resilience:** Protect, Access and Network WebSockets now send a heartbeat ping every 30 seconds and close connections that stop answering, so silently dropped streams reconnect. Reconnects back off from 5 to 60 seconds and reset after a successful connection. Access no longer schedules a reconnect after closing its stream on purpose.
+- **Maintenance:** `npm test` syntax-checks every runtime JavaScript file automatically, and the unused `main` entry was removed from `package.json`.
+
 ## 1.1.18 Oct 2026
 
 - **Protect alarm state:** added **Read Alarm State** for Alarm Hubs (boolean armed state) and NVRs (local Alarm Manager status string), with periodic reads and an updated importable example. Missing or unsupported state produces an error rather than a disarmed reading.

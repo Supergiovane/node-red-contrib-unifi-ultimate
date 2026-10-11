@@ -5,6 +5,7 @@ const { actionGuidance } = require("./utils/unifi-action-guidance");
 
 const { installNetworkMonitorReads } = require("./utils/unifi-network-monitor");
 const { installSimpleMonitorScheduler } = require("./utils/unifi-simple-monitor");
+const { attachHeartbeat, stopHeartbeat, createReconnectBackoff } = require("./utils/unifi-websocket-resilience");
 
 const fs = require("fs");
 const os = require("os");
@@ -44,6 +45,9 @@ module.exports = function(RED) {
     const POWER_OBSERVER_SCHEDULER_TICK_MS = 1000;
     const PORT_OVERRIDE_CACHE_VERSION = 1;
     const PORT_OVERRIDE_CACHE_SAVE_DEBOUNCE_MS = 1000;
+    // Short name of the site used by the legacy event stream when a subscriber
+    // has no resolvable site.
+    const UNOFFICIAL_NETWORK_DEFAULT_SITE = "default";
     // Sentinel stored for a port that was enabled but had no override at all, so
     // re-enabling knows to remove the override we added (instead of restoring one).
     const PORT_OVERRIDE_NONE = { __noOverride: true };
@@ -122,8 +126,12 @@ module.exports = function(RED) {
         node.rejectUnauthorized = config.rejectUnauthorized === true || config.rejectUnauthorized === "true";
         node.powerObservationIntervalSeconds = normalizePowerObserverIntervalSeconds(config.powerObservationIntervalSeconds);
         node.nodeClients = [];
-        node.wsNetworkEvents = null;
+        // Legacy site name -> socket; the unofficial stream is scoped per site.
+        node.wsNetworkEvents = new Map();
+        node.unofficialNetworkSiteNames = new Map();
+        node.unofficialNetworkSync = Promise.resolve();
         node.reconnectTimer = null;
+        node.reconnectBackoff = createReconnectBackoff();
         node.isClosing = false;
         node.powerObserverNodeState = new Map();
         node.powerObserverTimer = null;
@@ -838,7 +846,7 @@ module.exports = function(RED) {
             return getCapabilitiesForType(deviceType, selectedDevice);
         };
 
-        node.buildUnofficialNetworkWebSocketUrl = () => {
+        node.buildUnofficialNetworkWebSocketUrl = (siteName = UNOFFICIAL_NETWORK_DEFAULT_SITE) => {
             const normalizedHost = applyPortToHost(
                 String(node.host || "")
                     .trim()
@@ -850,30 +858,58 @@ module.exports = function(RED) {
                 throw new Error("The configured host is empty or invalid.");
             }
 
-            const url = new URL(`https://${normalizedHost}/proxy/network/wss/s/default/events`);
+            const normalizedSiteName = normalizeString(siteName) || UNOFFICIAL_NETWORK_DEFAULT_SITE;
+            const url = new URL(`https://${normalizedHost}/proxy/network/wss/s/${encodeURIComponent(normalizedSiteName)}/events`);
             url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
             return url.toString();
         };
 
-        node.hasUnofficialNetworkStreamSubscribers = () => node.nodeClients.some((client) => {
+        const isUnofficialNetworkStreamSubscriber = (client) => {
             try {
-                return client && typeof client.shouldReceiveUnofficialNetworkEvents === "function" && client.shouldReceiveUnofficialNetworkEvents();
+                return Boolean(client && typeof client.shouldReceiveUnofficialNetworkEvents === "function" && client.shouldReceiveUnofficialNetworkEvents());
             } catch (error) {
                 return false;
             }
-        });
-        node.isUnofficialNetworkWebSocketConnected = () => Boolean(
-            node.wsNetworkEvents
-            && typeof node.wsNetworkEvents.readyState === "number"
-            && node.wsNetworkEvents.readyState === 1
-        );
+        };
 
-        node.broadcastUnofficialNetworkEvent = (eventPayload) => {
+        const getUnofficialNetworkSubscriberSiteId = (client) => {
+            try {
+                return client && typeof client.getUnofficialNetworkSiteId === "function"
+                    ? normalizeString(client.getUnofficialNetworkSiteId())
+                    : "";
+            } catch (error) {
+                return "";
+            }
+        };
+
+        // The legacy event stream is scoped to one site by its short name, so
+        // a subscriber without a known site falls back to the default site.
+        const getUnofficialNetworkSubscriberSiteName = (client) => {
+            const siteId = getUnofficialNetworkSubscriberSiteId(client);
+            if (!siteId) {
+                return UNOFFICIAL_NETWORK_DEFAULT_SITE;
+            }
+            return node.unofficialNetworkSiteNames.get(siteId) || UNOFFICIAL_NETWORK_DEFAULT_SITE;
+        };
+
+        node.hasUnofficialNetworkStreamSubscribers = () => node.nodeClients.some(isUnofficialNetworkStreamSubscriber);
+        node.isUnofficialNetworkWebSocketConnected = () => node.wsNetworkEvents.size > 0
+            && Array.from(node.wsNetworkEvents.values()).every((socket) => (
+                socket
+                && typeof socket.readyState === "number"
+                && socket.readyState === 1
+            ));
+
+        node.broadcastUnofficialNetworkEvent = (eventPayload, siteName) => {
             node.nodeClients.forEach((client) => {
                 try {
-                    if (client && typeof client.handleNetworkEventUpdate === "function") {
-                        client.handleNetworkEventUpdate(eventPayload);
+                    if (!client || typeof client.handleNetworkEventUpdate !== "function") {
+                        return;
                     }
+                    if (siteName && getUnofficialNetworkSubscriberSiteName(client) !== siteName) {
+                        return;
+                    }
+                    client.handleNetworkEventUpdate(eventPayload);
                 } catch (error) {
                 }
             });
@@ -886,19 +922,36 @@ module.exports = function(RED) {
 
             node.reconnectTimer = setTimeout(() => {
                 node.reconnectTimer = null;
-                try {
-                    node.ensureUnofficialNetworkWebSocket();
-                } catch (error) {
-                    node.warn(`Network websocket reconnect failed: ${error && error.message ? error.message : error}`);
-                }
-            }, 5000);
+                node.ensureUnofficialNetworkWebSocket();
+            }, node.reconnectBackoff.nextDelay());
         };
 
-        node.ensureUnofficialNetworkWebSocket = () => {
-            if (node.isClosing || node.wsNetworkEvents || !node.hasUnofficialNetworkStreamSubscribers()) {
-                return;
+        async function resolveUnofficialNetworkSiteName(siteId) {
+            if (!siteId) {
+                return UNOFFICIAL_NETWORK_DEFAULT_SITE;
+            }
+            if (node.unofficialNetworkSiteNames.has(siteId)) {
+                return node.unofficialNetworkSiteNames.get(siteId);
             }
 
+            let siteName = "";
+            try {
+                siteName = await fetchLegacySiteName(siteId);
+            } catch (error) {
+                // Not cached, so the next reconnect or subscriber retries.
+                node.warn(`Unable to resolve UniFi Network site '${siteId}' for the event stream, using '${UNOFFICIAL_NETWORK_DEFAULT_SITE}': ${error && error.message ? error.message : error}`);
+                return UNOFFICIAL_NETWORK_DEFAULT_SITE;
+            }
+
+            if (!siteName) {
+                node.warn(`UniFi Network site '${siteId}' was not found for the event stream, using '${UNOFFICIAL_NETWORK_DEFAULT_SITE}'.`);
+                siteName = UNOFFICIAL_NETWORK_DEFAULT_SITE;
+            }
+            node.unofficialNetworkSiteNames.set(siteId, siteName);
+            return siteName;
+        }
+
+        function openUnofficialNetworkSiteSocket(siteName) {
             let WebSocket;
             const apiKey = String(node.getApiKey() || "").trim();
             if (!apiKey) {
@@ -914,7 +967,7 @@ module.exports = function(RED) {
 
             let ws;
             try {
-                ws = new WebSocket(node.buildUnofficialNetworkWebSocketUrl(), {
+                ws = new WebSocket(node.buildUnofficialNetworkWebSocketUrl(siteName), {
                     headers: buildRequestHeaders(apiKey),
                     rejectUnauthorized: node.rejectUnauthorized
                 });
@@ -924,6 +977,11 @@ module.exports = function(RED) {
                 return;
             }
 
+            ws.on("open", () => {
+                node.reconnectBackoff.reset();
+            });
+            attachHeartbeat(ws);
+
             ws.on("message", (rawData) => {
                 try {
                     const text = Buffer.isBuffer(rawData) ? rawData.toString("utf8") : String(rawData);
@@ -931,9 +989,9 @@ module.exports = function(RED) {
                         return;
                     }
                     try {
-                        node.broadcastUnofficialNetworkEvent(JSON.parse(text));
+                        node.broadcastUnofficialNetworkEvent(JSON.parse(text), siteName);
                     } catch (error) {
-                        node.broadcastUnofficialNetworkEvent({ raw: text });
+                        node.broadcastUnofficialNetworkEvent({ raw: text }, siteName);
                     }
                 } catch (error) {
                 }
@@ -941,10 +999,12 @@ module.exports = function(RED) {
 
             ws.on("close", () => {
                 try {
-                    if (node.wsNetworkEvents === ws) {
-                        node.wsNetworkEvents = null;
+                    // A socket closed on purpose has already been detached and
+                    // must not schedule a reconnect.
+                    if (node.wsNetworkEvents.get(siteName) === ws) {
+                        node.wsNetworkEvents.delete(siteName);
+                        node.scheduleNetworkReconnect();
                     }
-                    node.scheduleNetworkReconnect();
                 } catch (error) {
                 }
             });
@@ -956,7 +1016,58 @@ module.exports = function(RED) {
                 }
             });
 
-            node.wsNetworkEvents = ws;
+            node.wsNetworkEvents.set(siteName, ws);
+        }
+
+        function closeUnofficialNetworkSiteSocket(siteName) {
+            const socket = node.wsNetworkEvents.get(siteName);
+            if (!socket) {
+                return;
+            }
+            node.wsNetworkEvents.delete(siteName);
+            stopHeartbeat(socket);
+            try {
+                socket.close();
+            } catch (error) {
+            }
+        }
+
+        async function syncUnofficialNetworkWebSockets() {
+            if (node.isClosing) {
+                return;
+            }
+
+            const siteIds = new Set(node.nodeClients
+                .filter(isUnofficialNetworkStreamSubscriber)
+                .map(getUnofficialNetworkSubscriberSiteId));
+            const wantedSiteNames = new Set();
+            for (const siteId of siteIds) {
+                wantedSiteNames.add(await resolveUnofficialNetworkSiteName(siteId));
+            }
+            if (node.isClosing) {
+                return;
+            }
+
+            Array.from(node.wsNetworkEvents.keys())
+                .filter((siteName) => !wantedSiteNames.has(siteName))
+                .forEach(closeUnofficialNetworkSiteSocket);
+            wantedSiteNames.forEach((siteName) => {
+                if (!node.wsNetworkEvents.has(siteName)) {
+                    openUnofficialNetworkSiteSocket(siteName);
+                }
+            });
+        }
+
+        // Opens one stream per subscribed site and closes streams no longer
+        // needed. Calls are serialized so overlapping requests cannot open
+        // duplicate sockets while a site name is being resolved.
+        node.ensureUnofficialNetworkWebSocket = () => {
+            node.unofficialNetworkSync = node.unofficialNetworkSync
+                .then(syncUnofficialNetworkWebSockets)
+                .catch((error) => {
+                    node.warn(`Unable to initialize Network websocket: ${error && error.message ? error.message : error}`);
+                });
+            return node.unofficialNetworkSync;
         };
 
         node.closeUnofficialNetworkWebSocket = () => {
@@ -965,13 +1076,7 @@ module.exports = function(RED) {
                 node.reconnectTimer = null;
             }
 
-            if (node.wsNetworkEvents) {
-                try {
-                    node.wsNetworkEvents.close();
-                } catch (error) {
-                }
-                node.wsNetworkEvents = null;
-            }
+            Array.from(node.wsNetworkEvents.keys()).forEach(closeUnofficialNetworkSiteSocket);
         };
 
         function parsePowerNumber(value) {
@@ -3397,6 +3502,9 @@ module.exports = function(RED) {
             }
             if (!node.hasUnofficialNetworkStreamSubscribers()) {
                 node.closeUnofficialNetworkWebSocket();
+            } else {
+                // Close the stream of a site that no longer has subscribers.
+                node.ensureUnofficialNetworkWebSocket();
             }
             node.refreshPowerObservationScheduler();
             node.refreshPresenceObservationScheduler();
