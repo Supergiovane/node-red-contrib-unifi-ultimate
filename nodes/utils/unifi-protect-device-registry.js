@@ -256,6 +256,25 @@ const SENSOR_OBSERVABLE_DEFINITIONS = [
     }
 ];
 
+// Newer Protect versions report sensor.featureFlags.<capability>.channelCount.
+// Observables without an entry here are shown for every sensor.
+const SENSOR_OBSERVABLE_FEATURE_FLAGS = {
+    contact: "open",
+    motion: "motion",
+    alarm: "smoke",
+    waterLeak: "waterLeak",
+    tamper: "tamper",
+    smokeTest: "smoke",
+    smokeBatteryLow: "smoke",
+    smokeNeedsCleaning: "smoke",
+    smokeFault: "smoke",
+    coFault: "smoke",
+    smokeEndOfLife: "smoke",
+    temperature: "temperature",
+    humidity: "humidity",
+    lightLevel: "light"
+};
+
 const CAMERA_OBSERVABLE_DEFINITIONS = [
     {
         id: "licensePlate",
@@ -303,6 +322,11 @@ const CAMERA_OBSERVABLE_DEFINITIONS = [
         label: "Fingerprint identified",
         eventTypes: ["fingerprintIdentified"],
         occurrence: true
+    },
+    {
+        id: "digitalInput",
+        label: "Digital input",
+        eventTypes: ["cameraDigitalInputChanged"]
     }
 ];
 
@@ -392,6 +416,11 @@ const ALARM_HUB_OBSERVABLE_DEFINITIONS = [
         id: "tamper",
         label: "Tamper",
         eventTypes: ["alarmHubTamper"]
+    },
+    {
+        id: "deviceTamper",
+        label: "Hub tamper",
+        eventTypes: ["alarmHubDeviceTamper"]
     },
     {
         id: "relaySwitched",
@@ -682,6 +711,30 @@ const TYPE_CAPABILITIES = {
                 }
             })
         },
+        {
+            id: "sendPosTransaction",
+            label: "Send POS Transaction",
+            description: "Record a point of sale transaction from msg.payload as a camera event.",
+            method: "POST",
+            path: "/v1/pos/cameras/:id/transactions",
+            mode: "request",
+            usesInputPayload: true,
+            useConfiguredPayload: true,
+            editor: {
+                fields: [
+                    {
+                        id: "currency",
+                        label: "Default currency",
+                        type: "text",
+                        placeholder: "EUR",
+                        tip: "Used when msg.payload.currency is missing."
+                    }
+                ]
+            },
+            requestComposer: ({ capabilityConfig, inputPayload }) => ({
+                payload: buildPosTransactionPayload(inputPayload, capabilityConfig)
+            })
+        },
         createSetPropertyCapability()
     ],
     liveview: [
@@ -790,6 +843,36 @@ const TYPE_CAPABILITIES = {
             path: "/v1/arm-profiles/disable",
             mode: "request",
             ignoreInputPayload: true
+        },
+        {
+            id: "triggerAlarmWebhook",
+            label: "Trigger Alarm Manager Webhook",
+            description: "Trigger the Alarm Manager alarms configured with the same webhook ID.",
+            method: "POST",
+            path: "/v1/alarm-manager/webhook/:triggerId",
+            mode: "request",
+            parameterNames: ["triggerId"],
+            ignoreInputPayload: true,
+            editor: {
+                fields: [
+                    {
+                        id: "triggerId",
+                        label: "Webhook ID",
+                        type: "text",
+                        placeholder: "garage-door"
+                    }
+                ]
+            },
+            requestComposer: ({ capabilityConfig }) => {
+                const triggerId = String(capabilityConfig.triggerId || "").trim();
+                if (!triggerId) {
+                    throw new Error("Enter the Alarm Manager webhook ID before using this action.");
+                }
+
+                return {
+                    params: { triggerId }
+                };
+            }
         }
     ],
     bridge: [],
@@ -1099,14 +1182,15 @@ function buildCapabilityRequest(deviceType, capabilityId, deviceId, params, devi
     };
 }
 
-function composeCapabilityExecution(deviceType, capabilityId, capabilityConfig, device) {
+function composeCapabilityExecution(deviceType, capabilityId, capabilityConfig, device, inputPayload) {
     const capability = getCapabilityDefinition(deviceType, capabilityId, device);
     if (!capability) {
         throw new Error(`Unsupported capability '${capabilityId}' for device type '${deviceType}'.`);
     }
 
     // Input messages are triggers only. Execution data comes from the editor
-    // configuration and capability defaults.
+    // configuration and capability defaults, except for actions that declare
+    // usesInputPayload because their data changes on every message.
     if (typeof capability.requestComposer !== "function") {
         return {
             params: {},
@@ -1117,7 +1201,8 @@ function composeCapabilityExecution(deviceType, capabilityId, capabilityConfig, 
     }
 
     const composedRequest = capability.requestComposer({
-        capabilityConfig: normalizeObject(capabilityConfig)
+        capabilityConfig: normalizeObject(capabilityConfig),
+        inputPayload: capability.usesInputPayload ? inputPayload : undefined
     }) || {};
 
     const params = {
@@ -1521,7 +1606,7 @@ async function buildObservableFields(deviceType, context) {
     // Observables let the generic "Receive Events" capability expose a typed
     // value (boolean, number or plate text) tailored to the selected device.
     const capabilityConfig = normalizeObject(context && context.capabilityConfig);
-    const observableOptions = getObservableOptions(deviceType);
+    const observableOptions = getObservableOptions(deviceType, context && context.device, capabilityConfig.observable);
     const selectedObservable = resolveSelectedObservable(observableOptions, capabilityConfig.observable);
     const fields = [
         {
@@ -1907,6 +1992,48 @@ function buildDoorbellMessagePayload(capabilityConfig) {
     return payload;
 }
 
+function buildPosTransactionPayload(inputPayload, capabilityConfig) {
+    // Protect rejects unknown keys, so copy only the documented fields.
+    const transaction = normalizeObject(inputPayload);
+    const type = String(transaction.type || "").trim().toLowerCase();
+    if (type !== "sale" && type !== "refund") {
+        throw new Error("msg.payload.type must be 'sale' or 'refund'.");
+    }
+
+    const externalId = String(transaction.externalId === undefined || transaction.externalId === null ? "" : transaction.externalId).trim();
+    if (!externalId) {
+        throw new Error("msg.payload.externalId is required: use your POS transaction id.");
+    }
+
+    const amount = typeof transaction.amount === "string" ? Number(transaction.amount.trim()) : transaction.amount;
+    if (typeof amount !== "number" || !Number.isFinite(amount) || amount < 0) {
+        throw new Error("msg.payload.amount must be a number greater than or equal to 0.");
+    }
+
+    const payload = { type, externalId, amount };
+    const currency = String(transaction.currency || capabilityConfig.currency || "").trim().toUpperCase();
+    if (currency) {
+        payload.currency = currency;
+    }
+    ["lineItems", "location", "paymentTypes"].forEach((key) => {
+        if (transaction[key] !== undefined && transaction[key] !== null) {
+            payload[key] = transaction[key];
+        }
+    });
+    if (transaction.timestamp !== undefined && transaction.timestamp !== null && transaction.timestamp !== "") {
+        const rawTimestamp = transaction.timestamp;
+        const timestamp = typeof rawTimestamp === "number" || /^\d+$/.test(String(rawTimestamp).trim())
+            ? Number(rawTimestamp)
+            : new Date(rawTimestamp).getTime();
+        if (!Number.isInteger(timestamp) || timestamp <= 0) {
+            throw new Error("msg.payload.timestamp must be epoch milliseconds or a date string.");
+        }
+        payload.timestamp = timestamp;
+    }
+
+    return payload;
+}
+
 function parseResetAtValue(value) {
     const normalized = String(value === undefined || value === null ? "" : value).trim();
     if (normalized === "") {
@@ -1934,13 +2061,30 @@ function getObservableDefinitions(deviceType) {
     return definitionsByDeviceType[String(deviceType || "").trim()] || [];
 }
 
-function getObservableOptions(deviceType) {
-    const specificOptions = getObservableDefinitions(deviceType).map((definition) => ({
-        value: definition.id,
-        label: formatObservableLabel(deviceType, definition.id, definition.label)
-    }));
+function getObservableOptions(deviceType, device, configuredObservable) {
+    const specificOptions = getObservableDefinitions(deviceType)
+        .filter((definition) => definition.id === configuredObservable || isObservableSupportedForDevice(deviceType, device, definition.id))
+        .map((definition) => ({
+            value: definition.id,
+            label: formatObservableLabel(deviceType, definition.id, definition.label)
+        }));
 
     return [ALL_OBSERVABLE_OPTION].concat(specificOptions);
+}
+
+function isObservableSupportedForDevice(deviceType, device, observable) {
+    // Older Protect versions do not report sensor feature flags: keep every
+    // observable available unless the sensor explicitly describes its features.
+    const featureFlags = deviceType === "sensor" ? getValueAtPath(device, "featureFlags") : undefined;
+    const reportsFeatures = featureFlags && typeof featureFlags === "object"
+        && Object.values(SENSOR_OBSERVABLE_FEATURE_FLAGS).some((flag) => Object.prototype.hasOwnProperty.call(featureFlags, flag));
+    const flag = SENSOR_OBSERVABLE_FEATURE_FLAGS[observable];
+    if (!reportsFeatures || !flag) {
+        return true;
+    }
+
+    const capability = featureFlags[flag];
+    return Boolean(capability && Number(capability.channelCount) > 0);
 }
 
 function resolveSelectedObservable(options, configuredObservable) {
@@ -1960,6 +2104,10 @@ function resolveObservableState(deviceType, device, observable, fallbackValue) {
     if ((deviceType === "alarmHub" && observable === "armed") || (deviceType === "nvr" && observable === "armStatus")) {
         const value = readAlarmState(deviceType, device);
         return value === undefined ? fallbackValue : value;
+    }
+    if (deviceType === "alarmHub" && observable === "deviceTamper") {
+        const status = getValueAtPath(device, "alarmHub.deviceTamperStatus");
+        return status === "tampered" || status === "restored" ? status === "tampered" : fallbackValue;
     }
     if (deviceType === "sensor") {
         return resolveSensorObservableState(device, observable, fallbackValue);
@@ -2225,6 +2373,15 @@ function resolveCameraObservableEventValue(event, observable, observableScopeId)
         return { matched: false };
     }
 
+    if (observable === "digitalInput") {
+        const inputState = String(firstDefinedValue(event, ["metadata.inputState.text", "metadata.inputState.value"]) || "").trim();
+        return {
+            matched: inputState === "circuitClosed" || inputState === "circuitOpen",
+            eventTypeMatched: true,
+            value: inputState === "circuitClosed"
+        };
+    }
+
     if (observable === "licensePlate") {
         const plates = extractLicensePlates(event);
         return {
@@ -2345,6 +2502,18 @@ function resolveAlarmHubObservableEventValue(event, observable) {
             return { matched: true, eventTypeMatched: true, value: false };
         }
         return { matched: false };
+    }
+
+    if (observable === "deviceTamper") {
+        if (eventType !== "alarmHubDeviceTamper") {
+            return { matched: false };
+        }
+        const status = String(firstDefinedValue(event, ["metadata.status.text", "metadata.status.value"]) || "").trim();
+        return {
+            matched: status === "tampered" || status === "restored",
+            eventTypeMatched: true,
+            value: status === "tampered"
+        };
     }
 
     const definition = ALARM_HUB_OBSERVABLE_DEFINITIONS.find((entry) => entry.id === observable);

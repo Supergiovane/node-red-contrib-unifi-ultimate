@@ -222,6 +222,11 @@ const OBSERVABLE_METADATA = {
             label: "Fingerprint Identified",
             description: "Emits true when a fingerprint is scanned at the camera device.",
             source: "official"
+        },
+        digitalInput: {
+            label: "Digital Input",
+            description: "True when an ONVIF camera digital input circuit closes and false when it opens.",
+            source: "official"
         }
     },
     sensor: {
@@ -372,7 +377,8 @@ const OBSERVABLE_METADATA = {
             source: "official"
         }
     },
-    alarmHub: {
+    // Keys are matched in lower case, like the device type.
+    alarmhub: {
         armed: {
             label: "Armed",
             description: "Current Alarm Hub armed state: on becomes true and off becomes false. Updated by device state messages, not a dedicated arm/disarm event.",
@@ -406,6 +412,11 @@ const OBSERVABLE_METADATA = {
         tamper: {
             label: "Tamper",
             description: "True while an Alarm Hub input reports tampering.",
+            source: "official"
+        },
+        deviceTamper: {
+            label: "Hub Tamper",
+            description: "True when the Alarm Hub enclosure is tampered with and false when it is restored.",
             source: "official"
         },
         relaySwitched: {

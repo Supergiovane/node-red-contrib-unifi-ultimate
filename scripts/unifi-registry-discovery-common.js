@@ -842,27 +842,27 @@ function buildRegistrySuggestions(product, docs) {
         });
 }
 
+async function resolveLatestDocsVersion(baseDocsUrl, product) {
+    // The portal has no "latest" path; the product root redirects to the
+    // current version's getting started page.
+    const response = await requestJson({
+        baseUrl: baseDocsUrl,
+        path: `/${product}`
+    });
+    const location = String(response.headers.location || "");
+    const match = location.match(new RegExp(`/${product}/([^/]+)/`));
+    if (!match) {
+        throw new Error(`Unable to resolve the latest ${product} docs version from ${baseDocsUrl}/${product} (${response.statusCode}).`);
+    }
+    return match[1];
+}
+
 async function fetchDeveloperPortalReport({ product, defaultVersion, registry, includePages = "api" }) {
     const versionAnswer = await ask(`${product.toUpperCase()} docs version`, defaultVersion || "latest");
-    const initialVersion = versionAnswer === "latest" ? (defaultVersion || "latest") : versionAnswer;
     const baseDocsUrl = "https://developer.ui.com";
-    const startPath = `/${product}/${initialVersion}/gettingstarted`;
-    const start = await safeRequest({
-        baseUrl: baseDocsUrl,
-        path: startPath
-    });
-
-    if (!start.ok || typeof start.payload !== "string") {
-        throw new Error(`Unable to load ${baseDocsUrl}${startPath} (${start.statusCode || "error"}).`);
-    }
-
-    const startState = extractDeveloperPortalState(start.payload);
-    const latestVersion = startState.versions && startState.versions[0] && startState.versions[0].version
-        ? startState.versions[0].version
-        : initialVersion;
-    const version = versionAnswer === "latest" ? latestVersion : initialVersion;
+    const version = versionAnswer === "latest" ? await resolveLatestDocsVersion(baseDocsUrl, product) : versionAnswer;
     const docsPath = `/${product}/${version}/gettingstarted`;
-    const docsPage = version === initialVersion ? start : await safeRequest({
+    const docsPage = await safeRequest({
         baseUrl: baseDocsUrl,
         path: docsPath
     });

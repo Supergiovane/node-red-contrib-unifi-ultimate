@@ -149,6 +149,9 @@ Things you can do:
 - Monitor bridges, Link Stations, alarm hubs, key fobs, sirens, relays, and speakers.
 - Play or stop a siren, control relay outputs, and test speaker or siren sound.
 - Read and select Protect Arm Profiles, then arm or disarm the local Alarm Manager from the NVR control.
+- Trigger Alarm Manager alarms by webhook ID from the NVR control.
+- Follow ONVIF camera digital inputs and Alarm Hub enclosure tamper.
+- Send point of sale transactions from `msg.payload` to overlay them on camera footage.
 - Poll Alarm Hub armed state or NVR local alarm status with **Read Alarm State**, or follow device updates with **Receive Events → Armed / Alarm status (local)**. These are separate alarm sources; the NVR arm commands require the local Alarm Manager. See [the polling example](examples/unifi-protect-alarm-state.json).
 
 ### Read license plates (LPR)

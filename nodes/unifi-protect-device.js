@@ -269,13 +269,14 @@ module.exports = function(RED) {
             sendOutputs(send, stateMsg, null);
         }
 
-        async function invokeCapability(send, triggerSource) {
+        async function invokeCapability(send, triggerSource, inputPayload) {
             if (!node.server) {
                 throw new Error("Unifi Protect configuration is missing.");
             }
 
             // The incoming message is only a trigger. The node always uses the
-            // device, capability and options configured in the editor.
+            // device, capability and options configured in the editor; only
+            // actions declaring usesInputPayload read msg.payload.
             const deviceType = resolveDeviceType(node.deviceType);
             const deviceId = resolveDeviceId(node.deviceId);
             const capabilityId = resolveCapabilityId(node.capability);
@@ -315,7 +316,7 @@ module.exports = function(RED) {
                 return;
             }
 
-            const execution = composeCapabilityExecution(deviceType, capabilityId, capabilityConfig, selectedDevice);
+            const execution = composeCapabilityExecution(deviceType, capabilityId, capabilityConfig, selectedDevice, inputPayload);
             const request = buildCapabilityRequest(deviceType, capabilityId, deviceId, execution.params, selectedDevice);
 
             setNodeStatus({ fill: "blue", shape: "dot", text: `${capability.label}` });
@@ -479,13 +480,13 @@ module.exports = function(RED) {
             setNodeStatus({ fill: "grey", shape: "ring", text: `every ${node.autoEmitIntervalSeconds}s` });
         }
 
-        node.on("input", async function(_msg, send, done) {
+        node.on("input", async function(msg, send, done) {
             send = send || function() {
                 node.send.apply(node, arguments);
             };
 
             try {
-                await invokeCapability(send, "manual-refresh");
+                await invokeCapability(send, "manual-refresh", msg && msg.payload);
                 if (typeof done === "function") {
                     done();
                 }
@@ -528,7 +529,9 @@ module.exports = function(RED) {
                 const capabilityConfig = parseCapabilityConfig(node.capabilityConfig);
                 const observable = resolveConfiguredObservable(capabilityConfig);
                 // An unrelated partial update must not replay an old alarm value.
-                if ((node.deviceType === "alarmHub" && observable === "armed" && !(item.alarmHub && Object.prototype.hasOwnProperty.call(item.alarmHub, "armed")))
+                // Hub tamper changes arrive as alarmHubDeviceTamper events.
+                if ((node.deviceType === "alarmHub" && observable === "deviceTamper")
+                    || (node.deviceType === "alarmHub" && observable === "armed" && !(item.alarmHub && Object.prototype.hasOwnProperty.call(item.alarmHub, "armed")))
                     || (node.deviceType === "nvr" && observable === "armStatus" && !(item.armMode && Object.prototype.hasOwnProperty.call(item.armMode, "status")))) return;
                 setNodeStatus({ fill: "green", shape: "dot", text: buildNodeStatus(node.deviceType, item) });
                 sendOutputs(node.send.bind(node), buildObservedStateMessage(

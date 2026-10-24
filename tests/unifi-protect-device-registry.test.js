@@ -6,7 +6,8 @@ const {
     getCapabilityOptions,
     getCapabilitiesForType,
     getDeviceTypeDefinition,
-    resolveObservableEventValue
+    resolveObservableEventValue,
+    resolveObservableState
 } = require("../nodes/utils/unifi-protect-device-registry");
 
 describe("new UniFi Protect resource families", () => {
@@ -213,10 +214,10 @@ describe("UniFi Protect Key Fob events", () => {
 
 describe("official UniFi Protect event capabilities", () => {
     test.each([
-        ["camera", ["nfcCardScanned", "fingerprintIdentified"]],
+        ["camera", ["nfcCardScanned", "fingerprintIdentified", "digitalInput"]],
         ["sensor", ["vape", "button", "smokeBatteryLow", "smokeNeedsCleaning", "smokeFault", "coFault", "smokeEndOfLife"]],
         ["relay", ["inputChanged"]],
-        ["alarmHub", ["motion", "entry", "smoke", "glassBreak", "emergencyButton", "tamper", "relaySwitched", "batteryLow", "batteryConnected"]]
+        ["alarmHub", ["motion", "entry", "smoke", "glassBreak", "emergencyButton", "tamper", "deviceTamper", "relaySwitched", "batteryLow", "batteryConnected"]]
     ])("lists the audited %s events", async (deviceType, expectedValues) => {
         const result = await getCapabilityOptions(deviceType, "observe", {
             capabilityConfig: {}
@@ -268,5 +269,105 @@ describe("official UniFi Protect event capabilities", () => {
             duration: 5000,
             enable: true
         });
+    });
+});
+
+describe("UniFi Protect 7.3 API additions", () => {
+    test("normalizes a camera digital input event to its circuit state", () => {
+        const event = (text) => ({
+            type: "cameraDigitalInputChanged",
+            metadata: { inputState: { text }, inputToken: { text: "DigitalInput_1" }, inputChannel: { text: "0" } }
+        });
+
+        expect(resolveObservableEventValue("camera", event("circuitClosed"), "digitalInput")).toMatchObject({ matched: true, value: true });
+        expect(resolveObservableEventValue("camera", event("circuitOpen"), "digitalInput")).toMatchObject({ matched: true, value: false });
+        expect(resolveObservableEventValue("camera", { type: "cameraDigitalInputChanged", metadata: {} }, "digitalInput").matched).toBe(false);
+        expect(resolveObservableEventValue("camera", { type: "motion" }, "digitalInput").matched).toBe(false);
+    });
+
+    test("normalizes Alarm Hub enclosure tamper events and state", () => {
+        const event = (text) => ({ type: "alarmHubDeviceTamper", metadata: { status: { text }, deviceId: { text: "hub-1" } } });
+
+        expect(resolveObservableEventValue("alarmHub", event("tampered"), "deviceTamper")).toMatchObject({ matched: true, value: true });
+        expect(resolveObservableEventValue("alarmHub", event("restored"), "deviceTamper")).toMatchObject({ matched: true, value: false });
+        expect(resolveObservableEventValue("alarmHub", { type: "alarmHubTamper" }, "deviceTamper").matched).toBe(false);
+        expect(resolveObservableState("alarmHub", { alarmHub: { deviceTamperStatus: "tampered" } }, "deviceTamper")).toBe(true);
+        expect(resolveObservableState("alarmHub", { alarmHub: { deviceTamperStatus: "restored" } }, "deviceTamper")).toBe(false);
+        expect(resolveObservableState("alarmHub", { alarmHub: {} }, "deviceTamper")).toBeUndefined();
+    });
+
+    test("shows only the events supported by sensor feature flags", async () => {
+        const device = {
+            featureFlags: {
+                temperature: { channelCount: 1 },
+                humidity: { channelCount: 1 },
+                light: { channelCount: 1 },
+                motion: { channelCount: 1 }
+            }
+        };
+        const values = async (capabilityConfig) => (await getCapabilityOptions("sensor", "observe", { device, capabilityConfig }))
+            .fields[0].options.map((option) => option.value);
+
+        const supported = await values({});
+        expect(supported).toEqual(expect.arrayContaining(["all", "motion", "temperature", "humidity", "lightLevel", "batteryLevel", "vape"]));
+        expect(supported).not.toEqual(expect.arrayContaining(["contact"]));
+        expect(supported).not.toEqual(expect.arrayContaining(["waterLeak"]));
+        expect(supported).not.toEqual(expect.arrayContaining(["smokeFault"]));
+        expect(await values({ observable: "contact" })).toEqual(expect.arrayContaining(["contact"]));
+    });
+
+    test("keeps every sensor event when feature flags are missing", async () => {
+        const result = await getCapabilityOptions("sensor", "observe", { device: { featureFlags: {} }, capabilityConfig: {} });
+        const values = result.fields[0].options.map((option) => option.value);
+
+        expect(values).toEqual(expect.arrayContaining(["contact", "waterLeak", "smokeFault", "temperature"]));
+    });
+
+    test("builds the Alarm Manager webhook request", () => {
+        const execution = composeCapabilityExecution("nvr", "triggerAlarmWebhook", { triggerId: " garage door " });
+        const request = buildCapabilityRequest("nvr", "triggerAlarmWebhook", "nvr-1", execution.params);
+
+        expect(request).toMatchObject({ method: "POST", path: "/v1/alarm-manager/webhook/garage%20door" });
+        expect(execution.payload).toBeUndefined();
+        expect(() => composeCapabilityExecution("nvr", "triggerAlarmWebhook", {})).toThrow("webhook ID");
+    });
+
+    test("builds a POS transaction from msg.payload", () => {
+        const execution = composeCapabilityExecution("camera", "sendPosTransaction", { currency: "eur" }, null, {
+            type: "Sale",
+            externalId: 123,
+            amount: "12.50",
+            lineItems: [{ title: "Espresso", quantity: 2 }],
+            location: { id: "r1" },
+            timestamp: "1761300000000",
+            note: "dropped"
+        });
+        const request = buildCapabilityRequest("camera", "sendPosTransaction", "camera-1", execution.params);
+
+        expect(request).toMatchObject({ method: "POST", path: "/v1/pos/cameras/camera-1/transactions" });
+        expect(execution.payload).toEqual({
+            type: "sale",
+            externalId: "123",
+            amount: 12.5,
+            currency: "EUR",
+            lineItems: [{ title: "Espresso", quantity: 2 }],
+            location: { id: "r1" },
+            timestamp: 1761300000000
+        });
+    });
+
+    test.each([
+        [{ externalId: "1", amount: 1 }, "type"],
+        [{ type: "sale", amount: 1 }, "externalId"],
+        [{ type: "refund", externalId: "1", amount: -1 }, "amount"],
+        [{ type: "sale", externalId: "1", amount: 1, timestamp: "not a date" }, "timestamp"]
+    ])("rejects an invalid POS transaction %#", (payload, field) => {
+        expect(() => composeCapabilityExecution("camera", "sendPosTransaction", {}, null, payload)).toThrow(field);
+    });
+
+    test("ignores msg.payload for actions that do not use it", () => {
+        const execution = composeCapabilityExecution("siren", "playSiren", { duration: "3" }, null, { duration: 99 });
+
+        expect(execution.payload).toEqual({ duration: 3 });
     });
 });

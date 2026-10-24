@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.20 Oct 2026
+
+- **Protect API 7.3 events:** added **Camera → Receive Events → Digital Input** (ONVIF camera digital inputs, `true` when the circuit closes) and **Alarm Hub → Receive Events → Hub Tamper** (`true` when the hub enclosure is tampered, `false` when restored). Alarm Hub event help texts are now shown in the editor.
+- **Sensor event list:** sensors that report feature flags (Protect 7.3 and later) show only the events they support. A saved event stays selectable; older Protect versions keep the full list.
+- **Alarm Manager webhook:** added **NVR → Trigger Alarm Manager Webhook**, which triggers the alarms configured with the same webhook ID.
+- **POS transactions:** added **Camera → Send POS Transaction**, which reads the transaction from `msg.payload`, validates the required fields and records it as a camera event overlaid on the footage.
+- **Registry discovery:** `npm run registry:discover:*` resolves `latest` again now that the developer portal no longer serves a `latest` path.
+
 ## 1.1.19 Oct 2026
 
 - **Network event stream per site:** the experimental Network WebSocket now connects to the site of each listening node instead of always using `default`, and delivers each event only to nodes of that site. A site that cannot be resolved still falls back to `default`; a site's stream closes when its last listener is removed.
