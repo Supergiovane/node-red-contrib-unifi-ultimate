@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.21 Oct 2026
+
+- **Release:** publishes the 1.1.20 changes to npm. 1.1.20 was not published to npm. No other code changes.
+
 ## 1.1.20 Oct 2026
 
 - **Protect API 7.3 events:** added **Camera → Receive Events → Digital Input** (ONVIF camera digital inputs, `true` when the circuit closes) and **Alarm Hub → Receive Events → Hub Tamper** (`true` when the hub enclosure is tampered, `false` when restored). Alarm Hub event help texts are now shown in the editor.
