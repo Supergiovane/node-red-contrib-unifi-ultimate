@@ -27,6 +27,17 @@ describe("Protect license plate extraction", () => {
         }))).toEqual([{ text: "AB123CD" }, { text: "EF456GH" }]);
     });
 
+    test("prefers the plate Protect matched across the track over single-frame OCR", () => {
+        expect(extractLicensePlates(plateEvent({
+            metadata: {
+                detectedThumbnails: [
+                    { type: "vehicle", name: "4II0", attributes: { matchedName: "ES950HD", topKCandidate: [{ name: "ES950HD", confidence: 0.92 }] } },
+                    { type: "vehicle", name: "FK537LS", attributes: { matchedName: " " } }
+                ]
+            }
+        }))).toEqual([{ text: "ES950HD" }, { text: "FK537LS" }]);
+    });
+
     test("deduplicates the same plate across legacy metadata and thumbnails", () => {
         expect(extractLicensePlates(plateEvent({
             metadata: {

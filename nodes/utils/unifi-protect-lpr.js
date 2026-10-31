@@ -30,7 +30,12 @@ function extractLicensePlates(event) {
     thumbnails.forEach((thumbnail) => {
         if (!thumbnail || typeof thumbnail !== "object") return;
         if (thumbnail.type === "licensePlate" || (thumbnail.type === "vehicle" && hasPlateType)) {
-            addPlate(thumbnail.name);
+            // `name` is the OCR of a single frame and is often truncated or
+            // misread ("4II0"); `matchedName` is the plate Protect settles on
+            // across the whole track and shows in its own UI.
+            const attributes = thumbnail.attributes && typeof thumbnail.attributes === "object" ? thumbnail.attributes : {};
+            const matchedName = typeof attributes.matchedName === "string" ? attributes.matchedName.trim() : "";
+            addPlate(matchedName || thumbnail.name);
         }
     });
     return Array.from(plates.values());

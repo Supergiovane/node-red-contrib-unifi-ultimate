@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.22 Oct 2026
+
+- **LPR plate text:** Protect camera LPR now emits the plate Protect matches across the whole vehicle track (`matchedName`, the plate shown in the Protect UI) instead of the single-frame OCR text, which was often truncated or misread (for example `4II0` instead of `ES950HD`) and broke exact plate comparisons in flows. Events without a matched plate still use the OCR text.
+
 ## 1.1.21 Oct 2026
 
 - **Release:** publishes the 1.1.20 changes to npm. 1.1.20 was not published to npm. No other code changes.
