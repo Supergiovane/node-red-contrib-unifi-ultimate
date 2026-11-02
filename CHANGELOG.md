@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.24 Nov 2026
+
+- **LPR delay:** Protect camera LPR no longer waits for the event to end when Protect reads the plate more than about 6 seconds after detecting the vehicle. While the event is open and no plate has been emitted, the node now checks once per second, for up to 60 seconds.
+- **LPR partial updates:** event updates that carry only the changed fields (for example only `end`) are now accepted for an event the node is already tracking, so the final read is no longer skipped.
+
 ## 1.1.23 Oct 2026
 
 - **Release:** publishes the 1.1.22 changes to npm. 1.1.22 was not published to npm. No other code changes.

@@ -27,6 +27,8 @@ const { LICENSE_PLATE_EVENT_TYPES, extractLicensePlates, isLicensePlateEvent } =
 const { readAlarmState, matchesDeviceUpdate, mergeDeviceUpdate, buildRequestError } = require("./utils/unifi-protect-alarm");
 const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
 const LPR_FOLLOW_UP_DELAYS_MS = [150, 350, 750, 1500, 3000];
+const LPR_OPEN_EVENT_POLL_MS = 1000;
+const LPR_OPEN_EVENT_MAX_MS = 60 * 1000;
 
 function resolveDeviceType(configuredDeviceType) {
     return String(configuredDeviceType || "").trim();
@@ -603,8 +605,17 @@ module.exports = function(RED) {
         }
 
         function scheduleLicensePlateFollowUp(state) {
-            if (!isLicensePlateStateActive(state) || state.timer || state.followUpIndex >= LPR_FOLLOW_UP_DELAYS_MS.length) return;
-            const delay = LPR_FOLLOW_UP_DELAYS_MS[state.followUpIndex++];
+            if (!isLicensePlateStateActive(state) || state.timer) return;
+            let delay;
+            if (state.followUpIndex < LPR_FOLLOW_UP_DELAYS_MS.length) {
+                delay = LPR_FOLLOW_UP_DELAYS_MS[state.followUpIndex++];
+            } else if (!state.emitted.size && !state.latestEvent.end && Date.now() < state.pollUntil) {
+                // Protect can read the plate well after the vehicle is detected.
+                // Keep looking while the event is open instead of waiting for its end.
+                delay = LPR_OPEN_EVENT_POLL_MS;
+            } else {
+                return;
+            }
             state.timer = setTimeout(() => {
                 state.timer = null;
                 if (!isLicensePlateStateActive(state)) return;
@@ -627,6 +638,7 @@ module.exports = function(RED) {
                         // Do not keep retrying a credentials/permission failure.
                         // A later real event can retry after configuration recovers.
                         state.followUpIndex = LPR_FOLLOW_UP_DELAYS_MS.length;
+                        state.pollUntil = 0;
                         if (error.code === "UNIFI_PROTECT_HISTORY_CREDENTIALS_REQUIRED") {
                             if (lprCredentialsWarningSent) continue;
                             lprCredentialsWarningSent = true;
@@ -647,6 +659,7 @@ module.exports = function(RED) {
                 }
             }).catch((error) => {
                 state.followUpIndex = LPR_FOLLOW_UP_DELAYS_MS.length;
+                state.pollUntil = 0;
                 if (isLicensePlateStateActive(state)) reportLicensePlateError(error);
             }).finally(() => {
                 state.inFlight = null;
@@ -663,7 +676,8 @@ module.exports = function(RED) {
             // classification later. Output still requires actual OCR metadata.
             const vehicleCandidate = LICENSE_PLATE_EVENT_TYPES.includes(item.type)
                 && Array.isArray(item.smartDetectTypes) && item.smartDetectTypes.includes("vehicle");
-            if ((!isLicensePlateEvent(item) && !vehicleCandidate) || !item.id) return;
+            // Later updates of a tracked event may carry only the changed fields.
+            if (!item.id || (!isLicensePlateEvent(item) && !vehicleCandidate && !lprEventStates.has(item.id))) return;
             const now = Date.now();
             lprEventStates.forEach((state, id) => {
                 if (now - state.lastSeen > 60 * 60 * 1000) forgetLicensePlateEvent(id);
@@ -672,7 +686,7 @@ module.exports = function(RED) {
             if (!state) {
                 if (lprEventStates.size >= 256) forgetLicensePlateEvent(lprEventStates.keys().next().value);
                 state = { emitted: new Map(), pending: null, inFlight: null, timer: null, lastSeen: now,
-                    liveVersion: 0, followUpIndex: 0, latestEvent: item };
+                    liveVersion: 0, followUpIndex: 0, pollUntil: now + LPR_OPEN_EVENT_MAX_MS, latestEvent: item };
                 lprEventStates.set(item.id, state);
             }
             state.lastSeen = now;

@@ -236,6 +236,35 @@ describe("Protect LPR node", () => {
         node.emit("close");
     });
 
+    test("keeps looking while the event is open when OCR arrives after the follow-ups", async () => {
+        const { node, server } = createNode();
+        const pending = { id: "event-1", camera: "camera-1" };
+        server.fetchLicensePlateEvent.mockResolvedValue(pending);
+        await node.handleProtectEventUpdate(eventUpdate({ smartDetectTypes: ["vehicle"] }));
+        await jest.advanceTimersByTimeAsync(8000);
+        expect(node.send).not.toHaveBeenCalled();
+        server.fetchLicensePlateEvent.mockResolvedValue({ ...pending, metadata });
+        await jest.advanceTimersByTimeAsync(1000);
+        expect(node.send.mock.calls[0][0].payload).toBe("AB123CD");
+        node.emit("close");
+    });
+
+    test("stops polling an open event after the time limit and when the event ends", async () => {
+        const { node, server } = createNode();
+        server.fetchLicensePlateEvent.mockResolvedValue({ id: "event-1", camera: "camera-1" });
+        await node.handleProtectEventUpdate(eventUpdate());
+        await jest.advanceTimersByTimeAsync(120000);
+        const calls = server.fetchLicensePlateEvent.mock.calls.length;
+        expect(calls).toBeLessThanOrEqual(62);
+        await jest.advanceTimersByTimeAsync(10000);
+        expect(server.fetchLicensePlateEvent).toHaveBeenCalledTimes(calls);
+        // A partial end update of a tracked event still triggers a final read.
+        server.fetchLicensePlateEvent.mockResolvedValue({ id: "event-1", camera: "camera-1", metadata });
+        await node.handleProtectEventUpdate({ type: "update", item: { id: "event-1", modelKey: "event", device: "camera-1", end: 2000 } });
+        expect(node.send.mock.calls[0][0].payload).toBe("AB123CD");
+        node.emit("close");
+    });
+
     test("vehicle detection alone never invents plate text from unrelated thumbnail names", async () => {
         const { node, server } = createNode();
         server.fetchLicensePlateEvent.mockResolvedValue({ id: "event-1", camera: "camera-1", smartDetectTypes: ["vehicle"], metadata: { detectedThumbnails: [{ type: "vehicle", name: "Car" }] } });
