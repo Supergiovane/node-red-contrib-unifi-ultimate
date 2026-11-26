@@ -242,3 +242,7 @@ Import from `examples/`:
 [license-url]: https://opensource.org/licenses/MIT
 [youtube-image]: https://img.shields.io/badge/YouTube-Subscribe-red?logo=youtube&logoColor=white
 [youtube-url]: https://youtube.com/playlist?list=PL9Yh1bjbLAYrWKtMlopN0swuQXbdJ8MFJ&si=4MmW1nNTCLrJtEHv
+
+## Cerebrum Ultimate
+
+When **Cerebrum Ultimate** is installed in the same Node-RED, every UniFi Network configuration, UniFi Network presence node and UniFi Access configuration is published to it automatically, read-only: network devices (online/offline) and clients, read on demand; home/away of the watched devices and clients joining or leaving the watched network; door position and Access events. UniFi Protect cameras were already available to Cerebrum. Cerebrum can use them in chat, in its history and as triggers of JavaScript routines, and MCP clients such as Claude can read them through the Cerebrum MCP server. Nothing has to be configured, and nothing can be switched or changed from Cerebrum through this link. Without Cerebrum nothing changes. See the [Cerebrum Ultimate documentation](https://www.maxsupervibe.com/docs/cerebrum-ultimate/).

@@ -2,6 +2,7 @@
 
 const { decodeScopedDeviceId } = require("./utils/unifi-network-device-registry");
 const { normalizePresenceMatchBy } = require("./utils/unifi-network-presence-utils");
+const { createUnifiPresenceCerebrum } = require("./utils/unifiCerebrum");
 const {
     buildStatusTimestampText,
     appendStatusTimestamp,
@@ -107,6 +108,10 @@ function setupNetworkClientWatch(node, config) {
         attachDetails(outputMsg, { client });
 
         sendWithPayload(node.send.bind(node), [outputMsg, null]);
+        try {
+            if (node.cerebrumIntegration) node.cerebrumIntegration.client(eventName, client, networkName);
+        } catch (error) {
+        }
     }
 
     function diffAndEmit(currentClients) {
@@ -253,6 +258,11 @@ function setupNetworkClientWatch(node, config) {
 
     node.on("close", function(done) {
         try {
+            if (node.cerebrumIntegration) node.cerebrumIntegration.dispose();
+        } catch (error) {
+        }
+        node.cerebrumIntegration = null;
+        try {
             stopPolling();
         } catch (error) {
         } finally {
@@ -270,6 +280,13 @@ module.exports = function(RED) {
         const node = this;
         node.name = config.name;
         node.server = RED.nodes.getNode(config.server);
+        // Read-only publication of this presence to Cerebrum Ultimate (optional).
+        node.cerebrumIntegration = null;
+        try {
+            node.cerebrumIntegration = createUnifiPresenceCerebrum({ node, deviceName: normalizeString(config.deviceName) });
+        } catch (error) {
+            node.cerebrumIntegration = null;
+        }
         // "Watch by" selects the mode. "presence" (default) tracks a single
         // client; "network" watches a network for clients joining/leaving.
         node.watchBy = normalizeString(config.watchBy) || "presence";
@@ -393,6 +410,10 @@ module.exports = function(RED) {
                 sendWithPayload(node.send.bind(node), outputMsg);
             } catch (error) {
                 node.warn(`Presence output send failed: ${error && error.message ? error.message : error}`);
+            }
+            try {
+                if (node.cerebrumIntegration) node.cerebrumIntegration.presence(present, resolvedDeviceName, reason);
+            } catch (error) {
             }
         }
 
@@ -650,6 +671,11 @@ module.exports = function(RED) {
         }
 
         node.on("close", function(done) {
+            try {
+                if (node.cerebrumIntegration) node.cerebrumIntegration.dispose();
+            } catch (error) {
+            }
+            node.cerebrumIntegration = null;
             try {
                 stopRepeatTimer();
                 stopObservation();

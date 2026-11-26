@@ -4,6 +4,7 @@ const { registerConnectionCheck } = require("./utils/unifi-connection-check");
 const { actionGuidance } = require("./utils/unifi-action-guidance");
 
 const { installNetworkMonitorReads } = require("./utils/unifi-network-monitor");
+const { createUnifiNetworkCerebrum } = require("./utils/unifiCerebrum");
 const { installSimpleMonitorScheduler } = require("./utils/unifi-simple-monitor");
 const { attachHeartbeat, stopHeartbeat, createReconnectBackoff } = require("./utils/unifi-websocket-resilience");
 
@@ -3522,7 +3523,20 @@ module.exports = function(RED) {
             node.seedPortOverrideCache().catch(() => {});
         }, 0);
 
+        // Read-only publication of network devices and clients to Cerebrum Ultimate (optional).
+        node.cerebrumIntegration = null;
+        try {
+            node.cerebrumIntegration = createUnifiNetworkCerebrum({ configNode: node });
+        } catch (error) {
+            node.cerebrumIntegration = null;
+        }
+
         node.on("close", function(done) {
+            try {
+                if (node.cerebrumIntegration) node.cerebrumIntegration.dispose();
+            } catch (error) {
+            }
+            node.cerebrumIntegration = null;
             try {
                 node.isClosing = true;
                 node.stopSimpleMonitorScheduler();

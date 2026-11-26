@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Cerebrum Ultimate:** UniFi Network (devices and clients, read on demand), the Network presence node (home/away, clients joining and leaving) and UniFi Access (door position and Access events) are published to Cerebrum Ultimate, read-only, when Cerebrum is installed in the same Node-RED. MCP clients can read them through the Cerebrum MCP server. No configuration is needed; nothing can be commanded through this link. See the [Cerebrum Ultimate documentation](https://www.maxsupervibe.com/docs/cerebrum-ultimate/).
+
 ## 1.1.24 Nov 2026
 
 - **LPR delay:** Protect camera LPR no longer waits for the event to end when Protect reads the plate more than about 6 seconds after detecting the vehicle. While the event is open and no plate has been emitted, the node now checks once per second, for up to 60 seconds.

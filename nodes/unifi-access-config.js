@@ -5,6 +5,7 @@ const { actionGuidance } = require("./utils/unifi-action-guidance");
 const { attachHeartbeat, stopHeartbeat, createReconnectBackoff } = require("./utils/unifi-websocket-resilience");
 
 const { installSimpleMonitorScheduler } = require("./utils/unifi-simple-monitor");
+const { createUnifiAccessCerebrum } = require("./utils/unifiCerebrum");
 
 const {
     buildBaseUrlFromHost,
@@ -228,6 +229,10 @@ module.exports = function(RED) {
         };
 
         node.broadcastNotification = (payload) => {
+            try {
+                if (node.cerebrumIntegration) node.cerebrumIntegration.handleNotification(payload);
+            } catch (error) {
+            }
             // The config node centralizes one websocket stream and fans it out
             // to all Access runtime nodes interested in events.
             node.nodeClients.forEach((client) => {
@@ -789,7 +794,20 @@ module.exports = function(RED) {
             }
         };
 
+        // Read-only publication of doors and Access events to Cerebrum Ultimate (optional).
+        node.cerebrumIntegration = null;
+        try {
+            node.cerebrumIntegration = createUnifiAccessCerebrum({ configNode: node });
+        } catch (error) {
+            node.cerebrumIntegration = null;
+        }
+
         node.on("close", function(done) {
+            try {
+                if (node.cerebrumIntegration) node.cerebrumIntegration.dispose();
+            } catch (error) {
+            }
+            node.cerebrumIntegration = null;
             try {
                 node.isClosing = true;
                 node.stopSimpleMonitorScheduler();
