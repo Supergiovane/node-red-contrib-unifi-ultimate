@@ -1,8 +1,9 @@
 # Changelog
 
-## Unreleased
+## 1.1.25 Nov 2026
 
 - **Cerebrum Ultimate:** UniFi Network (devices and clients, read on demand), the Network presence node (home/away, clients joining and leaving) and UniFi Access (door position and Access events) are published to Cerebrum Ultimate, read-only, when Cerebrum is installed in the same Node-RED. MCP clients can read them through the Cerebrum MCP server. No configuration is needed; nothing can be commanded through this link. See the [Cerebrum Ultimate documentation](https://www.maxsupervibe.com/docs/cerebrum-ultimate/).
+- **Documentation:** README and documentation links now point to www.maxsupervibe.com.
 
 ## 1.1.24 Nov 2026
 
